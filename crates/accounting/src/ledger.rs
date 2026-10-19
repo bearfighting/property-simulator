@@ -246,6 +246,14 @@ impl Ledger {
     }
 
     fn signed_balance(&self, account_id: AccountId) -> Result<Money, AccountError> {
+        self.signed_balance_through(account_id, None)
+    }
+
+    fn signed_balance_through(
+        &self,
+        account_id: AccountId,
+        through: Option<YearMonth>,
+    ) -> Result<Money, AccountError> {
         self.chart
             .get(account_id)
             .ok_or(AccountError::UnknownPostingAccount(account_id))?;
@@ -255,7 +263,11 @@ impl Ledger {
         } else {
             Money::new(-opening_amount.amount(), self.currency)
         };
-        for transaction in &self.posted {
+        for transaction in self
+            .posted
+            .iter()
+            .filter(|transaction| through.is_none_or(|month| transaction.0.period <= month))
+        {
             for entry in transaction
                 .0
                 .entries
@@ -288,26 +300,7 @@ impl Ledger {
             .chart
             .get(account_id)
             .ok_or(AccountError::UnknownPostingAccount(account_id))?;
-        let (opening_side, opening_amount) = self.opening.balance(account_id)?;
-        let mut signed = if opening_side == BalanceSide::Debit {
-            opening_amount
-        } else {
-            Money::new(-opening_amount.amount(), self.currency)
-        };
-        for transaction in self.posted.iter().filter(|tx| tx.0.period <= through) {
-            for entry in transaction
-                .0
-                .entries
-                .iter()
-                .filter(|entry| entry.account_id == account_id)
-            {
-                signed = match entry.side {
-                    BalanceSide::Debit => signed.checked_add(entry.amount),
-                    BalanceSide::Credit => signed.checked_sub(entry.amount),
-                }
-                .map_err(AccountError::Arithmetic)?;
-            }
-        }
+        let signed = self.signed_balance_through(account_id, Some(through))?;
         let side = if signed.amount().is_sign_negative() {
             BalanceSide::Credit
         } else if signed.amount().is_zero() {
