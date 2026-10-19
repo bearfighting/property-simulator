@@ -1,7 +1,10 @@
+use std::collections::BTreeSet;
+
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 use property_simulation_domain::RoundingPolicy;
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
+use crate::composition::{SliceResources, account_resource_key};
 use crate::error::SimulationError;
 use crate::types::{
     ActivityInstance, ActivitySampleKind, EventProposal, FrozenInput, OpeningState, SliceProposal,
@@ -16,6 +19,19 @@ impl SimulationSlice for RentalSlice {
     const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Rental;
     fn instance(&self) -> &ActivityInstance {
         &self.instance
+    }
+    fn resources(&self, input: &FrozenInput) -> SliceResources {
+        SliceResources {
+            instance_id: self.instance.id,
+            slice_id: self.instance.slice_id,
+            version: self.instance.version,
+            reads: BTreeSet::new(),
+            writes: [input.cash_account, input.rent_account]
+                .into_iter()
+                .map(account_resource_key)
+                .collect(),
+            dependencies: BTreeSet::new(),
+        }
     }
     fn propose_validated(
         &self,

@@ -1,7 +1,10 @@
+use std::collections::BTreeSet;
+
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 use property_simulation_domain::{Money, RoundingPolicy};
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
+use crate::composition::{SliceResources, account_resource_key};
 use crate::error::SimulationError;
 use crate::types::{
     ActivityInstance, ActivitySampleKind, AssetCondition, EffectProposal, EventProposal,
@@ -17,6 +20,23 @@ impl SimulationSlice for RepairSlice {
     const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Repair;
     fn instance(&self) -> &ActivityInstance {
         &self.instance
+    }
+    fn resources(&self, input: &FrozenInput) -> SliceResources {
+        SliceResources {
+            instance_id: self.instance.id,
+            slice_id: self.instance.slice_id,
+            version: self.instance.version,
+            reads: BTreeSet::new(),
+            writes: [
+                account_resource_key(input.cash_account),
+                account_resource_key(input.repair_expense_account),
+                property_simulation_domain::ResourceKey::new("property.condition")
+                    .expect("static resource key"),
+            ]
+            .into_iter()
+            .collect(),
+            dependencies: BTreeSet::new(),
+        }
     }
     fn validate_sample(
         &self,
@@ -73,7 +93,8 @@ impl SimulationSlice for RepairSlice {
             }],
             effects: vec![EffectProposal {
                 period: input.period,
-                target: "property.condition".to_owned(),
+                target: property_simulation_domain::ResourceKey::new("property.condition")
+                    .expect("static resource key"),
                 key: "condition".to_owned(),
                 source_event_key: Some("repair_performed".to_owned()),
                 condition: resulting_condition,

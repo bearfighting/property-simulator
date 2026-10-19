@@ -25,6 +25,23 @@ opaque_id!(
     EffectId
 );
 
+/// Stable, extensible key for a shared simulation resource.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResourceKey(String);
+
+impl ResourceKey {
+    pub fn new(value: impl Into<String>) -> Result<Self, &'static str> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err("resource key cannot be empty");
+        }
+        Ok(Self(value))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

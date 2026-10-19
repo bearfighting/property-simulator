@@ -795,6 +795,9 @@ fn output_ids_do_not_depend_on_proposal_input_order() {
     let two = RentalSlice {
         instance: rental_activity(2),
     };
+    let three = RentalSlice {
+        instance: rental_activity(3),
+    };
     let state = OpeningState {
         cash: money("0"),
         condition: AssetCondition::Available,
@@ -802,11 +805,29 @@ fn output_ids_do_not_depend_on_proposal_input_order() {
     let validated = validated_input(&state, &input());
     let proposal_one = propose_slice(&one, &validated, &sample(one.instance(), ())).unwrap();
     let proposal_two = propose_slice(&two, &validated, &sample(two.instance(), ())).unwrap();
+    let proposal_three = propose_slice(&three, &validated, &sample(three.instance(), ())).unwrap();
     let identified_one = identify_proposal(proposal_one, identity()).unwrap();
     let identified_two = identify_proposal(proposal_two, identity()).unwrap();
-    let forward = merge_proposals([identified_one.clone(), identified_two.clone()]).unwrap();
-    let reverse = merge_proposals([identified_two, identified_one]).unwrap();
+    let identified_three = identify_proposal(proposal_three, identity()).unwrap();
+    let forward = merge_proposals([
+        identified_one.clone(),
+        identified_two.clone(),
+        identified_three.clone(),
+    ])
+    .unwrap();
+    let reverse = merge_proposals([
+        identified_three.clone(),
+        identified_two.clone(),
+        identified_one.clone(),
+    ])
+    .unwrap();
+    let grouped = merge_proposals([
+        merge_proposals([identified_one, identified_two]).unwrap(),
+        identified_three,
+    ])
+    .unwrap();
     assert_eq!(forward, reverse);
+    assert_eq!(forward, grouped);
 }
 
 #[test]
@@ -885,7 +906,7 @@ fn transaction_keeps_optional_source_event_link_through_accounting_conversion() 
         }],
         effects: vec![EffectProposal {
             period,
-            target: "property.condition".into(),
+            target: property_simulation_domain::ResourceKey::new("property.condition").unwrap(),
             key: "condition".into(),
             source_event_key: Some("repair_done".into()),
             condition: AssetCondition::Available,
@@ -917,7 +938,7 @@ fn transaction_keeps_optional_source_event_link_through_accounting_conversion() 
     let missing_effect_event = SliceProposal {
         effects: vec![EffectProposal {
             period,
-            target: "property.condition".into(),
+            target: property_simulation_domain::ResourceKey::new("property.condition").unwrap(),
             key: "condition".into(),
             source_event_key: Some("missing".into()),
             condition: AssetCondition::Available,
@@ -938,7 +959,7 @@ fn effect_conflicts_are_reported_as_invalid_proposals() {
     let first = SliceProposal {
         effects: vec![EffectProposal {
             period,
-            target: "property.condition".into(),
+            target: property_simulation_domain::ResourceKey::new("property.condition").unwrap(),
             key: "condition".into(),
             source_event_key: None,
             condition: AssetCondition::Available,
@@ -948,7 +969,7 @@ fn effect_conflicts_are_reported_as_invalid_proposals() {
     let second = SliceProposal {
         effects: vec![EffectProposal {
             period,
-            target: "property.condition".into(),
+            target: property_simulation_domain::ResourceKey::new("property.condition").unwrap(),
             key: "condition".into(),
             source_event_key: None,
             condition: AssetCondition::NeedsRepair,
@@ -966,6 +987,33 @@ fn effect_conflicts_are_reported_as_invalid_proposals() {
 }
 
 #[test]
+fn equal_state_effect_writes_merge_idempotently_and_keep_both_provenances() {
+    let period = input().period;
+    let proposal = |instance| {
+        identify_proposal_for(
+            SliceProposal {
+                effects: vec![EffectProposal {
+                    period,
+                    target: property_simulation_domain::ResourceKey::new("property.condition")
+                        .unwrap(),
+                    key: "condition".into(),
+                    source_event_key: None,
+                    condition: AssetCondition::Available,
+                }],
+                ..Default::default()
+            },
+            identity(),
+            &activity(instance),
+            period,
+        )
+        .unwrap()
+    };
+    let merged = merge_proposals([proposal(1), proposal(2)]).unwrap();
+    assert_eq!(merged.effects().len(), 2);
+    assert_ne!(merged.effects()[0].id, merged.effects()[1].id);
+}
+
+#[test]
 fn effects_on_distinct_targets_do_not_conflict_and_keep_event_links() {
     let period = input().period;
     let make = |instance_id: u8, target: &str, event_key: &str| {
@@ -977,7 +1025,7 @@ fn effects_on_distinct_targets_do_not_conflict_and_keep_event_links() {
                 }],
                 effects: vec![EffectProposal {
                     period,
-                    target: target.into(),
+                    target: property_simulation_domain::ResourceKey::new(target).unwrap(),
                     key: format!("{target}.available"),
                     source_event_key: Some(event_key.into()),
                     condition: AssetCondition::Available,
@@ -1207,7 +1255,7 @@ fn merge_rejects_duplicate_event_and_effect_ids() {
 
     let effect = EffectProposal {
         period: input().period,
-        target: "property.condition".into(),
+        target: property_simulation_domain::ResourceKey::new("property.condition").unwrap(),
         key: "same".into(),
         source_event_key: None,
         condition: AssetCondition::Available,
@@ -1297,4 +1345,177 @@ fn merge_rejects_different_periods() {
             "cannot merge outputs from different trials, branches, or periods"
         ))
     );
+}
+
+#[test]
+fn slice_stage_planning_is_stable_and_rejects_invalid_graphs() {
+    let resource = |id: u8, slice: u8, dependencies: Vec<u8>| SliceResources {
+        instance_id: ActivityInstanceId::from_bytes([id; 16]),
+        slice_id: SliceId::from_bytes([slice; 16]),
+        version: ModelVersionId::from_bytes([2; 16]),
+        reads: Default::default(),
+        writes: Default::default(),
+        dependencies: dependencies
+            .into_iter()
+            .map(|d| ActivityInstanceId::from_bytes([d; 16]))
+            .collect(),
+    };
+    let items = vec![
+        resource(3, 3, vec![1]),
+        resource(2, 1, vec![]),
+        resource(1, 2, vec![]),
+    ];
+    let plan = plan_slice_stages(&items).unwrap();
+    assert_eq!(
+        plan,
+        vec![
+            vec![
+                ActivityInstanceId::from_bytes([2; 16]),
+                ActivityInstanceId::from_bytes([1; 16])
+            ],
+            vec![ActivityInstanceId::from_bytes([3; 16])]
+        ]
+    );
+    assert!(plan_slice_stages(&[resource(1, 1, vec![9])]).is_err());
+    assert!(plan_slice_stages(&[resource(1, 1, vec![2]), resource(2, 2, vec![1])]).is_err());
+}
+
+#[test]
+fn composition_accepts_shared_writes_but_rejects_undeclared_effect_and_unordered_read_write() {
+    let key = property_simulation_domain::ResourceKey::new("property.condition").unwrap();
+    let a = SliceResources {
+        instance_id: ActivityInstanceId::from_bytes([1; 16]),
+        slice_id: SliceId::from_bytes([1; 16]),
+        version: ModelVersionId::from_bytes([2; 16]),
+        reads: Default::default(),
+        writes: [key.clone()].into_iter().collect(),
+        dependencies: Default::default(),
+    };
+    let b = SliceResources {
+        instance_id: ActivityInstanceId::from_bytes([2; 16]),
+        slice_id: SliceId::from_bytes([2; 16]),
+        version: ModelVersionId::from_bytes([2; 16]),
+        writes: Default::default(),
+        reads: [key.clone()].into_iter().collect(),
+        dependencies: Default::default(),
+    };
+    let same_writer = SliceResources {
+        instance_id: ActivityInstanceId::from_bytes([3; 16]),
+        slice_id: SliceId::from_bytes([3; 16]),
+        version: ModelVersionId::from_bytes([2; 16]),
+        reads: Default::default(),
+        writes: [key.clone()].into_iter().collect(),
+        dependencies: Default::default(),
+    };
+    assert!(validate_composition(&[a.clone(), same_writer], &[]).is_ok());
+    assert!(validate_composition(&[a.clone(), b], &[]).is_err());
+    // Being placed in different topological stages by an unrelated dependency
+    // does not establish an ordering between the conflicting pair.
+    let unrelated = SliceResources {
+        instance_id: ActivityInstanceId::from_bytes([4; 16]),
+        slice_id: SliceId::from_bytes([4; 16]),
+        version: ModelVersionId::from_bytes([2; 16]),
+        reads: Default::default(),
+        writes: Default::default(),
+        dependencies: Default::default(),
+    };
+    let later_reader = SliceResources {
+        instance_id: ActivityInstanceId::from_bytes([5; 16]),
+        slice_id: SliceId::from_bytes([5; 16]),
+        version: ModelVersionId::from_bytes([2; 16]),
+        reads: [key.clone()].into_iter().collect(),
+        writes: Default::default(),
+        dependencies: [unrelated.instance_id].into_iter().collect(),
+    };
+    assert!(validate_composition(&[a.clone(), unrelated, later_reader], &[]).is_err());
+    let proposal = identify_proposal_for(
+        SliceProposal {
+            effects: vec![EffectProposal {
+                period: input().period,
+                target: key,
+                key: "condition".into(),
+                source_event_key: None,
+                condition: AssetCondition::Available,
+            }],
+            ..Default::default()
+        },
+        identity(),
+        &activity(1),
+        input().period,
+    )
+    .unwrap();
+    let active = activity(1);
+    let undeclared = SliceResources {
+        instance_id: active.id,
+        slice_id: active.slice_id,
+        version: active.version,
+        reads: Default::default(),
+        writes: Default::default(),
+        dependencies: Default::default(),
+    };
+    assert!(validate_composition(&[undeclared], std::slice::from_ref(&proposal)).is_err());
+
+    let wrong_version = SliceResources {
+        instance_id: active.id,
+        slice_id: active.slice_id,
+        version: ModelVersionId::from_bytes([9; 16]),
+        reads: Default::default(),
+        writes: [property_simulation_domain::ResourceKey::new("property.condition").unwrap()]
+            .into_iter()
+            .collect(),
+        dependencies: Default::default(),
+    };
+    assert!(validate_composition(&[wrong_version], &[proposal]).is_err());
+}
+
+#[test]
+fn slice_resource_contract_is_used_to_validate_actual_account_writes() {
+    let slice = RentalSlice {
+        instance: rental_activity(8),
+    };
+    let period_input = input();
+    let declaration = slice.resources(&period_input);
+    assert!(
+        declaration
+            .writes
+            .contains(&account_resource_key(period_input.cash_account))
+    );
+    assert!(
+        declaration
+            .writes
+            .contains(&account_resource_key(period_input.rent_account))
+    );
+
+    let proposal = identify_proposal_for(
+        SliceProposal {
+            transactions: vec![TransactionProposal {
+                key: "rent".into(),
+                period: period_input.period,
+                entries: vec![property_simulation_accounting::LedgerEntry::new(
+                    period_input.cash_account,
+                    property_simulation_accounting::BalanceSide::Debit,
+                    money("1"),
+                )],
+                source_event_key: None,
+            }],
+            ..Default::default()
+        },
+        identity(),
+        slice.instance(),
+        period_input.period,
+    )
+    .unwrap();
+    assert!(
+        validate_composition(
+            std::slice::from_ref(&declaration),
+            std::slice::from_ref(&proposal)
+        )
+        .is_ok()
+    );
+
+    let mut incomplete = declaration;
+    incomplete
+        .writes
+        .remove(&account_resource_key(period_input.cash_account));
+    assert!(validate_composition(&[incomplete], &[proposal]).is_err());
 }

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use property_simulation_accounting::{LedgerEntry, LedgerTransaction, LedgerTransactionSource};
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, EffectId, EventId, LedgerTransactionId,
-    ModelVersionId, Money, SliceId, TrialId, YearMonth,
+    ModelVersionId, Money, ResourceKey, SliceId, TrialId, YearMonth,
 };
 pub use property_simulation_models::RepairSample;
 
@@ -51,7 +51,7 @@ pub struct EventProposal {
 pub struct EffectProposal {
     pub period: YearMonth,
     /// Stable resource key identifying the state this effect writes.
-    pub target: String,
+    pub target: ResourceKey,
     pub key: String,
     /// Stable event key within this activity instance, if this effect was caused by an event.
     pub source_event_key: Option<String>,
@@ -134,7 +134,7 @@ pub struct ProposedEffect {
     pub slice_id: SliceId,
     pub version: ModelVersionId,
     pub period: YearMonth,
-    pub target: String,
+    pub target: ResourceKey,
     pub key: String,
     pub source_event_id: Option<EventId>,
     pub condition: AssetCondition,

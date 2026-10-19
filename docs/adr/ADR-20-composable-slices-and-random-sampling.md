@@ -33,3 +33,13 @@ Unexpected runtime errors, including checked numeric overflow outside validated 
 ## Consequences
 
 M2 defines explicit proposal merge rules and stable provenance/ID derivation. It tests independent results under reordered and partitioned evaluation, while testing conflict rules separately. Slice tests use explicit typed samples; distribution and sampler tests are independent, with compatibility tests at their composition boundary. Runtime failure handling stops the run and records diagnostics; no simulation result is emitted for a failed period.
+
+## M2.4 resource declarations and merge rules (2026-10-19)
+
+Each active Slice instance derives typed `ResourceKey` reads, writes, and dependencies on active instance IDs from its frozen input. The composition boundary rejects missing dependencies and cycles, and computes finite topological stages; members are ordered by stable `SliceId` and instance ID. Output provenance must match the declaration. Effects and journal account postings must target declared writes; account resources use the canonical `account:<32 lowercase hex digits>` key. A read/write overlap must be ordered through a dependency path; being in different topological stages alone is insufficient. Shared state writes use the explicit equal-value reducer described below.
+
+Cash changes remain separate traceable double-entry transactions and account balances are derived by the Ledger. State effects on one resource merge idempotently when their resulting values are equal; differing values are rejected. Output IDs remain unique per output kind and merged collections retain canonical ID order. This M2.4 framework does not implement complete monthly coordination.
+
+Alternatives considered: closed resource enums were rejected in favor of extensible typed keys; implicit conflict ordering was rejected because it hides domain causality; netting cash postings was rejected because it loses activity provenance.
+
+Consequences and vectors: empty declarations form a valid isolated composition; ordering is stable under input permutation; missing/cyclic dependencies and undeclared output writes fail validation; identical state writes may coexist, different values fail, and distinct transactions remain individually traceable.

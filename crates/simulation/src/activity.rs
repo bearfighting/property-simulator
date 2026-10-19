@@ -1,12 +1,12 @@
 use std::ops::Deref;
 
-use property_simulation_domain::{ActivityInstanceId, ModelVersionId, SliceId, YearMonth};
-
+use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
     ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState, RepairSample, SliceProposal,
 };
 use crate::validation::ValidatedInput;
+use property_simulation_domain::{ActivityInstanceId, ModelVersionId, SliceId, YearMonth};
 use property_simulation_models::{
     Distribution, RandomSource, RepairDistribution, Sampler, SamplingError,
 };
@@ -34,6 +34,9 @@ pub trait SimulationSlice {
     type Sample;
     const SAMPLE_KIND: ActivitySampleKind;
     fn instance(&self) -> &ActivityInstance;
+    /// Declare all resources and same-period prerequisites for this active
+    /// instance, including accounts affected by the frozen period inputs.
+    fn resources(&self, input: &FrozenInput) -> SliceResources;
     /// Validate the typed sample at the input boundary, before transition logic runs.
     fn validate_sample(
         &self,
