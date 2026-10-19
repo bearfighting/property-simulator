@@ -24,6 +24,7 @@
 | [ADR-14](adr/ADR-14-mortgage-interest.md) | 贷款利息计算 | 月利率、付款顺序、资本化、封顶和舍入规则 |
 | [ADR-15](adr/ADR-15-random-streams-and-branches.md) | 随机流、分支与恢复 | 新分支创建新 trial；checkpoint 恢复同一 trial |
 | [ADR-16](adr/ADR-16-configuration-and-run-control.md) | 配置与运行控制 | 初始配置、月度输入、终止条件及历史分支 |
+| [ADR-17](adr/ADR-17-money-and-identifiers.md) | 货币金额与标识符 | 单币种账本、不兑换；强类型 ID 与科目代码分离 |
 
 
 ## 6. Slice 架构与契约
@@ -142,9 +143,9 @@ crates/
 **基础类型与时间**
 
 - `YearMonth`：有效年月、排序、加减月、包含端点的区间迭代；不使用日期天数表达月度模型。
-- `Money`：十进制定点金额，禁止二进制浮点参与账务计算；`Currency` 首版单币种。
+- `Money`：带显式币种代码的十进制定点金额，禁止二进制浮点参与账务计算；一个账本首版只允许一种币种，不做兑换。货币符号和本地化格式由展示层处理。
 - `RoundingPolicy`：中间计算使用十进制定点精度，最终入账金额按单币种货币最小单位四舍五入（正数 midpoint half-up）；舍入规则是模型版本的一部分。贷款利息按此规则舍入到分。若未来出现多币种或负数舍入场景，再补充相应约定。
-- 强类型 ID：场景、运行、Slice、实体、事件、决策、凭证、账户及模型版本 ID。
+- 强类型、不透明 ID：场景、运行、Slice、实体、事件、决策、凭证、账户及模型版本各用独立类型；`AccountCode` 是可读科目代码，不是 `AccountId`。ID 由领域调用方提供，核心计算不生成 ID；重试复用原凭证 ID。
 - 所有可序列化模型有明确 schema/version；金额编码为带货币的十进制字符串。
 
 **状态、历史与连续运行**

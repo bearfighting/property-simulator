@@ -13,8 +13,8 @@ The minimal accounts used below are Cash (asset), Property (asset), Mortgage pay
 | L-03 | Repair paid $800 | Repairs expense 800 | Cash 800 | 800 = 800 |
 | L-04 | Rent received $2,000 | Cash 2,000 | Rental income 2,000 | 2,000 = 2,000 |
 | L-05 | Property tax paid $300 | Property tax expense 300 | Cash 300 | 300 = 300 |
-| L-06 | Reconciliation after L-02 to L-05 | Opening balances plus listed debits/credits | — | Cash = 20,000 - 1,500 - 800 + 2,000 - 300 = 19,400; mortgage = 199,000; net income = 2,000 - 500 - 800 - 300 = 400; assets 319,400 = liabilities 199,000 + opening equity 120,000 + net income 400 |
-| L-07 | Interest due $100, payment $50; $50 unpaid interest capitalizes (M-03) | Interest expense 100 | Cash 50; Mortgage payable 50 | 100 = 100; expense is fully recognized, cash paid is $50, liability rises by $50 |
+| L-06 | Reconciliation after L-02 to L-05 | Opening balances plus listed debits/credits | — | Cash = 20,000 - 1,500 - 800 + 2,000 - 300 = 19,400; operating cash flow = -500 - 800 + 2,000 - 300 = 400; financing cash flow = -1,000; net cash change = -600; mortgage = 199,000; net income = 400; assets 319,400 = liabilities 199,000 + opening equity 120,000 + net income 400 |
+| L-07 | Interest due $100, payment $50; $50 unpaid interest capitalizes (M-03) | Interest expense 100 | Cash 50; Mortgage payable 50 | 100 = 100; expense is fully recognized, $50 operating cash outflow is recorded, liability rises by $50 without a cash flow |
 
 ## Mortgage vectors
 
