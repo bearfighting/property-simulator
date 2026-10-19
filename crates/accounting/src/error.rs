@@ -47,6 +47,12 @@ pub enum AccountError {
     OpeningChartMismatch,
     PostingAmountPrecision(Money),
     Domain(DomainError),
+    InvalidProjectionRange,
+    CashFlowAccountMustBeAsset(AccountId),
+    CashFlowCategoryMissing(AccountId),
+    CashFlowCategoryOnNonCashAccount(AccountId),
+    CashFlowAccountsRequired,
+    NegativeAssetBalance(AccountId),
 }
 
 impl fmt::Display for AccountError {
@@ -108,6 +114,28 @@ impl fmt::Display for AccountError {
                 "posting amount {amount} exceeds its currency minor-unit precision"
             ),
             Self::Domain(error) => write!(f, "opening balance arithmetic failed: {error}"),
+            Self::InvalidProjectionRange => {
+                f.write_str("projection start month must not be after end month")
+            }
+            Self::CashFlowAccountMustBeAsset(id) => {
+                write!(f, "cash-flow account {id:?} must be a non-contra asset")
+            }
+            Self::CashFlowCategoryMissing(id) => {
+                write!(f, "cash posting to {id:?} requires a cash-flow category")
+            }
+            Self::CashFlowCategoryOnNonCashAccount(id) => write!(
+                f,
+                "non-cash posting to {id:?} cannot have a cash-flow category"
+            ),
+            Self::CashFlowAccountsRequired => {
+                f.write_str("at least one cash account must be supplied for cash-flow projection")
+            }
+            Self::NegativeAssetBalance(id) => {
+                write!(
+                    f,
+                    "non-contra asset account {id:?} cannot have a credit balance"
+                )
+            }
         }
     }
 }

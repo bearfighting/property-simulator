@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use property_simulation_domain::{
     AccountId, Currency, LedgerTransactionId, Money, RoundingPolicy, YearMonth,
 };
 
-use crate::{AccountError, BalanceSide, ChartOfAccounts, OpeningBalances};
+use crate::{AccountError, BalanceSide, CashFlowCategory, ChartOfAccounts, OpeningBalances};
 
 /// One debit or credit in a proposed ledger transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +13,7 @@ pub struct LedgerEntry {
     account_id: AccountId,
     side: BalanceSide,
     amount: Money,
+    cash_flow_category: Option<CashFlowCategory>,
 }
 
 impl LedgerEntry {
@@ -20,6 +22,7 @@ impl LedgerEntry {
             account_id,
             side,
             amount,
+            cash_flow_category: None,
         }
     }
     pub const fn account_id(self) -> AccountId {
@@ -30,6 +33,13 @@ impl LedgerEntry {
     }
     pub const fn amount(self) -> Money {
         self.amount
+    }
+    pub const fn cash_flow_category(self) -> Option<CashFlowCategory> {
+        self.cash_flow_category
+    }
+    pub const fn with_cash_flow_category(mut self, category: CashFlowCategory) -> Self {
+        self.cash_flow_category = Some(category);
+        self
     }
 }
 
@@ -105,6 +115,32 @@ impl Ledger {
 
     /// Validates the complete transaction before mutating the posted ledger.
     pub fn post(&mut self, transaction: LedgerTransaction) -> Result<(), AccountError> {
+        self.post_batch([transaction])
+    }
+
+    /// Validates and commits a group of transactions atomically. Non-contra asset balances are
+    /// checked at each affected month-end after all transactions in the batch are applied.
+    pub fn post_batch(
+        &mut self,
+        transactions: impl IntoIterator<Item = LedgerTransaction>,
+    ) -> Result<(), AccountError> {
+        let transactions: Vec<_> = transactions.into_iter().collect();
+        if transactions.is_empty() {
+            return Ok(());
+        }
+        let mut candidate = self.clone();
+        for transaction in transactions {
+            candidate.post_without_asset_balance_check(transaction)?;
+        }
+        candidate.validate_non_contra_asset_month_ends()?;
+        *self = candidate;
+        Ok(())
+    }
+
+    fn post_without_asset_balance_check(
+        &mut self,
+        transaction: LedgerTransaction,
+    ) -> Result<(), AccountError> {
         if self
             .posted
             .iter()
@@ -173,6 +209,21 @@ impl Ledger {
         Ok(())
     }
 
+    fn validate_non_contra_asset_month_ends(&self) -> Result<(), AccountError> {
+        let months: BTreeSet<_> = self.posted.iter().map(|posted| posted.0.period).collect();
+        for account in self.chart.accounts_by_code().filter(|account| {
+            account.category() == crate::AccountCategory::Asset && !account.is_contra()
+        }) {
+            for month in &months {
+                let (side, amount) = self.balance_through(account.id(), *month)?;
+                if side == BalanceSide::Credit && !amount.amount().is_zero() {
+                    return Err(AccountError::NegativeAssetBalance(account.id()));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Returns the net balance side and non-negative magnitude for any known account.
     pub fn balance(&self, account_id: AccountId) -> Result<(BalanceSide, Money), AccountError> {
         let account = self
@@ -226,6 +277,45 @@ impl Ledger {
             .accounts_by_code()
             .map(|account| Ok((account.id(), self.balance(account.id())?)))
             .collect()
+    }
+
+    pub(crate) fn balance_through(
+        &self,
+        account_id: AccountId,
+        through: YearMonth,
+    ) -> Result<(BalanceSide, Money), AccountError> {
+        let account = self
+            .chart
+            .get(account_id)
+            .ok_or(AccountError::UnknownPostingAccount(account_id))?;
+        let (opening_side, opening_amount) = self.opening.balance(account_id)?;
+        let mut signed = if opening_side == BalanceSide::Debit {
+            opening_amount
+        } else {
+            Money::new(-opening_amount.amount(), self.currency)
+        };
+        for transaction in self.posted.iter().filter(|tx| tx.0.period <= through) {
+            for entry in transaction
+                .0
+                .entries
+                .iter()
+                .filter(|entry| entry.account_id == account_id)
+            {
+                signed = match entry.side {
+                    BalanceSide::Debit => signed.checked_add(entry.amount),
+                    BalanceSide::Credit => signed.checked_sub(entry.amount),
+                }
+                .map_err(AccountError::Arithmetic)?;
+            }
+        }
+        let side = if signed.amount().is_sign_negative() {
+            BalanceSide::Credit
+        } else if signed.amount().is_zero() {
+            account.normal_balance()
+        } else {
+            BalanceSide::Debit
+        };
+        Ok((side, Money::new(signed.amount().abs(), self.currency)))
     }
 }
 
@@ -388,6 +478,16 @@ mod tests {
                 transaction(
                     1,
                     vec![
+                        entry(5, BalanceSide::Debit, money(1001, c)),
+                        entry(1, BalanceSide::Credit, money(1001, c)),
+                    ],
+                ),
+                AccountError::NegativeAssetBalance(id(1)),
+            ),
+            (
+                transaction(
+                    1,
+                    vec![
                         entry(1, BalanceSide::Debit, money(-1, c)),
                         entry(2, BalanceSide::Credit, money(-1, c)),
                     ],
@@ -431,6 +531,95 @@ mod tests {
             assert!(l.transactions().next().is_none());
             assert_eq!(l.balance(id(1)).unwrap().1, money(1000, c));
         }
+    }
+
+    #[test]
+    fn permits_non_contra_asset_to_reach_zero_but_not_below_zero() {
+        let (mut ledger, c) = fixture();
+        ledger
+            .post(transaction(
+                1,
+                vec![
+                    entry(3, BalanceSide::Debit, money(1_000, c)),
+                    entry(1, BalanceSide::Credit, money(1_000, c)),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(
+            ledger.balance(id(1)).unwrap(),
+            (BalanceSide::Debit, money(0, c))
+        );
+        assert_eq!(
+            ledger.post(transaction(
+                2,
+                vec![
+                    entry(3, BalanceSide::Debit, money(1, c)),
+                    entry(1, BalanceSide::Credit, money(1, c)),
+                ],
+            )),
+            Err(AccountError::NegativeAssetBalance(id(1)))
+        );
+        assert_eq!(ledger.transactions().count(), 1);
+        assert_eq!(
+            ledger.balance(id(1)).unwrap(),
+            (BalanceSide::Debit, money(0, c))
+        );
+    }
+
+    #[test]
+    fn batch_validates_asset_balance_at_month_end_independent_of_transaction_order() {
+        let (mut ledger, c) = fixture();
+        // Starting from $1,000 cash, the first transaction temporarily spends $1,100;
+        // an owner contribution restores $200 in the same month, leaving a valid $100.
+        let spend = transaction(
+            1,
+            vec![
+                entry(3, BalanceSide::Debit, money(1_100, c)),
+                entry(1, BalanceSide::Credit, money(1_100, c)),
+            ],
+        );
+        let receipt = transaction(
+            2,
+            vec![
+                entry(1, BalanceSide::Debit, money(200, c)),
+                entry(5, BalanceSide::Credit, money(200, c)),
+            ],
+        );
+
+        ledger.post_batch([spend, receipt]).unwrap();
+        assert_eq!(
+            ledger.balance(id(1)).unwrap(),
+            (BalanceSide::Debit, money(100, c))
+        );
+        assert_eq!(ledger.transactions().count(), 2);
+    }
+
+    #[test]
+    fn invalid_batch_does_not_partially_commit() {
+        let (mut ledger, c) = fixture();
+        let valid = transaction(
+            1,
+            vec![
+                entry(3, BalanceSide::Debit, money(10, c)),
+                entry(1, BalanceSide::Credit, money(10, c)),
+            ],
+        );
+        let overdraft = transaction(
+            2,
+            vec![
+                entry(3, BalanceSide::Debit, money(2_000, c)),
+                entry(1, BalanceSide::Credit, money(2_000, c)),
+            ],
+        );
+        assert_eq!(
+            ledger.post_batch([valid, overdraft]),
+            Err(AccountError::NegativeAssetBalance(id(1)))
+        );
+        assert_eq!(ledger.transactions().count(), 0);
+        assert_eq!(
+            ledger.balance(id(1)).unwrap(),
+            (BalanceSide::Debit, money(1_000, c))
+        );
     }
 
     #[test]
