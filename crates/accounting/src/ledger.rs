@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use property_simulation_domain::{
-    AccountId, Currency, LedgerTransactionId, Money, RoundingPolicy, YearMonth,
+    AccountId, ActivityInstanceId, Currency, EventId, LedgerTransactionId, ModelVersionId, Money,
+    RoundingPolicy, SliceId, YearMonth,
 };
 
 use crate::{AccountError, BalanceSide, CashFlowCategory, ChartOfAccounts, OpeningBalances};
@@ -45,10 +46,20 @@ impl LedgerEntry {
 
 /// A caller-identified transaction proposed for a specific inclusive month.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerTransactionSource {
+    pub instance_id: ActivityInstanceId,
+    pub slice_id: SliceId,
+    pub model_version: ModelVersionId,
+    pub output_key: String,
+    pub source_event_id: Option<EventId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerTransaction {
     id: LedgerTransactionId,
     period: YearMonth,
     entries: Vec<LedgerEntry>,
+    source: Option<LedgerTransactionSource>,
 }
 
 impl LedgerTransaction {
@@ -61,7 +72,12 @@ impl LedgerTransaction {
             id,
             period,
             entries: entries.into_iter().collect(),
+            source: None,
         }
+    }
+    pub fn with_source(mut self, source: LedgerTransactionSource) -> Self {
+        self.source = Some(source);
+        self
     }
     pub const fn id(&self) -> LedgerTransactionId {
         self.id
@@ -71,6 +87,9 @@ impl LedgerTransaction {
     }
     pub fn entries(&self) -> &[LedgerEntry] {
         &self.entries
+    }
+    pub fn source(&self) -> Option<&LedgerTransactionSource> {
+        self.source.as_ref()
     }
 }
 

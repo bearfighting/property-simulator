@@ -18,7 +18,7 @@ pub use account_code::AccountCode;
 pub use cash_flow::CashFlowCategory;
 pub use chart::ChartOfAccounts;
 pub use error::AccountError;
-pub use ledger::{Ledger, LedgerEntry, LedgerTransaction};
+pub use ledger::{Ledger, LedgerEntry, LedgerTransaction, LedgerTransactionSource};
 pub use opening_balance::{OpeningBalance, OpeningBalances, OpeningTotals};
 pub use projection::{
     AccountBalance, BalanceSheet, CashFlowStatement, CashFlowTotals, FinancialProjection,

@@ -1,0 +1,1009 @@
+use super::*;
+use property_simulation_accounting::ChartOfAccounts;
+use property_simulation_domain::{
+    AccountId, ActivityInstanceId, BranchId, Currency, EffectId, EventId, LedgerTransactionId,
+    ModelVersionId, Money, SliceId, TrialId, YearMonth,
+};
+use property_simulation_models::RepairCostDistribution;
+
+use crate::proposals::identify_proposal_for;
+struct TestIds;
+fn output_bytes(
+    kind: u8,
+    trial: TrialId,
+    branch: BranchId,
+    period: YearMonth,
+    instance: ActivityInstanceId,
+    key: &str,
+) -> [u8; 16] {
+    let mut state = 0xcbf29ce484222325u64;
+    for byte in [kind]
+        .into_iter()
+        .chain(trial.as_bytes().iter().copied())
+        .chain(branch.as_bytes().iter().copied())
+        .chain(period.year().to_le_bytes())
+        .chain([period.month()])
+        .chain(instance.as_bytes().iter().copied())
+        .chain(key.bytes())
+    {
+        state ^= u64::from(byte);
+        state = state.wrapping_mul(0x100000001b3);
+    }
+    let mut result = [0; 16];
+    result[..8].copy_from_slice(&state.to_le_bytes());
+    result[8..].copy_from_slice(
+        &state
+            .rotate_left(29)
+            .wrapping_mul(0x9e3779b97f4a7c15)
+            .to_le_bytes(),
+    );
+    result
+}
+impl OutputIdFactory for TestIds {
+    fn event_id(
+        &self,
+        t: TrialId,
+        b: BranchId,
+        p: YearMonth,
+        i: ActivityInstanceId,
+        k: &str,
+    ) -> EventId {
+        EventId::from_bytes(output_bytes(1, t, b, p, i, k))
+    }
+    fn effect_id(
+        &self,
+        t: TrialId,
+        b: BranchId,
+        p: YearMonth,
+        i: ActivityInstanceId,
+        k: &str,
+    ) -> EffectId {
+        EffectId::from_bytes(output_bytes(2, t, b, p, i, k))
+    }
+    fn transaction_id(
+        &self,
+        t: TrialId,
+        b: BranchId,
+        p: YearMonth,
+        i: ActivityInstanceId,
+        k: &str,
+    ) -> LedgerTransactionId {
+        LedgerTransactionId::from_bytes(output_bytes(3, t, b, p, i, k))
+    }
+}
+fn identity() -> OutputIdentity<'static> {
+    static IDS: TestIds = TestIds;
+    OutputIdentity {
+        trial: TrialId::from_bytes([6; 16]),
+        branch: BranchId::from_bytes([7; 16]),
+        factory: &IDS,
+    }
+}
+fn identity_for(trial: u8, branch: u8) -> OutputIdentity<'static> {
+    static IDS: TestIds = TestIds;
+    OutputIdentity {
+        trial: TrialId::from_bytes([trial; 16]),
+        branch: BranchId::from_bytes([branch; 16]),
+        factory: &IDS,
+    }
+}
+fn money(s: &str) -> Money {
+    Money::parse(s, Currency::from_code("CAD").unwrap()).unwrap()
+}
+fn activity(id: u8) -> ActivityInstance {
+    activity_with_kind(id, ActivitySampleKind::Repair)
+}
+fn rental_activity(id: u8) -> ActivityInstance {
+    activity_with_kind(id, ActivitySampleKind::Rental)
+}
+fn activity_with_kind(id: u8, sample_kind: ActivitySampleKind) -> ActivityInstance {
+    let mut b = [0; 16];
+    b[15] = id;
+    ActivityInstance {
+        id: ActivityInstanceId::from_bytes(b),
+        slice_id: SliceId::from_bytes([1; 16]),
+        version: ModelVersionId::from_bytes([2; 16]),
+        sample_kind,
+    }
+}
+fn input() -> FrozenInput {
+    FrozenInput {
+        period: YearMonth::new(2025, 1).unwrap(),
+        rent: money("80"),
+        rent_account: AccountId::from_bytes([3; 16]),
+        cash_account: AccountId::from_bytes([4; 16]),
+        repair_expense_account: AccountId::from_bytes([5; 16]),
+        repair_cost_limit: money("50"),
+    }
+}
+fn chart() -> ChartOfAccounts {
+    use property_simulation_accounting::{Account, AccountCategory, AccountCode};
+    ChartOfAccounts::new([
+        Account::new_cash_position(
+            AccountId::from_bytes([4; 16]),
+            AccountCode::new(1000).unwrap(),
+            "Cash",
+        )
+        .unwrap(),
+        Account::new(
+            AccountId::from_bytes([3; 16]),
+            AccountCode::new(4000).unwrap(),
+            AccountCategory::Income,
+            false,
+            "Rent",
+        )
+        .unwrap(),
+        Account::new(
+            AccountId::from_bytes([5; 16]),
+            AccountCode::new(5000).unwrap(),
+            AccountCategory::Expense,
+            false,
+            "Repairs",
+        )
+        .unwrap(),
+    ])
+    .unwrap()
+}
+fn sample<T>(instance: &ActivityInstance, value: T) -> ActivitySample<T> {
+    ActivitySample::new(instance, input().period, value)
+}
+
+#[test]
+fn input_validation_checks_repair_distribution_support_before_sampling() {
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let support = RepairCostDistribution {
+        maximum: money("50"),
+    };
+    assert!(validate_input(&input(), &support, &chart(), &state).is_ok());
+    assert!(
+        validate_input(
+            &input(),
+            &RepairCostDistribution {
+                maximum: money("49"),
+            },
+            &chart(),
+            &state,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        validate_input(
+            &input(),
+            &RepairCostDistribution {
+                maximum: money("-1"),
+            },
+            &chart(),
+            &state,
+        ),
+        Err(SimulationError::InvalidInput(
+            "invalid repair distribution support"
+        ))
+    );
+}
+
+#[test]
+fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() {
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let mut frozen = input();
+    frozen.rent = money("80.005");
+    frozen.repair_cost_limit = money("50.005");
+    let support = RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    assert!(validate_input(&frozen, &support, &chart(), &state).is_ok());
+
+    let rental = RentalSlice {
+        instance: rental_activity(10),
+    };
+    let rental_proposal = propose_slice(
+        &rental,
+        &state,
+        &frozen,
+        &ActivitySample::new(&rental.instance, frozen.period, ()),
+    )
+    .unwrap();
+    assert_eq!(
+        rental_proposal.transactions[0].entries[0].amount(),
+        money("80.01")
+    );
+    assert_eq!(
+        rental_proposal.transactions[0].entries[1].amount(),
+        money("80.01")
+    );
+
+    let repair = RepairSlice {
+        instance: activity(11),
+    };
+    let repair_proposal = propose_slice(
+        &repair,
+        &state,
+        &frozen,
+        &ActivitySample::new(
+            &repair.instance,
+            frozen.period,
+            RepairSample::Repair {
+                cost: money("1.005"),
+            },
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        repair_proposal.transactions[0].entries[0].amount(),
+        money("1.01")
+    );
+    assert_eq!(
+        repair_proposal.transactions[0].entries[1].amount(),
+        money("1.01")
+    );
+
+    frozen.rent = money("0.004");
+    let zero_rent = propose_slice(
+        &rental,
+        &state,
+        &frozen,
+        &ActivitySample::new(&rental.instance, frozen.period, ()),
+    )
+    .unwrap();
+    assert!(zero_rent.events.is_empty());
+    assert!(zero_rent.transactions.is_empty());
+}
+
+#[test]
+fn repair_sample_controls_expense_and_condition_effect() {
+    let slice = RepairSlice {
+        instance: activity(8),
+    };
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let none = propose_slice(
+        &slice,
+        &state,
+        &input(),
+        &sample(&slice.instance, RepairSample::NoRepair),
+    )
+    .unwrap();
+    assert!(none.transactions.is_empty() && none.effects.is_empty());
+    let repaired = propose_slice(
+        &slice,
+        &state,
+        &input(),
+        &sample(&slice.instance, RepairSample::Repair { cost: money("50") }),
+    )
+    .unwrap();
+    assert_eq!(repaired.transactions.len(), 1);
+    assert_eq!(repaired.events.len(), 1);
+    assert_eq!(repaired.effects[0].condition, AssetCondition::Available);
+    assert_eq!(
+        repaired.effects[0].source_event_key.as_deref(),
+        Some("repair_performed")
+    );
+    assert_eq!(
+        repaired.transactions[0].source_event_key.as_deref(),
+        Some("repair_performed")
+    );
+    assert_eq!(
+        repaired.transactions[0]
+            .entries
+            .iter()
+            .map(|e| e.amount())
+            .collect::<Vec<_>>(),
+        [money("50"), money("50")]
+    );
+    assert!(
+        propose_slice(
+            &slice,
+            &state,
+            &input(),
+            &sample(
+                &slice.instance,
+                RepairSample::Repair {
+                    cost: money("50.01")
+                }
+            ),
+        )
+        .is_err()
+    );
+
+    let available_state = OpeningState {
+        cash: money("10"),
+        condition: AssetCondition::Available,
+    };
+    let preventive = propose_slice(
+        &slice,
+        &available_state,
+        &input(),
+        &sample(&slice.instance, RepairSample::Repair { cost: money("5") }),
+    )
+    .unwrap();
+    assert_eq!(preventive.transactions.len(), 1);
+    assert_eq!(preventive.effects[0].condition, AssetCondition::Available);
+}
+
+#[test]
+fn sample_provenance_must_match_the_slice_instance_and_frozen_period() {
+    let slice = RepairSlice {
+        instance: activity(8),
+    };
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let wrong_instance = sample(&activity(9), RepairSample::NoRepair);
+    assert_eq!(
+        propose_slice(&slice, &state, &input(), &wrong_instance),
+        Err(SimulationError::InvalidInput(
+            "sample provenance does not match activity instance or period"
+        ))
+    );
+    let wrong_period = ActivitySample::new(
+        &slice.instance,
+        input().period.checked_add_months(1).unwrap(),
+        RepairSample::NoRepair,
+    );
+    assert!(propose_slice(&slice, &state, &input(), &wrong_period).is_err());
+    let wrong_kind_slice = RepairSlice {
+        instance: rental_activity(8),
+    };
+    let wrong_kind_sample = sample(&wrong_kind_slice.instance, RepairSample::NoRepair);
+    assert_eq!(
+        propose_slice(&wrong_kind_slice, &state, &input(), &wrong_kind_sample),
+        Err(SimulationError::InvalidInput(
+            "activity sample kind does not match Slice"
+        ))
+    );
+}
+#[test]
+fn rental_proposal_is_deterministic_and_merge_has_empty_identity() {
+    let slice = RentalSlice {
+        instance: rental_activity(9),
+    };
+    let state = OpeningState {
+        cash: money("-2"),
+        condition: AssetCondition::Available,
+    };
+    let a = propose_slice(&slice, &state, &input(), &sample(&slice.instance, ())).unwrap();
+    let b = propose_slice(&slice, &state, &input(), &sample(&slice.instance, ())).unwrap();
+    assert_eq!(a, b);
+    let a = identify_proposal(a, identity()).unwrap();
+    assert_eq!(a.events().len(), 1);
+    let posted = a.transactions()[0].clone().into_ledger_transaction();
+    assert_eq!(posted.source().unwrap().instance_id, slice.instance.id);
+    assert_eq!(posted.source().unwrap().output_key, "rent");
+    assert_eq!(
+        posted.source().unwrap().source_event_id,
+        Some(a.events()[0].id)
+    );
+    assert_eq!(merge_proposals([a.clone()]).unwrap(), a);
+    assert_eq!(merge_proposals([]).unwrap(), IdentifiedProposal::default());
+}
+
+#[test]
+fn zero_rent_does_not_create_a_collection_event_or_posting() {
+    let slice = RentalSlice {
+        instance: rental_activity(9),
+    };
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let mut zero_rent = input();
+    zero_rent.rent = money("0");
+    let proposal = propose_slice(&slice, &state, &zero_rent, &sample(&slice.instance, ())).unwrap();
+    assert!(proposal.events.is_empty());
+    assert!(proposal.transactions.is_empty());
+}
+
+#[test]
+fn output_ids_are_repeatable_and_use_all_identity_dimensions() {
+    let factory = identity().factory;
+    let trial = TrialId::from_bytes([6; 16]);
+    let branch = BranchId::from_bytes([7; 16]);
+    let period = YearMonth::new(2025, 1).unwrap();
+    let instance = activity(4).id;
+    let id = factory.transaction_id(trial, branch, period, instance, "rent");
+    assert_eq!(
+        id,
+        factory.transaction_id(trial, branch, period, instance, "rent")
+    );
+    assert_ne!(
+        id,
+        factory.transaction_id(trial, branch, period, instance, "repair")
+    );
+    assert_ne!(
+        id,
+        factory.transaction_id(
+            TrialId::from_bytes([8; 16]),
+            branch,
+            period,
+            instance,
+            "rent"
+        )
+    );
+    assert_ne!(
+        id,
+        factory.transaction_id(
+            trial,
+            BranchId::from_bytes([8; 16]),
+            period,
+            instance,
+            "rent"
+        )
+    );
+    assert_ne!(
+        id,
+        factory.transaction_id(
+            trial,
+            branch,
+            period.checked_add_months(1).unwrap(),
+            instance,
+            "rent"
+        )
+    );
+    assert_ne!(
+        id,
+        factory.transaction_id(trial, branch, period, activity(5).id, "rent")
+    );
+    assert_ne!(
+        factory
+            .event_id(trial, branch, period, instance, "rent")
+            .as_bytes(),
+        id.as_bytes()
+    );
+
+    let slice = RentalSlice {
+        instance: rental_activity(4),
+    };
+    let proposal = propose_slice(
+        &slice,
+        &OpeningState {
+            cash: money("0"),
+            condition: AssetCondition::Available,
+        },
+        &input(),
+        &sample(slice.instance(), ()),
+    )
+    .unwrap();
+    let forward = identify_proposal(proposal.clone(), identity()).unwrap();
+    let reverse = identify_proposal(proposal, identity()).unwrap();
+    assert_eq!(forward, reverse);
+    assert_eq!(forward.transactions()[0].instance_id, slice.instance.id);
+    assert_eq!(forward.transactions()[0].slice_id, slice.instance.slice_id);
+    assert_eq!(forward.transactions()[0].version, slice.instance.version);
+    assert_eq!(forward.transactions()[0].period, input().period);
+    assert_ne!(
+        forward,
+        identify_proposal(
+            propose_slice(
+                &slice,
+                &OpeningState {
+                    cash: money("0"),
+                    condition: AssetCondition::Available
+                },
+                &input(),
+                &sample(slice.instance(), ())
+            )
+            .unwrap(),
+            identity_for(8, 7),
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn output_ids_do_not_depend_on_proposal_input_order() {
+    let one = RentalSlice {
+        instance: rental_activity(1),
+    };
+    let two = RentalSlice {
+        instance: rental_activity(2),
+    };
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let proposal_one = propose_slice(&one, &state, &input(), &sample(one.instance(), ())).unwrap();
+    let proposal_two = propose_slice(&two, &state, &input(), &sample(two.instance(), ())).unwrap();
+    let identified_one = identify_proposal(proposal_one, identity()).unwrap();
+    let identified_two = identify_proposal(proposal_two, identity()).unwrap();
+    let forward = merge_proposals([identified_one.clone(), identified_two.clone()]).unwrap();
+    let reverse = merge_proposals([identified_two, identified_one]).unwrap();
+    assert_eq!(forward, reverse);
+}
+
+#[test]
+fn identification_uses_coordinator_source_and_rejects_wrong_period() {
+    let draft = SliceProposal {
+        events: vec![EventProposal {
+            period: input().period,
+            key: "occurred".into(),
+        }],
+        ..Default::default()
+    };
+    let authoritative_instance = activity(12);
+    let identified = identify_proposal_for(
+        draft.clone(),
+        identity(),
+        &authoritative_instance,
+        input().period,
+    )
+    .unwrap();
+    assert_eq!(
+        identified.events()[0].instance_id,
+        authoritative_instance.id
+    );
+    assert_eq!(
+        identified.events()[0].slice_id,
+        authoritative_instance.slice_id
+    );
+    assert_eq!(
+        identified.events()[0].version,
+        authoritative_instance.version
+    );
+
+    assert_eq!(
+        identify_proposal_for(
+            draft,
+            identity(),
+            &authoritative_instance,
+            input().period.checked_add_months(1).unwrap(),
+        ),
+        Err(SimulationError::InvalidProposal(
+            "proposal period does not match frozen period"
+        ))
+    );
+}
+
+#[test]
+fn transaction_keeps_optional_source_event_link_through_accounting_conversion() {
+    let period = input().period;
+    let proposal = SliceProposal {
+        events: vec![EventProposal {
+            period,
+            key: "rent_collected".into(),
+        }],
+        transactions: vec![TransactionProposal {
+            key: "rent".into(),
+            period,
+            entries: Vec::new(),
+            source_event_key: Some("rent_collected".into()),
+        }],
+        ..Default::default()
+    };
+    let identified = identify_proposal_for(proposal, identity(), &activity(3), period).unwrap();
+    let expected_event_id = identified.events()[0].id;
+    let transaction = identified.transactions()[0]
+        .clone()
+        .into_ledger_transaction();
+    assert_eq!(
+        transaction.source().unwrap().source_event_id,
+        Some(expected_event_id)
+    );
+
+    let effect_link = SliceProposal {
+        events: vec![EventProposal {
+            period,
+            key: "repair_done".into(),
+        }],
+        effects: vec![EffectProposal {
+            period,
+            target: "property.condition".into(),
+            key: "condition".into(),
+            source_event_key: Some("repair_done".into()),
+            condition: AssetCondition::Available,
+        }],
+        ..Default::default()
+    };
+    let identified = identify_proposal_for(effect_link, identity(), &activity(3), period).unwrap();
+    assert_eq!(
+        identified.effects()[0].source_event_id,
+        Some(identified.events()[0].id)
+    );
+
+    let missing_event = SliceProposal {
+        transactions: vec![TransactionProposal {
+            key: "orphan".into(),
+            period,
+            entries: Vec::new(),
+            source_event_key: Some("missing".into()),
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        identify_proposal_for(missing_event, identity(), &activity(3), period),
+        Err(SimulationError::InvalidProposal(
+            "transaction references missing event key"
+        ))
+    );
+
+    let missing_effect_event = SliceProposal {
+        effects: vec![EffectProposal {
+            period,
+            target: "property.condition".into(),
+            key: "condition".into(),
+            source_event_key: Some("missing".into()),
+            condition: AssetCondition::Available,
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        identify_proposal_for(missing_effect_event, identity(), &activity(3), period),
+        Err(SimulationError::InvalidProposal(
+            "effect references missing event key"
+        ))
+    );
+}
+
+#[test]
+fn effect_conflicts_are_reported_as_invalid_proposals() {
+    let period = input().period;
+    let first = SliceProposal {
+        effects: vec![EffectProposal {
+            period,
+            target: "property.condition".into(),
+            key: "condition".into(),
+            source_event_key: None,
+            condition: AssetCondition::Available,
+        }],
+        ..Default::default()
+    };
+    let second = SliceProposal {
+        effects: vec![EffectProposal {
+            period,
+            target: "property.condition".into(),
+            key: "condition".into(),
+            source_event_key: None,
+            condition: AssetCondition::NeedsRepair,
+        }],
+        ..Default::default()
+    };
+    let first = identify_proposal_for(first, identity(), &activity(1), period).unwrap();
+    let second = identify_proposal_for(second, identity(), &activity(2), period).unwrap();
+    assert_eq!(
+        merge_proposals([first, second]),
+        Err(SimulationError::InvalidProposal(
+            "conflicting state effects"
+        ))
+    );
+}
+
+#[test]
+fn effects_on_distinct_targets_do_not_conflict_and_keep_event_links() {
+    let period = input().period;
+    let make = |instance_id: u8, target: &str, event_key: &str| {
+        identify_proposal_for(
+            SliceProposal {
+                events: vec![EventProposal {
+                    period,
+                    key: event_key.into(),
+                }],
+                effects: vec![EffectProposal {
+                    period,
+                    target: target.into(),
+                    key: format!("{target}.available"),
+                    source_event_key: Some(event_key.into()),
+                    condition: AssetCondition::Available,
+                }],
+                ..Default::default()
+            },
+            identity(),
+            &activity(instance_id),
+            period,
+        )
+        .unwrap()
+    };
+
+    let merged = merge_proposals([
+        make(1, "property.1.condition", "repair_1"),
+        make(2, "property.2.condition", "repair_2"),
+    ])
+    .unwrap();
+    assert_eq!(merged.effects().len(), 2);
+    for effect in merged.effects() {
+        assert!(
+            merged
+                .events()
+                .iter()
+                .any(|event| event.id == effect.source_event_id.unwrap())
+        );
+    }
+}
+
+#[test]
+fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
+    let period = input().period;
+    let sample = ActivitySample {
+        instance_id: activity(1).id,
+        slice_id: activity(1).slice_id,
+        version: activity(1).version,
+        period,
+        value: ActivitySampleValue::Repair(RepairSample::NoRepair),
+    };
+    let result = MonthlyResult::new(
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        period,
+        OpeningState {
+            cash: money("0"),
+            condition: AssetCondition::Available,
+        },
+        input(),
+        vec![activity(1)],
+        vec![sample.clone()],
+        OpeningState {
+            cash: money("0"),
+            condition: AssetCondition::Available,
+        },
+        IdentifiedProposal::default(),
+    )
+    .unwrap();
+    assert_eq!(result.trial_id(), TrialId::from_bytes([6; 16]));
+    assert_eq!(result.branch_id(), BranchId::from_bytes([7; 16]));
+    assert_eq!(
+        result.samples()[0].value,
+        ActivitySampleValue::Repair(RepairSample::NoRepair)
+    );
+    let foreign_sample = ActivitySample::new(
+        &activity(2),
+        period,
+        ActivitySampleValue::Repair(RepairSample::NoRepair),
+    );
+    assert!(
+        MonthlyResult::new(
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            period,
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available,
+            },
+            input(),
+            vec![activity(1)],
+            vec![foreign_sample],
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available,
+            },
+            IdentifiedProposal::default(),
+        )
+        .is_err()
+    );
+    let rental_instance = rental_activity(1);
+    let repair_sample_for_rental = ActivitySample::new(
+        &rental_instance,
+        period,
+        ActivitySampleValue::Repair(RepairSample::NoRepair),
+    );
+    assert!(
+        MonthlyResult::new(
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            period,
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available,
+            },
+            input(),
+            vec![rental_instance],
+            vec![repair_sample_for_rental],
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available,
+            },
+            IdentifiedProposal::default(),
+        )
+        .is_err()
+    );
+    let wrong_branch_proposal = identify_proposal_for(
+        SliceProposal::default(),
+        identity_for(6, 9),
+        &activity(1),
+        period,
+    )
+    .unwrap();
+    assert!(
+        MonthlyResult::new(
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            period,
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available
+            },
+            input(),
+            vec![activity(1)],
+            Vec::new(),
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available
+            },
+            wrong_branch_proposal,
+        )
+        .is_err()
+    );
+
+    let mut wrong_period = sample;
+    wrong_period.period = period.checked_add_months(1).unwrap();
+    assert!(
+        MonthlyResult::new(
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            period,
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available
+            },
+            input(),
+            vec![activity(1)],
+            vec![wrong_period],
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available
+            },
+            IdentifiedProposal::default(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn monthly_result_rejects_duplicate_ids_without_prior_merge() {
+    let period = input().period;
+    let duplicate_events = SliceProposal {
+        events: vec![
+            EventProposal {
+                period,
+                key: "same".into(),
+            },
+            EventProposal {
+                period,
+                key: "same".into(),
+            },
+        ],
+        ..Default::default()
+    };
+    let proposal =
+        identify_proposal_for(duplicate_events, identity(), &activity(1), period).unwrap();
+    assert_eq!(
+        MonthlyResult::new(
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            period,
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available
+            },
+            input(),
+            vec![activity(1)],
+            Vec::new(),
+            OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available
+            },
+            proposal,
+        ),
+        Err(SimulationError::DuplicateOutputId)
+    );
+}
+
+#[test]
+fn merge_rejects_duplicate_event_and_effect_ids() {
+    let event = EventProposal {
+        period: input().period,
+        key: "same".into(),
+    };
+    let p = SliceProposal {
+        events: vec![event.clone()],
+        ..Default::default()
+    };
+    let q = SliceProposal {
+        events: vec![event],
+        ..Default::default()
+    };
+    let p = identify_proposal_for(p, identity(), &activity(1), input().period).unwrap();
+    let q = identify_proposal_for(q, identity(), &activity(1), input().period).unwrap();
+    assert_eq!(
+        merge_proposals([p, q]),
+        Err(SimulationError::DuplicateOutputId)
+    );
+
+    let effect = EffectProposal {
+        period: input().period,
+        target: "property.condition".into(),
+        key: "same".into(),
+        source_event_key: None,
+        condition: AssetCondition::Available,
+    };
+    let p = SliceProposal {
+        effects: vec![effect.clone()],
+        ..Default::default()
+    };
+    let q = SliceProposal {
+        effects: vec![effect],
+        ..Default::default()
+    };
+    let p = identify_proposal_for(p, identity(), &activity(1), input().period).unwrap();
+    let q = identify_proposal_for(q, identity(), &activity(1), input().period).unwrap();
+    assert_eq!(
+        merge_proposals([p, q]),
+        Err(SimulationError::DuplicateOutputId)
+    );
+
+    let transaction = TransactionProposal {
+        key: "same".into(),
+        period: input().period,
+        entries: Vec::new(),
+        source_event_key: None,
+    };
+    let p = SliceProposal {
+        transactions: vec![transaction.clone()],
+        ..Default::default()
+    };
+    let q = SliceProposal {
+        transactions: vec![transaction],
+        ..Default::default()
+    };
+    let p = identify_proposal_for(p, identity(), &activity(1), input().period).unwrap();
+    let q = identify_proposal_for(q, identity(), &activity(1), input().period).unwrap();
+    assert_eq!(
+        merge_proposals([p, q]),
+        Err(SimulationError::DuplicateOutputId)
+    );
+}
+
+#[test]
+fn merge_rejects_different_trial_or_branch_identities() {
+    let proposal_a = identify_proposal_for(
+        SliceProposal::default(),
+        identity(),
+        &activity(1),
+        input().period,
+    )
+    .unwrap();
+    let proposal_b = identify_proposal_for(
+        SliceProposal::default(),
+        identity_for(6, 8),
+        &activity(2),
+        input().period,
+    )
+    .unwrap();
+    assert_eq!(
+        merge_proposals([proposal_a, proposal_b]),
+        Err(SimulationError::InvalidProposal(
+            "cannot merge outputs from different trials, branches, or periods"
+        ))
+    );
+}
+
+#[test]
+fn merge_rejects_different_periods() {
+    let first_period = input().period;
+    let second_period = first_period.checked_add_months(1).unwrap();
+    let first = identify_proposal_for(
+        SliceProposal::default(),
+        identity(),
+        &activity(1),
+        first_period,
+    )
+    .unwrap();
+    let second = identify_proposal_for(
+        SliceProposal::default(),
+        identity(),
+        &activity(2),
+        second_period,
+    )
+    .unwrap();
+    assert_eq!(
+        merge_proposals([first, second]),
+        Err(SimulationError::InvalidProposal(
+            "cannot merge outputs from different trials, branches, or periods"
+        ))
+    );
+}

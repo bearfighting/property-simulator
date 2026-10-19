@@ -20,7 +20,9 @@ opaque_id!(
     DecisionId,
     LedgerTransactionId,
     AccountId,
-    ModelVersionId
+    ModelVersionId,
+    ActivityInstanceId,
+    EffectId
 );
 
 #[cfg(test)]
