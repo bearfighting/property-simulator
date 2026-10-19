@@ -7,6 +7,9 @@ use crate::types::{
     ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState, RepairSample, SliceProposal,
 };
 use crate::validation::ValidatedInput;
+use property_simulation_models::{
+    Distribution, RandomSource, RepairDistribution, Sampler, SamplingError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivitySampleValue {
@@ -103,6 +106,26 @@ pub struct ActivitySample<T> {
     pub version: ModelVersionId,
     pub period: YearMonth,
     pub value: T,
+}
+
+/// Composition boundary for the repair model: validates distribution/Slice
+/// compatibility, samples from the injected source, and binds provenance.
+pub fn sample_repair<R, S>(
+    instance: &ActivityInstance,
+    period: YearMonth,
+    distribution: &RepairDistribution,
+    sampler: &mut S,
+    random: &mut R,
+) -> Result<ActivitySample<RepairSample>, SamplingError<R::Error>>
+where
+    R: RandomSource,
+    S: Sampler<RepairDistribution>,
+{
+    if instance.sample_kind != ActivitySampleKind::Repair || !distribution.validate() {
+        return Err(SamplingError::InvalidDistribution);
+    }
+    let value = sampler.sample(distribution, random)?;
+    Ok(ActivitySample::new(instance, period, value))
 }
 impl<T> ActivitySample<T> {
     pub fn new(instance: &ActivityInstance, period: YearMonth, value: T) -> Self {

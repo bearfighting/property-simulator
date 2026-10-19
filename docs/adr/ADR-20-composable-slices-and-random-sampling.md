@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-19
 - **Related:** [ADR-05](ADR-05-slice-coordination.md), [ADR-06](ADR-06-events-effects-ledger.md), [ADR-09](ADR-09-random-trials.md), [ADR-12](ADR-12-independent-random-categories.md), [ADR-17](ADR-17-money-and-identifiers.md), [ADR-18](ADR-18-sufficient-state-transition.md), [ADR-19](ADR-19-validation-only-domain-errors.md)
-- **Test vectors:** Independent proposal merging must be invariant under permutation and partitioning; sampled values are supplied explicitly to Slice calculations.
+- **Test vectors:** Independent proposal merging must be invariant under permutation and partitioning; sampled values are supplied explicitly to Slice calculations; repair probability and minor-unit cost support are exact and bounded as specified below and in [test-vectors.md](../test-vectors.md#m2-monthly-activity-vectors).
 
 ## Context
 
@@ -18,6 +18,8 @@ Activities are configured as Slice instances with caller-assigned stable instanc
 The injected ID factory must be deterministic and collision-resistant. Since IDs have a fixed 128-bit representation and output keys are not length-bounded, mathematical injectivity over all possible inputs is not promised. The monthly coordination boundary rejects duplicate IDs within each output kind, and a period result retains its trial and branch identity so outputs from different runs cannot be combined accidentally.
 
 Probability distributions, sampling algorithms, and Slices are separate components. A distribution defines the supported values and their probability law; a sampler implements a method for producing a value from that distribution; a Slice consumes typed, explicit sampled values and does not call or own a random-number generator. Sample provenance (instance, Slice, model version, sample kind, and period) is checked against the receiving Slice and frozen period, and the period result checks the sample kind against the activity instance. Different compatible samplers may be paired with the same distribution, and the same Slice may consume values produced by different samplers. Compatibility is validated at composition boundaries. The distribution's full support must fit validated numeric and domain constraints; unbounded support requires explicit truncation/value semantics or rejection of that configuration. M2 may inject explicit samples; random-stream allocation remains in M3.
+
+For the M2 repair example, occurrence probability is an exact rational `numerator / denominator` with a nonzero denominator and numerator no greater than denominator. Conditional repair cost is uniform over integer minor-unit amounts from zero through the floored maximum. The caller injects a `RandomSource`; samplers do not allocate or derive streams. Random-source failures are returned as sampling errors. Distribution compatibility is checked before sampling, while the existing Slice input boundary remains responsible for matching activity instance, sample kind, frozen period, and support.
 
 Unexpected runtime errors, including checked numeric overflow outside validated supported bounds, are fatal simulation failures and are not user-correctable domain outcomes. The run stops and produces diagnostics for engineering investigation. The system does not promise recovery, rollback, or persistent-state consistency after such an unrecoverable failure. Successful period completion still requires the normal state, event, and ledger result to satisfy their invariants.
 

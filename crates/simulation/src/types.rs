@@ -5,6 +5,7 @@ use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, EffectId, EventId, LedgerTransactionId,
     ModelVersionId, Money, SliceId, TrialId, YearMonth,
 };
+pub use property_simulation_models::RepairSample;
 
 use crate::activity::{ActivitySample, ActivitySampleValue};
 use crate::error::SimulationError;
@@ -28,11 +29,6 @@ pub struct FrozenInput {
     pub cash_account: AccountId,
     pub repair_expense_account: AccountId,
     pub repair_cost_limit: Money,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepairSample {
-    NoRepair,
-    Repair { cost: Money },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityInstance {

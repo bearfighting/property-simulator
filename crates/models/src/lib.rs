@@ -3,5 +3,5 @@
 mod repair_cost;
 mod sampling;
 
-pub use repair_cost::RepairCostDistribution;
-pub use sampling::Sampler;
+pub use repair_cost::{RepairCostDistribution, RepairDistribution, RepairSample, RepairSampler};
+pub use sampling::{Distribution, RandomSource, Sampler, SamplingError};

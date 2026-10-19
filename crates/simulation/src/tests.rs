@@ -4,7 +4,10 @@ use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, Currency, EffectId, EventId, LedgerTransactionId,
     ModelVersionId, Money, SliceId, TrialId, YearMonth,
 };
-use property_simulation_models::RepairCostDistribution;
+use property_simulation_models::{
+    RandomSource, RepairCostDistribution, RepairDistribution, RepairSample, RepairSampler,
+    SamplingError,
+};
 
 use crate::proposals::identify_proposal_for;
 struct TestIds;
@@ -89,6 +92,59 @@ fn identity_for(trial: u8, branch: u8) -> OutputIdentity<'static> {
 }
 fn money(s: &str) -> Money {
     Money::parse(s, Currency::from_code("CAD").unwrap()).unwrap()
+}
+
+struct FixedWords(Vec<u64>);
+impl RandomSource for FixedWords {
+    type Error = &'static str;
+    fn next_u64(&mut self) -> Result<u64, Self::Error> {
+        if self.0.is_empty() {
+            Err("empty")
+        } else {
+            Ok(self.0.remove(0))
+        }
+    }
+}
+
+#[test]
+fn repair_sampling_composition_binds_activity_and_period_provenance() {
+    let instance = activity(4);
+    let distribution = RepairDistribution {
+        occurrence_numerator: 0,
+        occurrence_denominator: 1,
+        cost: RepairCostDistribution {
+            maximum: money("1.23"),
+        },
+    };
+    let mut sampler = RepairSampler;
+    let mut random = FixedWords(vec![]);
+    let sample = sample_repair(
+        &instance,
+        YearMonth::new(2025, 1).unwrap(),
+        &distribution,
+        &mut sampler,
+        &mut random,
+    )
+    .unwrap();
+    assert_eq!(sample.instance_id, instance.id);
+    assert_eq!(sample.slice_id, instance.slice_id);
+    assert_eq!(sample.version, instance.version);
+    assert_eq!(sample.period, YearMonth::new(2025, 1).unwrap());
+    assert_eq!(sample.value, RepairSample::NoRepair);
+
+    let mut incompatible = rental_activity(4);
+    incompatible.slice_id = instance.slice_id;
+    let mut random = FixedWords(vec![]);
+    assert_eq!(
+        sample_repair(
+            &incompatible,
+            sample.period,
+            &distribution,
+            &mut sampler,
+            &mut random
+        ),
+        Err(SamplingError::InvalidDistribution)
+    );
 }
 fn activity(id: u8) -> ActivityInstance {
     activity_with_kind(id, ActivitySampleKind::Repair)

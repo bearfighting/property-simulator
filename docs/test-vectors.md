@@ -27,6 +27,12 @@ example does not admit an unbounded distribution. Positive rent and repair amoun
 to the currency minor unit using half-up before proposal entries are created; this keeps every
 accepted proposal postable by the Ledger.
 
+The M2.3 repair law uses an exact rational occurrence probability. Denominator zero and
+numerator greater than denominator are invalid; numerator zero and numerator equal to denominator
+represent the probability boundaries. Conditional cost is uniform over integer minor units from
+zero through `floor(maximum / minor_unit)`. For CAD, a maximum of 1.239 yields support 0.00 through
+1.23; a maximum below 0.01 yields the single supported value 0.00.
+
 ## Ledger vectors
 
 The minimal accounts used below are Cash (asset), Property (asset), Mortgage payable (liability), Opening equity (equity), Rental income (income), Interest expense, Repairs expense, and Property tax expense (expenses). Asset/expense normal balances are debit; liability/equity/income normal balances are credit.
