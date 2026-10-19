@@ -42,6 +42,7 @@ impl OpeningBalance {
 /// Validated opening facts and their balance-sheet projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpeningBalances {
+    chart: ChartOfAccounts,
     entries: Vec<OpeningBalance>,
     currency: Currency,
     totals: OpeningTotals,
@@ -149,6 +150,7 @@ impl OpeningBalances {
             net_worth,
         };
         Ok(Self {
+            chart: chart.clone(),
             entries,
             currency,
             totals,
@@ -158,6 +160,15 @@ impl OpeningBalances {
 
     pub fn entries(&self) -> &[OpeningBalance] {
         &self.entries
+    }
+    pub(crate) fn belongs_to(&self, chart: &ChartOfAccounts) -> bool {
+        self.chart.len() == chart.len()
+            && self.chart.accounts_by_code().all(|opening_account| {
+                chart.get(opening_account.id()).is_some_and(|account| {
+                    opening_account.category() == account.category()
+                        && opening_account.is_contra() == account.is_contra()
+                })
+            })
     }
     pub const fn currency(&self) -> Currency {
         self.currency

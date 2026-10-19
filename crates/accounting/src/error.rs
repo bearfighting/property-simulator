@@ -33,6 +33,19 @@ pub enum AccountError {
         declared: Money,
         derived: Money,
     },
+    DuplicateTransactionId(property_simulation_domain::LedgerTransactionId),
+    UnknownPostingAccount(AccountId),
+    TransactionCurrencyMismatch,
+    EmptyTransaction,
+    MissingDebitOrCredit,
+    NegativePostingAmount,
+    TransactionDoesNotBalance {
+        debits: Money,
+        credits: Money,
+    },
+    Arithmetic(DomainError),
+    OpeningChartMismatch,
+    PostingAmountPrecision(Money),
     Domain(DomainError),
 }
 
@@ -71,6 +84,28 @@ impl fmt::Display for AccountError {
             Self::DeclaredNetWorthMismatch { declared, derived } => write!(
                 f,
                 "declared net worth {declared} does not equal derived net worth {derived}"
+            ),
+            Self::DuplicateTransactionId(id) => write!(f, "duplicate ledger transaction ID {id:?}"),
+            Self::UnknownPostingAccount(id) => write!(f, "unknown posting account {id:?}"),
+            Self::TransactionCurrencyMismatch => {
+                f.write_str("transaction currency differs from ledger currency")
+            }
+            Self::EmptyTransaction => f.write_str("ledger transaction must contain entries"),
+            Self::MissingDebitOrCredit => {
+                f.write_str("ledger transaction must contain at least one debit and one credit")
+            }
+            Self::NegativePostingAmount => f.write_str("posting amount cannot be negative"),
+            Self::TransactionDoesNotBalance { debits, credits } => write!(
+                f,
+                "transaction debits {debits} do not equal credits {credits}"
+            ),
+            Self::Arithmetic(error) => write!(f, "ledger arithmetic failed: {error}"),
+            Self::OpeningChartMismatch => {
+                f.write_str("opening balances were validated against a different chart of accounts")
+            }
+            Self::PostingAmountPrecision(amount) => write!(
+                f,
+                "posting amount {amount} exceeds its currency minor-unit precision"
             ),
             Self::Domain(error) => write!(f, "opening balance arithmetic failed: {error}"),
         }
