@@ -2,9 +2,9 @@
 
 > 本文保留原规范章节编号，便于和既有讨论对应。首版实施基线以本文及 [实施路线](implementation-roadmap.md) 为准。
 
-## 2. 已确认决策摘要（正式 ADR 归档待 M0 完成）
+## 2. 已确认决策摘要（正式 ADR 索引）
 
-下表是当前基线的决策索引，不代替 `docs/adr/` 中的正式 ADR。M0 将建立 ADR 模板并归档需要保留的决策及测试向量。
+下表是当前基线的决策索引；正式记录见 [`docs/adr/`](adr/README.md)。
 
 | ID | 决策 | 解释 |
 |---|---|---|
@@ -20,6 +20,10 @@
 | ADR-10 | 三阶段交付 | I 领域内核 M0–M5；II CLI 与持久化；III GPUI 桌面应用。各阶段顺序以实施路线为准；交互式领域决策不属于 v1。 |
 | ADR-11 | 初期 Rust 静态注册 | 暂不做动态插件、通用配置语言或异步服务架构 |
 | ADR-12 | v1 随机范畴独立 | 自然环境、房屋/组件、政策/宏观、居住/运营范畴间按独立处理；Slice 可读取明确生成的共享状态，但不暗中引入跨范畴随机相关。未来相关性须作为显式、版本化模型设计。 |
+| [ADR-13](adr/ADR-13-ledger-profile.md) | 家庭房产 Ledger | 最小科目范围、期初净值及同月权责/现金简化 |
+| [ADR-14](adr/ADR-14-mortgage-interest.md) | 贷款利息计算 | 月利率、付款顺序、资本化、封顶和舍入规则 |
+| [ADR-15](adr/ADR-15-random-streams-and-branches.md) | 随机流、分支与恢复 | 新分支创建新 trial；checkpoint 恢复同一 trial |
+| [ADR-16](adr/ADR-16-configuration-and-run-control.md) | 配置与运行控制 | 初始配置、月度输入、终止条件及历史分支 |
 
 
 ## 6. Slice 架构与契约

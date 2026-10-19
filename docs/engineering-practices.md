@@ -35,9 +35,10 @@ Rust toolchain 使用 `stable`，并安装 `rustfmt` 与 `clippy`；workspace ed
 
 **测试分层与验收：**
 
-- Unit tests 验证 domain 数学、值对象、不变量和错误边界，不需 IO。
-- Application/service tests 使用内存端口或 fake 验证用例编排、Slice 顺序、Unit of Work 提交/回滚和幂等行为。
-- Integration tests 验证真实模块边界、序列化/反序列化、数据访问适配和完整组合流程；数据库相关测试在引入持久化后增加。
+- Unit tests 验证 domain 数学、值对象、不变量和错误边界，不需 IO；随所属 Rust crate 放置，靠近被测模块（例如 `#[cfg(test)]` 子模块），不为尚未实现的领域行为添加占位测试。
+- Application/service tests 使用内存端口或 fake 验证用例编排、Slice 顺序、Unit of Work 提交/失败回滚和幂等行为；放在 application/service crate 的模块测试或 `tests/` 目录，按测试是否需要访问私有实现选择。
+- Integration tests 验证真实模块边界、序列化/反序列化、数据访问适配和完整组合流程；放在对应 crate 的 `tests/`，数据库相关测试在引入持久化后增加。
+- M1/M2 共享手算预期值维护在 [`test-vectors.md`](test-vectors.md)，由对应测试引用；规则变化时同步更新关联 ADR、领域说明和向量，避免重复维护。
 - Property/invariant tests 覆盖金额/账务平衡、状态转换、checkpoint 恢复、快照分支隔离、随机流分配和 ID/引用约束；固定 seed/golden fixtures 用于软件模型回归，不要求独立重模拟得到相同轨迹。
 - 测试名称表达领域行为；失败信息包含输入场景和预期/实际值。测试不得依赖当前时间、外部网络、未固定 seed 或执行顺序。
 - 每个里程碑的验收记录格式、lint、编译和所需测试结果；具体要运行哪些命令由项目脚本定义。代码评审须检查层级职责、依赖方向、持久化/配置/展示是否越界，以及是否引入了没有现实需求支撑的抽象。
