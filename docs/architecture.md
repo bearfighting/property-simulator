@@ -67,6 +67,27 @@ struct SliceProposal {
 
 ## 13. Rust Workspace 与依赖方向
 
+M0-B 已选定最小 workspace 边界，当前实现位于 `crates/`：
+
+| Crate | 职责 | 依赖 |
+|---|---|---|
+| `property-simulation-domain` (`domain`) | 领域值、实体、不变量与纯领域规则 | 无 workspace crate 依赖 |
+| `property-simulation-accounting` (`accounting`) | 科目、凭证、分录、余额和报表投影 | `domain` |
+| `property-simulation-models` (`models`) | 领域模型策略与概率分布 | `domain` |
+| `property-simulation-simulation` (`simulation`) | 月度生命周期、Slice 协调和运行控制 | `domain`、`accounting`、`models` |
+
+依赖图：
+
+```text
+accounting ─┐
+            ├──> domain
+models ─────┘
+
+simulation ───> domain, accounting, models
+```
+
+这些 crate 目前只建立编译边界并记录各自职责，不提供空的占位 API；实际公开类型随对应里程碑加入。Infrastructure、CLI 和 GUI 暂不建 crate，待其有明确职责时再加入。Rust workspace 使用 edition 2024、stable toolchain 和集中配置；本地与 CI 共用 `scripts/check.sh`。
+
 ```text
 property-simulation-sandbox/
 ├── Cargo.toml
@@ -95,7 +116,7 @@ property-simulation-sandbox/
     └── adr/
 ```
 
-依赖方向：`simulation-core` 不依赖 GPUI 或 real-estate；领域 Slice 使用核心契约；Ledger 可被核心或应用层协调，但不能引入循环依赖；Desktop 只调用应用接口。实际 crate 拆分按编译边界与复杂度逐步演化，避免第一天创建过多空 crate。
+上述初始方案是候选结构参考。当前 M0-B crate 选择见本节开头；未来按真实编译边界扩展，保持 domain 不依赖 IO/展示层且不引入循环依赖。
 
 **候选库**：`serde`、`serde_json`、`rand`/`rand_distr`、`rust_decimal`、`time`、`thiserror`、`tracing`、`clap`、`rusqlite` 或 `sqlx`、`csv`、`rust_xlsxwriter`、GPUI。具体版本与 Linux 平台兼容性在初始化时验证。
 

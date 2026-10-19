@@ -19,7 +19,16 @@
 
 **静态质量检查：**
 
-- Rust 格式统一由 `rustfmt` 执行，CI/提交前以 `cargo fmt --check` 验证；不接受未格式化代码。
+工程骨架的统一入口为 `./scripts/check.sh`，本地开发和 GitHub Actions 均调用该脚本。脚本依次执行：
+
+1. `cargo fmt --all --check`
+2. `cargo clippy --workspace --all-targets -- -D warnings`
+3. `cargo check --workspace --all-targets`
+4. `cargo test --workspace`
+
+Rust toolchain 使用 `stable`，并安装 `rustfmt` 与 `clippy`；workspace edition 为 2024。新增 lint warning 应修复，局部 allow 需附清楚理由。
+
+- Rust 格式统一由 `rustfmt` 执行，CI/提交前以 `cargo fmt --all --check` 验证；不接受未格式化代码。
 - Clippy 作为 lint 基线，CI 执行 workspace 范围检查；明确选定并记录 lint 级别，新增 warning 应修复或附有范围最小、理由清楚的 allow，不用全局 allow 掩盖问题。
 - 编译器 warning 纳入质量门槛；依赖版本和特性保持明确，避免不必要的依赖及未使用依赖。
 - 格式、lint、编译和测试命令纳入统一脚本/CI；项目骨架建立时确定命令，不要等 GUI 阶段再补。

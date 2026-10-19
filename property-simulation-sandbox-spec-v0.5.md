@@ -1,7 +1,7 @@
 # Property Simulation Sandbox (PSS)
 
 **Project specification v0.5 — 2026-10-19**
-**Status:** Design baseline; implementation has not started.
+**Status:** Design baseline; the M0-B Rust workspace and quality-check entry point are in place. Remaining M0 design decisions and domain implementation are pending.
 
 The detailed specification is split by topic so each document has one main responsibility. Section numbers are retained from the original specification for reference; use the documents below as the current source of truth.
 
