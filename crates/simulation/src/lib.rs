@@ -12,7 +12,10 @@ pub use error::SimulationError;
 pub use proposals::{OutputIdentity, identify_proposal, merge_proposals};
 pub use slices::{RentalSlice, RepairSlice};
 pub use types::*;
-pub use validation::validate_input;
+pub use validation::{
+    ProposalValidationErrors, ProposalValidationIssue, ValidatedInput, ValidationErrors,
+    ValidationIssue, validate_input, validate_proposal_transactions,
+};
 
 #[cfg(test)]
 mod tests;

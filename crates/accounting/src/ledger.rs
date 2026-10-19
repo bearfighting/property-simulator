@@ -183,33 +183,11 @@ impl Ledger {
         self.cash_accounts.iter().copied()
     }
 
-    /// Validates the complete transaction before mutating the posted ledger.
-    pub fn post(&mut self, transaction: LedgerTransaction) -> Result<(), AccountError> {
-        self.post_batch([transaction])
-    }
-
-    /// Validates and commits a group of transactions atomically. Non-contra asset balances are
-    /// checked at each affected month-end after all transactions in the batch are applied.
-    pub fn post_batch(
-        &mut self,
-        transactions: impl IntoIterator<Item = LedgerTransaction>,
-    ) -> Result<(), AccountError> {
-        let transactions: Vec<_> = transactions.into_iter().collect();
-        if transactions.is_empty() {
-            return Ok(());
-        }
-        let mut candidate = self.clone();
-        for transaction in transactions {
-            candidate.post_without_asset_balance_check(transaction)?;
-        }
-        candidate.validate_non_contra_asset_month_ends()?;
-        *self = candidate;
-        Ok(())
-    }
-
-    fn post_without_asset_balance_check(
-        &mut self,
-        transaction: LedgerTransaction,
+    /// Validates transaction-local posting rules without changing the ledger. This does not
+    /// validate month-end account balances against other transactions in a proposed batch.
+    pub fn validate_transaction(
+        &self,
+        transaction: &LedgerTransaction,
     ) -> Result<(), AccountError> {
         if self
             .posted
@@ -249,13 +227,45 @@ impl Ledger {
                 }
             }
         }
-        self.validate_cash_classifications(&transaction)?;
+        self.validate_cash_classifications(transaction)?;
         if !has_debit || !has_credit {
             return Err(AccountError::MissingDebitOrCredit);
         }
         if debits != credits {
             return Err(AccountError::TransactionDoesNotBalance { debits, credits });
         }
+        Ok(())
+    }
+
+    /// Validates the complete transaction before mutating the posted ledger.
+    pub fn post(&mut self, transaction: LedgerTransaction) -> Result<(), AccountError> {
+        self.post_batch([transaction])
+    }
+
+    /// Validates and commits a group of transactions atomically. Non-contra asset balances are
+    /// checked at each affected month-end after all transactions in the batch are applied.
+    pub fn post_batch(
+        &mut self,
+        transactions: impl IntoIterator<Item = LedgerTransaction>,
+    ) -> Result<(), AccountError> {
+        let transactions: Vec<_> = transactions.into_iter().collect();
+        if transactions.is_empty() {
+            return Ok(());
+        }
+        let mut candidate = self.clone();
+        for transaction in transactions {
+            candidate.post_without_asset_balance_check(transaction)?;
+        }
+        candidate.validate_non_contra_asset_month_ends()?;
+        *self = candidate;
+        Ok(())
+    }
+
+    fn post_without_asset_balance_check(
+        &mut self,
+        transaction: LedgerTransaction,
+    ) -> Result<(), AccountError> {
+        self.validate_transaction(&transaction)?;
         self.posted.push(PostedTransaction(transaction));
         Ok(())
     }

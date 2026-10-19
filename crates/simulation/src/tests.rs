@@ -116,6 +116,17 @@ fn input() -> FrozenInput {
         repair_cost_limit: money("50"),
     }
 }
+fn validated_input(state: &OpeningState, frozen: &FrozenInput) -> ValidatedInput {
+    validate_input(
+        frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger_for_cash(state.cash),
+        state,
+    )
+    .unwrap()
+}
 fn chart() -> ChartOfAccounts {
     use property_simulation_accounting::{Account, AccountCategory, AccountCode};
     ChartOfAccounts::new([
@@ -141,8 +152,45 @@ fn chart() -> ChartOfAccounts {
             "Repairs",
         )
         .unwrap(),
+        Account::new(
+            AccountId::from_bytes([6; 16]),
+            AccountCode::new(3000).unwrap(),
+            AccountCategory::Equity,
+            false,
+            "Opening equity",
+        )
+        .unwrap(),
     ])
     .unwrap()
+}
+fn ledger_for_cash(cash: Money) -> property_simulation_accounting::Ledger {
+    use property_simulation_accounting::{BalanceSide, Ledger, OpeningBalance, OpeningBalances};
+    let chart = chart();
+    let amount = if cash.is_negative() {
+        cash.checked_neg().unwrap()
+    } else {
+        cash
+    };
+    let entries = if amount.is_zero() {
+        Vec::new()
+    } else {
+        let cash_side = if cash.is_negative() {
+            BalanceSide::Credit
+        } else {
+            BalanceSide::Debit
+        };
+        let equity_side = if cash_side == BalanceSide::Debit {
+            BalanceSide::Credit
+        } else {
+            BalanceSide::Debit
+        };
+        vec![
+            OpeningBalance::new(input().cash_account, cash_side, amount).unwrap(),
+            OpeningBalance::new(AccountId::from_bytes([6; 16]), equity_side, amount).unwrap(),
+        ]
+    };
+    let opening = OpeningBalances::new(&chart, entries, Some(cash)).unwrap();
+    Ledger::new(chart, opening).unwrap()
 }
 fn sample<T>(instance: &ActivityInstance, value: T) -> ActivitySample<T> {
     ActivitySample::new(instance, input().period, value)
@@ -157,31 +205,210 @@ fn input_validation_checks_repair_distribution_support_before_sampling() {
     let support = RepairCostDistribution {
         maximum: money("50"),
     };
-    assert!(validate_input(&input(), &support, &chart(), &state).is_ok());
+    let validated =
+        validate_input(&input(), &support, &ledger_for_cash(state.cash), &state).unwrap();
+    assert_eq!(validated.opening_state(), &state);
+    assert_eq!(validated.frozen_input(), &input());
+    assert_eq!(validated.repair_distribution(), &support);
     assert!(
         validate_input(
             &input(),
             &RepairCostDistribution {
                 maximum: money("49"),
             },
-            &chart(),
+            &ledger_for_cash(state.cash),
             &state,
         )
         .is_err()
     );
-    assert_eq!(
-        validate_input(
-            &input(),
-            &RepairCostDistribution {
-                maximum: money("-1"),
-            },
-            &chart(),
-            &state,
-        ),
-        Err(SimulationError::InvalidInput(
-            "invalid repair distribution support"
-        ))
+    let errors = validate_input(
+        &input(),
+        &RepairCostDistribution {
+            maximum: money("-1"),
+        },
+        &ledger_for_cash(state.cash),
+        &state,
+    )
+    .unwrap_err();
+    assert!(
+        errors
+            .0
+            .iter()
+            .any(|issue| issue.field == "repair_distribution.maximum")
     );
+    assert!(
+        errors
+            .0
+            .iter()
+            .any(|issue| issue.message.contains("must match"))
+    );
+}
+
+#[test]
+fn input_validation_collects_independent_issues_in_one_pass() {
+    let state = OpeningState {
+        cash: Money::parse("0", Currency::from_code("USD").unwrap()).unwrap(),
+        condition: AssetCondition::Available,
+    };
+    let mut frozen = input();
+    frozen.rent = money("-1");
+    frozen.cash_account = AccountId::from_bytes([99; 16]);
+    frozen.rent_account = AccountId::from_bytes([98; 16]);
+
+    let errors = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: money("50"),
+        },
+        &ledger_for_cash(money("0")),
+        &state,
+    )
+    .unwrap_err();
+
+    assert!(errors.0.iter().any(|issue| issue.field == "rent"));
+    assert!(errors.0.iter().any(|issue| issue.field == "cash_account"));
+    assert!(errors.0.iter().any(|issue| issue.field == "rent_account"));
+    assert!(
+        errors
+            .0
+            .iter()
+            .any(|issue| issue.field == "opening_state.cash")
+    );
+}
+
+#[test]
+fn input_validation_checks_the_ledger_currency_before_sampling() {
+    use property_simulation_accounting::{Ledger, OpeningBalances};
+
+    let chart = chart();
+    let usd = Currency::from_code("USD").unwrap();
+    let opening = OpeningBalances::new(&chart, [], Some(Money::parse("0", usd).unwrap())).unwrap();
+    let usd_ledger = Ledger::new(chart, opening).unwrap();
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+
+    let errors = validate_input(
+        &input(),
+        &RepairCostDistribution {
+            maximum: money("50"),
+        },
+        &usd_ledger,
+        &state,
+    )
+    .unwrap_err();
+
+    assert!(errors.0.iter().any(|issue| issue.field == "rent"));
+    assert!(
+        errors
+            .0
+            .iter()
+            .any(|issue| issue.field == "repair_cost_limit")
+    );
+}
+
+#[test]
+fn input_validation_rejects_cash_state_that_differs_from_ledger_balance() {
+    let state = OpeningState {
+        cash: money("10"),
+        condition: AssetCondition::Available,
+    };
+    let errors = validate_input(
+        &input(),
+        &RepairCostDistribution {
+            maximum: money("50"),
+        },
+        &ledger_for_cash(money("0")),
+        &state,
+    )
+    .unwrap_err();
+
+    assert!(errors.0.iter().any(|issue| {
+        issue.field == "opening_state.cash" && issue.message.contains("match the ledger")
+    }));
+}
+
+#[test]
+fn input_validation_rejects_wrong_account_roles() {
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let mut frozen = input();
+    frozen.cash_account = input().rent_account;
+    frozen.rent_account = input().repair_expense_account;
+    frozen.repair_expense_account = input().rent_account;
+    let errors = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger_for_cash(state.cash),
+        &state,
+    )
+    .unwrap_err();
+
+    assert!(errors.0.iter().any(|issue| issue.field == "cash_account"));
+    assert!(errors.0.iter().any(|issue| issue.field == "rent_account"));
+    assert!(
+        errors
+            .0
+            .iter()
+            .any(|issue| issue.field == "repair_expense_account")
+    );
+}
+
+#[test]
+fn proposal_transaction_validation_uses_ledger_rules_without_mutating_ledger() {
+    use property_simulation_accounting::{
+        BalanceSide, CashFlowCategory, Ledger, LedgerEntry, OpeningBalances,
+    };
+
+    let chart = chart();
+    let opening = OpeningBalances::new(&chart, [], Some(money("0"))).unwrap();
+    let ledger = Ledger::new(chart, opening).unwrap();
+    let mut proposal = IdentifiedProposal {
+        identity: None,
+        events: Vec::new(),
+        effects: Vec::new(),
+        transactions: vec![ProposedTransaction {
+            id: LedgerTransactionId::from_bytes([77; 16]),
+            instance_id: activity(1).id,
+            slice_id: activity(1).slice_id,
+            version: activity(1).version,
+            period: input().period,
+            key: "unbalanced".into(),
+            source_event_id: None,
+            entries: vec![
+                LedgerEntry::new(input().cash_account, BalanceSide::Debit, money("1"))
+                    .with_cash_flow_category(CashFlowCategory::Operating),
+                LedgerEntry::new(input().rent_account, BalanceSide::Credit, money("2")),
+            ],
+        }],
+    };
+    let mut second = proposal.transactions[0].clone();
+    second.id = LedgerTransactionId::from_bytes([78; 16]);
+    second.key = "also_unbalanced".into();
+    proposal.transactions.push(second);
+
+    let errors = validate_proposal_transactions(&ledger, &proposal).unwrap_err();
+    assert_eq!(errors.0.len(), 2);
+    assert!(errors.0.iter().any(|issue| {
+        issue.transaction_key.as_deref() == Some("unbalanced")
+            && matches!(
+                issue.error,
+                property_simulation_accounting::AccountError::TransactionDoesNotBalance { .. }
+            )
+    }));
+    assert!(errors.0.iter().any(|issue| {
+        issue.transaction_key.as_deref() == Some("also_unbalanced")
+            && matches!(
+                issue.error,
+                property_simulation_accounting::AccountError::TransactionDoesNotBalance { .. }
+            )
+    }));
+    assert_eq!(ledger.transactions().count(), 0);
 }
 
 #[test]
@@ -196,15 +423,14 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
     let support = RepairCostDistribution {
         maximum: frozen.repair_cost_limit,
     };
-    assert!(validate_input(&frozen, &support, &chart(), &state).is_ok());
+    assert!(validate_input(&frozen, &support, &ledger_for_cash(state.cash), &state).is_ok());
 
     let rental = RentalSlice {
         instance: rental_activity(10),
     };
     let rental_proposal = propose_slice(
         &rental,
-        &state,
-        &frozen,
+        &validated_input(&state, &frozen),
         &ActivitySample::new(&rental.instance, frozen.period, ()),
     )
     .unwrap();
@@ -222,8 +448,7 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
     };
     let repair_proposal = propose_slice(
         &repair,
-        &state,
-        &frozen,
+        &validated_input(&state, &frozen),
         &ActivitySample::new(
             &repair.instance,
             frozen.period,
@@ -245,8 +470,7 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
     frozen.rent = money("0.004");
     let zero_rent = propose_slice(
         &rental,
-        &state,
-        &frozen,
+        &validated_input(&state, &frozen),
         &ActivitySample::new(&rental.instance, frozen.period, ()),
     )
     .unwrap();
@@ -265,16 +489,14 @@ fn repair_sample_controls_expense_and_condition_effect() {
     };
     let none = propose_slice(
         &slice,
-        &state,
-        &input(),
+        &validated_input(&state, &input()),
         &sample(&slice.instance, RepairSample::NoRepair),
     )
     .unwrap();
     assert!(none.transactions.is_empty() && none.effects.is_empty());
     let repaired = propose_slice(
         &slice,
-        &state,
-        &input(),
+        &validated_input(&state, &input()),
         &sample(&slice.instance, RepairSample::Repair { cost: money("50") }),
     )
     .unwrap();
@@ -300,8 +522,7 @@ fn repair_sample_controls_expense_and_condition_effect() {
     assert!(
         propose_slice(
             &slice,
-            &state,
-            &input(),
+            &validated_input(&state, &input()),
             &sample(
                 &slice.instance,
                 RepairSample::Repair {
@@ -318,8 +539,7 @@ fn repair_sample_controls_expense_and_condition_effect() {
     };
     let preventive = propose_slice(
         &slice,
-        &available_state,
-        &input(),
+        &validated_input(&available_state, &input()),
         &sample(&slice.instance, RepairSample::Repair { cost: money("5") }),
     )
     .unwrap();
@@ -338,7 +558,7 @@ fn sample_provenance_must_match_the_slice_instance_and_frozen_period() {
     };
     let wrong_instance = sample(&activity(9), RepairSample::NoRepair);
     assert_eq!(
-        propose_slice(&slice, &state, &input(), &wrong_instance),
+        propose_slice(&slice, &validated_input(&state, &input()), &wrong_instance),
         Err(SimulationError::InvalidInput(
             "sample provenance does not match activity instance or period"
         ))
@@ -348,13 +568,17 @@ fn sample_provenance_must_match_the_slice_instance_and_frozen_period() {
         input().period.checked_add_months(1).unwrap(),
         RepairSample::NoRepair,
     );
-    assert!(propose_slice(&slice, &state, &input(), &wrong_period).is_err());
+    assert!(propose_slice(&slice, &validated_input(&state, &input()), &wrong_period).is_err());
     let wrong_kind_slice = RepairSlice {
         instance: rental_activity(8),
     };
     let wrong_kind_sample = sample(&wrong_kind_slice.instance, RepairSample::NoRepair);
     assert_eq!(
-        propose_slice(&wrong_kind_slice, &state, &input(), &wrong_kind_sample),
+        propose_slice(
+            &wrong_kind_slice,
+            &validated_input(&state, &input()),
+            &wrong_kind_sample
+        ),
         Err(SimulationError::InvalidInput(
             "activity sample kind does not match Slice"
         ))
@@ -369,8 +593,9 @@ fn rental_proposal_is_deterministic_and_merge_has_empty_identity() {
         cash: money("-2"),
         condition: AssetCondition::Available,
     };
-    let a = propose_slice(&slice, &state, &input(), &sample(&slice.instance, ())).unwrap();
-    let b = propose_slice(&slice, &state, &input(), &sample(&slice.instance, ())).unwrap();
+    let validated = validated_input(&state, &input());
+    let a = propose_slice(&slice, &validated, &sample(&slice.instance, ())).unwrap();
+    let b = propose_slice(&slice, &validated, &sample(&slice.instance, ())).unwrap();
     assert_eq!(a, b);
     let a = identify_proposal(a, identity()).unwrap();
     assert_eq!(a.events().len(), 1);
@@ -396,7 +621,12 @@ fn zero_rent_does_not_create_a_collection_event_or_posting() {
     };
     let mut zero_rent = input();
     zero_rent.rent = money("0");
-    let proposal = propose_slice(&slice, &state, &zero_rent, &sample(&slice.instance, ())).unwrap();
+    let proposal = propose_slice(
+        &slice,
+        &validated_input(&state, &zero_rent),
+        &sample(&slice.instance, ()),
+    )
+    .unwrap();
     assert!(proposal.events.is_empty());
     assert!(proposal.transactions.is_empty());
 }
@@ -463,11 +693,13 @@ fn output_ids_are_repeatable_and_use_all_identity_dimensions() {
     };
     let proposal = propose_slice(
         &slice,
-        &OpeningState {
-            cash: money("0"),
-            condition: AssetCondition::Available,
-        },
-        &input(),
+        &validated_input(
+            &OpeningState {
+                cash: money("0"),
+                condition: AssetCondition::Available,
+            },
+            &input(),
+        ),
         &sample(slice.instance(), ()),
     )
     .unwrap();
@@ -483,11 +715,13 @@ fn output_ids_are_repeatable_and_use_all_identity_dimensions() {
         identify_proposal(
             propose_slice(
                 &slice,
-                &OpeningState {
-                    cash: money("0"),
-                    condition: AssetCondition::Available
-                },
-                &input(),
+                &validated_input(
+                    &OpeningState {
+                        cash: money("0"),
+                        condition: AssetCondition::Available
+                    },
+                    &input()
+                ),
                 &sample(slice.instance(), ())
             )
             .unwrap(),
@@ -509,8 +743,9 @@ fn output_ids_do_not_depend_on_proposal_input_order() {
         cash: money("0"),
         condition: AssetCondition::Available,
     };
-    let proposal_one = propose_slice(&one, &state, &input(), &sample(one.instance(), ())).unwrap();
-    let proposal_two = propose_slice(&two, &state, &input(), &sample(two.instance(), ())).unwrap();
+    let validated = validated_input(&state, &input());
+    let proposal_one = propose_slice(&one, &validated, &sample(one.instance(), ())).unwrap();
+    let proposal_two = propose_slice(&two, &validated, &sample(two.instance(), ())).unwrap();
     let identified_one = identify_proposal(proposal_one, identity()).unwrap();
     let identified_two = identify_proposal(proposal_two, identity()).unwrap();
     let forward = merge_proposals([identified_one.clone(), identified_two.clone()]).unwrap();

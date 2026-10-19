@@ -7,6 +7,7 @@ use crate::types::{
     ActivityInstance, ActivitySampleKind, AssetCondition, EffectProposal, EventProposal,
     FrozenInput, OpeningState, RepairSample, SliceProposal, TransactionProposal,
 };
+use crate::validation::ValidatedInput;
 
 pub struct RepairSlice {
     pub instance: ActivityInstance,
@@ -16,6 +17,19 @@ impl SimulationSlice for RepairSlice {
     const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Repair;
     fn instance(&self) -> &ActivityInstance {
         &self.instance
+    }
+    fn validate_sample(
+        &self,
+        input: &ValidatedInput,
+        sample: &Self::Sample,
+    ) -> Result<(), SimulationError> {
+        if let RepairSample::Repair { cost } = sample {
+            input
+                .repair_distribution()
+                .validate_sample(*cost)
+                .map_err(|_| SimulationError::InvalidInput("repair sample outside support"))?;
+        }
+        Ok(())
     }
     fn propose_validated(
         &self,
@@ -30,14 +44,6 @@ impl SimulationSlice for RepairSlice {
             ),
             RepairSample::Repair { cost } => (*cost, true),
         };
-        if cost.is_negative()
-            || cost.currency() != input.repair_cost_limit.currency()
-            || cost.checked_cmp(input.repair_cost_limit)? == std::cmp::Ordering::Greater
-        {
-            return Err(SimulationError::InvalidInput(
-                "repair cost outside configured support",
-            ));
-        }
         let posted_cost = cost.rounded_for_posting(RoundingPolicy::HalfUp)?;
         if !repair {
             return Ok(SliceProposal::default());

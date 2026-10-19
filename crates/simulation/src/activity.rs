@@ -6,6 +6,7 @@ use crate::error::SimulationError;
 use crate::types::{
     ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState, RepairSample, SliceProposal,
 };
+use crate::validation::ValidatedInput;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivitySampleValue {
@@ -30,6 +31,14 @@ pub trait SimulationSlice {
     type Sample;
     const SAMPLE_KIND: ActivitySampleKind;
     fn instance(&self) -> &ActivityInstance;
+    /// Validate the typed sample at the input boundary, before transition logic runs.
+    fn validate_sample(
+        &self,
+        _input: &ValidatedInput,
+        _sample: &Self::Sample,
+    ) -> Result<(), SimulationError> {
+        Ok(())
+    }
     #[doc(hidden)]
     fn propose_validated(
         &self,
@@ -60,19 +69,21 @@ impl Deref for SliceOutput {
 /// period before the Slice receives its value.
 pub fn propose_slice<S: SimulationSlice>(
     slice: &S,
-    state: &OpeningState,
-    input: &FrozenInput,
+    input: &ValidatedInput,
     sample: &ActivitySample<S::Sample>,
 ) -> Result<SliceOutput, SimulationError> {
-    sample.validate_for(slice.instance(), input.period)?;
+    let state = input.opening_state();
+    let frozen_input = input.frozen_input();
+    sample.validate_for(slice.instance(), frozen_input.period)?;
     if slice.instance().sample_kind != S::SAMPLE_KIND {
         return Err(SimulationError::InvalidInput(
             "activity sample kind does not match Slice",
         ));
     }
+    slice.validate_sample(input, &sample.value)?;
     let proposal = slice.propose_validated(
         state,
-        input,
+        frozen_input,
         &ValidatedActivitySample {
             value: &sample.value,
         },
@@ -80,7 +91,7 @@ pub fn propose_slice<S: SimulationSlice>(
     Ok(SliceOutput {
         proposal,
         instance: slice.instance().clone(),
-        period: input.period,
+        period: frozen_input.period,
     })
 }
 

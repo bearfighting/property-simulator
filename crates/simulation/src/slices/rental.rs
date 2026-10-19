@@ -23,9 +23,6 @@ impl SimulationSlice for RentalSlice {
         input: &FrozenInput,
         _sample: &ValidatedActivitySample<'_, ()>,
     ) -> Result<SliceProposal, SimulationError> {
-        if input.rent.is_negative() || input.rent.currency() != input.repair_cost_limit.currency() {
-            return Err(SimulationError::InvalidInput("invalid rent"));
-        }
         let rent = input.rent.rounded_for_posting(RoundingPolicy::HalfUp)?;
         if rent.is_zero() {
             return Ok(SliceProposal::default());
