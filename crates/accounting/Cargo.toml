@@ -8,5 +8,8 @@ rust-version.workspace = true
 [dependencies]
 property-simulation-domain = { path = "../domain" }
 
+[dev-dependencies]
+rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true

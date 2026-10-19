@@ -198,6 +198,7 @@ name = "property-simulation-accounting"
 version = "0.1.0"
 dependencies = [
  "property-simulation-domain",
+ "rust_decimal",
 ]
 
 [[package]]

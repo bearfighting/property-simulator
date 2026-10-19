@@ -16,6 +16,8 @@ The minimal accounts used below are Cash (asset), Property (asset), Mortgage pay
 | L-06 | Reconciliation after L-02 to L-05 | Opening balances plus listed debits/credits | — | Cash = 20,000 - 1,500 - 800 + 2,000 - 300 = 19,400; operating cash flow = -500 - 800 + 2,000 - 300 = 400; financing cash flow = -1,000; net cash change = -600; mortgage = 199,000; net income = 400; assets 319,400 = liabilities 199,000 + opening equity 120,000 + net income 400 |
 | L-07 | Interest due $100, payment $50; $50 unpaid interest capitalizes (M-03) | Interest expense 100 | Cash 50; Mortgage payable 50 | 100 = 100; expense is fully recognized, $50 operating cash outflow is recorded, liability rises by $50 without a cash flow |
 
+M1.3 opening-balance checks: L-01 is represented by four opening facts (property debit $300,000; cash debit $20,000; mortgage credit $200,000; equity credit $120,000), with derived totals of assets $320,000, liabilities $200,000, equity/net worth $120,000. The opening facts remain outside period transactions and cash flow. A negative-net-worth case uses assets debit $80, liabilities credit $100, and equity debit $20; the debit equity balance is valid and the opening set still balances. A normal asset credit balance is rejected; a contra-asset credit balance reduces net assets. Reject an unbalanced set, negative amount, duplicate or unknown account, income/expense account, mixed currency, or declared net worth that differs from assets less liabilities.
+
 ## Mortgage vectors
 
 For every active loan vector, rate is nominal annual rate divided by 12. Compute with decimal precision, post interest rounded to cents half-up, then apply actual payment interest-first and principal-second; actual payment cannot exceed principal plus posted interest.
