@@ -4,7 +4,7 @@ use property_simulation_domain::{AccountId, DomainError, Money};
 
 use crate::{AccountCategory, AccountCode};
 
-/// Validation failures for account definitions and account tables.
+/// Account validation failures and explicitly bounded numeric calculation errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountError {
     InvalidCode(u16),
@@ -20,6 +20,7 @@ pub enum AccountError {
     DuplicateOpeningAccount(AccountId),
     OpeningBalanceNotAllowed(AccountCategory),
     NegativeOpeningBalance(AccountId),
+    OpeningBalancePrecision(Money),
     AbnormalAssetOpeningSide {
         account_id: AccountId,
         side: crate::BalanceSide,
@@ -43,15 +44,16 @@ pub enum AccountError {
         debits: Money,
         credits: Money,
     },
-    Arithmetic(DomainError),
+    Numeric(DomainError),
     OpeningChartMismatch,
     PostingAmountPrecision(Money),
-    Domain(DomainError),
     InvalidProjectionRange,
     CashFlowAccountMustBeAsset(AccountId),
     CashFlowCategoryMissing(AccountId),
     CashFlowCategoryOnNonCashAccount(AccountId),
     CashFlowAccountsRequired,
+    CashFlowAccountsMismatch,
+    DuplicateCashFlowAccount(AccountId),
     NegativeAssetBalance(AccountId),
 }
 
@@ -79,6 +81,10 @@ impl fmt::Display for AccountError {
             Self::NegativeOpeningBalance(id) => {
                 write!(f, "opening balance for {id:?} cannot be negative")
             }
+            Self::OpeningBalancePrecision(amount) => write!(
+                f,
+                "opening balance {amount} exceeds its currency minor-unit precision"
+            ),
             Self::AbnormalAssetOpeningSide { account_id, side } => write!(
                 f,
                 "asset account {account_id:?} cannot have an opening {side:?} balance"
@@ -105,7 +111,7 @@ impl fmt::Display for AccountError {
                 f,
                 "transaction debits {debits} do not equal credits {credits}"
             ),
-            Self::Arithmetic(error) => write!(f, "ledger arithmetic failed: {error}"),
+            Self::Numeric(error) => write!(f, "accounting numeric calculation failed: {error}"),
             Self::OpeningChartMismatch => {
                 f.write_str("opening balances were validated against a different chart of accounts")
             }
@@ -113,12 +119,14 @@ impl fmt::Display for AccountError {
                 f,
                 "posting amount {amount} exceeds its currency minor-unit precision"
             ),
-            Self::Domain(error) => write!(f, "opening balance arithmetic failed: {error}"),
             Self::InvalidProjectionRange => {
                 f.write_str("projection start month must not be after end month")
             }
             Self::CashFlowAccountMustBeAsset(id) => {
-                write!(f, "cash-flow account {id:?} must be a non-contra asset")
+                write!(
+                    f,
+                    "cash-flow account {id:?} must be marked as a non-contra cash-position asset"
+                )
             }
             Self::CashFlowCategoryMissing(id) => {
                 write!(f, "cash posting to {id:?} requires a cash-flow category")
@@ -129,6 +137,12 @@ impl fmt::Display for AccountError {
             ),
             Self::CashFlowAccountsRequired => {
                 f.write_str("at least one cash account must be supplied for cash-flow projection")
+            }
+            Self::CashFlowAccountsMismatch => f.write_str(
+                "projection cash accounts must match the ledger's configured cash accounts",
+            ),
+            Self::DuplicateCashFlowAccount(id) => {
+                write!(f, "cash account {id:?} was supplied more than once")
             }
             Self::NegativeAssetBalance(id) => {
                 write!(
@@ -144,6 +158,6 @@ impl std::error::Error for AccountError {}
 
 impl From<DomainError> for AccountError {
     fn from(error: DomainError) -> Self {
-        Self::Domain(error)
+        Self::Numeric(error)
     }
 }

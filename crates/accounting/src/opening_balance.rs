@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use property_simulation_domain::{AccountId, Currency, Money};
+use property_simulation_domain::{AccountId, Currency, Money, RoundingPolicy};
 
 use crate::{AccountCategory, AccountError, BalanceSide, ChartOfAccounts};
 
@@ -18,7 +18,7 @@ impl OpeningBalance {
         side: BalanceSide,
         amount: Money,
     ) -> Result<Self, AccountError> {
-        if amount.amount().is_sign_negative() {
+        if amount.is_negative() {
             return Err(AccountError::NegativeOpeningBalance(account_id));
         }
         Ok(Self {
@@ -94,7 +94,8 @@ impl OpeningBalances {
             }
             if account.category() == AccountCategory::Asset
                 && !account.is_contra()
-                && !entry.amount.amount().is_zero()
+                && !account.is_cash_position()
+                && !entry.amount.is_zero()
                 && entry.side != account.normal_balance()
             {
                 return Err(AccountError::AbnormalAssetOpeningSide {
@@ -104,6 +105,9 @@ impl OpeningBalances {
             }
             if entry.amount.currency() != currency {
                 return Err(AccountError::OpeningCurrencyMismatch);
+            }
+            if entry.amount.rounded_for_posting(RoundingPolicy::HalfUp)? != entry.amount {
+                return Err(AccountError::OpeningBalancePrecision(entry.amount));
             }
             match entry.side {
                 BalanceSide::Debit => debits = debits.checked_add(entry.amount)?,
@@ -118,7 +122,7 @@ impl OpeningBalances {
             let signed = if entry.side == positive_side {
                 entry.amount
             } else {
-                Money::new(-entry.amount.amount(), currency)
+                entry.amount.checked_neg()?
             };
             match account.category() {
                 AccountCategory::Asset => assets = assets.checked_add(signed)?,
@@ -167,6 +171,7 @@ impl OpeningBalances {
                 chart.get(opening_account.id()).is_some_and(|account| {
                     opening_account.category() == account.category()
                         && opening_account.is_contra() == account.is_contra()
+                        && opening_account.is_cash_position() == account.is_cash_position()
                 })
             })
     }
@@ -372,6 +377,18 @@ mod tests {
         let c = Currency::from_code("CAD").unwrap();
         let usd = Currency::from_code("USD").unwrap();
         let chart = chart();
+        let fractional_cent = Money::new(Decimal::new(1, 3), c);
+        assert!(matches!(
+            OpeningBalances::new(
+                &chart,
+                [
+                    entry(1, BalanceSide::Debit, fractional_cent),
+                    entry(4, BalanceSide::Credit, fractional_cent),
+                ],
+                None
+            ),
+            Err(AccountError::OpeningBalancePrecision(amount)) if amount == fractional_cent
+        ));
         assert!(matches!(
             OpeningBalance::new(id(1), BalanceSide::Debit, money(-1, c)),
             Err(AccountError::NegativeOpeningBalance(_))

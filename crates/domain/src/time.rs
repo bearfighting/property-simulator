@@ -1,22 +1,22 @@
 use crate::DomainError;
 use std::{fmt, str::FromStr};
 
-/// A valid calendar month in the supported Gregorian year range.
+/// A valid calendar month with a positive `u32` Gregorian year.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct YearMonth {
-    year: u16,
+    year: u32,
     month: u8,
 }
 
 impl YearMonth {
-    pub fn new(year: u16, month: u8) -> Result<Self, DomainError> {
-        if !(1..=9999).contains(&year) || !(1..=12).contains(&month) {
+    pub fn new(year: u32, month: u8) -> Result<Self, DomainError> {
+        if year == 0 || !(1..=12).contains(&month) {
             return Err(DomainError::InvalidYearMonth);
         }
         Ok(Self { year, month })
     }
 
-    pub const fn year(self) -> u16 {
+    pub const fn year(self) -> u32 {
         self.year
     }
     pub const fn month(self) -> u8 {
@@ -24,15 +24,22 @@ impl YearMonth {
     }
 
     pub fn checked_add_months(self, delta: i32) -> Result<Self, DomainError> {
-        let absolute = i64::from(self.year) * 12 + i64::from(self.month) - 1 + i64::from(delta);
-        if !(12..=119_999).contains(&absolute) {
-            return Err(DomainError::MonthOutOfRange);
-        }
-        Self::new((absolute / 12) as u16, (absolute % 12 + 1) as u8)
+        Self::from_absolute_month(self.absolute_month() + i64::from(delta))
     }
 
     pub fn checked_sub_months(self, delta: i32) -> Result<Self, DomainError> {
-        self.checked_add_months(delta.checked_neg().ok_or(DomainError::MonthOutOfRange)?)
+        Self::from_absolute_month(self.absolute_month() - i64::from(delta))
+    }
+
+    fn absolute_month(self) -> i64 {
+        i64::from(self.year) * 12 + i64::from(self.month) - 1
+    }
+
+    fn from_absolute_month(absolute: i64) -> Result<Self, DomainError> {
+        if absolute < 12 || absolute > i64::from(u32::MAX) * 12 + 11 {
+            return Err(DomainError::MonthOutOfRange);
+        }
+        Self::new((absolute / 12) as u32, (absolute % 12 + 1) as u8)
     }
 
     pub fn range_inclusive(self, end: Self) -> Result<YearMonthRange, DomainError> {
@@ -57,7 +64,11 @@ impl FromStr for YearMonth {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let (year, month) = value.split_once('-').ok_or(DomainError::InvalidYearMonth)?;
-        if year.len() != 4 || month.len() != 2 {
+        if year.len() < 4
+            || !year.bytes().all(|byte| byte.is_ascii_digit())
+            || month.len() != 2
+            || !month.bytes().all(|byte| byte.is_ascii_digit())
+        {
             return Err(DomainError::InvalidYearMonth);
         }
         Self::new(
@@ -96,15 +107,28 @@ mod tests {
         assert_eq!(jan.to_string(), "2025-01");
         assert!("2025-13".parse::<YearMonth>().is_err());
         assert!("25-01".parse::<YearMonth>().is_err());
+        assert!("+001-01".parse::<YearMonth>().is_err());
         assert_eq!(jan.checked_sub_months(1).unwrap().to_string(), "2024-12");
+        assert!(
+            YearMonth::new(1, 1)
+                .unwrap()
+                .checked_sub_months(i32::MIN)
+                .is_ok()
+        );
         assert_eq!(jan.checked_add_months(11).unwrap().to_string(), "2025-12");
         assert!(YearMonth::new(0, 1).is_err());
         assert!(YearMonth::new(2025, 0).is_err());
-        assert!(
+        assert_eq!(
             YearMonth::new(9999, 12)
                 .unwrap()
                 .checked_add_months(1)
-                .is_err()
+                .unwrap()
+                .to_string(),
+            "10000-01"
+        );
+        assert_eq!(
+            "123456-07".parse::<YearMonth>().unwrap().to_string(),
+            "123456-07"
         );
         assert!(YearMonth::new(2024, 1).unwrap() < jan);
     }

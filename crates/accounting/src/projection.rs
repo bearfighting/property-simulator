@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use property_simulation_domain::{AccountId, Money, YearMonth};
+use property_simulation_domain::{AccountId, Currency, Money, YearMonth};
 
 use crate::{AccountCategory, AccountError, BalanceSide, CashFlowCategory, Ledger};
 
@@ -40,10 +40,10 @@ pub struct CashFlowTotals {
 }
 impl CashFlowTotals {
     pub fn net_change(self) -> Result<Money, AccountError> {
-        Ok(self
-            .operating
-            .checked_add(self.investing)?
-            .checked_add(self.financing)?)
+        sum_signed(
+            [self.operating, self.investing, self.financing],
+            self.operating.currency(),
+        )
     }
 }
 
@@ -62,28 +62,102 @@ pub struct FinancialProjection {
     pub cash_flow_statement: CashFlowStatement,
 }
 
+/// Validated projection inputs tied to an immutable ledger borrow.
+/// Construct this before running the projection to surface correctable input errors up front.
+pub struct ValidatedProjection<'a> {
+    ledger: &'a Ledger,
+    start: YearMonth,
+    end: YearMonth,
+    cash_accounts: Vec<AccountId>,
+}
+
+impl ValidatedProjection<'_> {
+    pub fn project(&self) -> Result<FinancialProjection, AccountError> {
+        self.ledger
+            .calculate_projection(self.start, self.end, &self.cash_accounts)
+    }
+}
+
 impl Ledger {
-    /// Builds balance sheet at `end`, and income/cash-flow statements over inclusive `[start, end]`.
+    /// Convenience API: validates inputs, then computes the inclusive projection.
     pub fn project(
         &self,
         start: YearMonth,
         end: YearMonth,
         cash_accounts: &[AccountId],
     ) -> Result<FinancialProjection, AccountError> {
+        self.validate_projection(start, end, cash_accounts)?
+            .project()
+    }
+
+    /// Validates range, configured cash accounts, and classifications across the full ledger.
+    pub fn validate_projection<'a>(
+        &'a self,
+        start: YearMonth,
+        end: YearMonth,
+        cash_accounts: &[AccountId],
+    ) -> Result<ValidatedProjection<'a>, AccountError> {
         if start > end {
             return Err(AccountError::InvalidProjectionRange);
         }
-        let zero = Money::new(0.into(), self.currency());
+        if cash_accounts.is_empty() {
+            return Err(AccountError::CashFlowAccountsRequired);
+        }
+        let selected = cash_accounts
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        if selected.len() != cash_accounts.len() {
+            let mut seen = std::collections::BTreeSet::new();
+            let duplicate = cash_accounts
+                .iter()
+                .find(|id| !seen.insert(**id))
+                .copied()
+                .expect("a size mismatch means there is a duplicate");
+            return Err(AccountError::DuplicateCashFlowAccount(duplicate));
+        }
+        for id in cash_accounts {
+            let account = self
+                .chart()
+                .get(*id)
+                .ok_or(AccountError::UnknownPostingAccount(*id))?;
+            if account.category() != AccountCategory::Asset
+                || account.is_contra()
+                || !account.is_cash_position()
+            {
+                return Err(AccountError::CashFlowAccountMustBeAsset(*id));
+            }
+        }
+        if selected != self.cash_accounts().collect() {
+            return Err(AccountError::CashFlowAccountsMismatch);
+        }
+        Ok(ValidatedProjection {
+            ledger: self,
+            start,
+            end,
+            cash_accounts: cash_accounts.to_vec(),
+        })
+    }
+
+    /// Computes a projection from inputs returned by `validate_projection`.
+    fn calculate_projection(
+        &self,
+        start: YearMonth,
+        end: YearMonth,
+        cash_accounts: &[AccountId],
+    ) -> Result<FinancialProjection, AccountError> {
         let income_statement = self.income_statement(start, end)?;
         let mut accounts = Vec::new();
-        let (mut assets, mut liabilities, mut equity) = (zero, zero, zero);
-        let mut cumulative_net_income = zero;
+        let mut asset_amounts = Vec::new();
+        let mut liability_amounts = Vec::new();
+        let mut equity_amounts = Vec::new();
+        let mut cumulative_income_amounts = Vec::new();
         for account in self.chart().accounts_by_code() {
             let (side, amount) = self.balance_through(account.id(), end)?;
             let signed = signed_category_amount(account.category(), side, amount)?;
             match account.category() {
                 AccountCategory::Asset => {
-                    assets = assets.checked_add(signed)?;
+                    asset_amounts.push(signed);
                     accounts.push(AccountBalance {
                         account_id: account.id(),
                         side,
@@ -91,7 +165,7 @@ impl Ledger {
                     });
                 }
                 AccountCategory::Liability => {
-                    liabilities = liabilities.checked_add(signed)?;
+                    liability_amounts.push(signed);
                     accounts.push(AccountBalance {
                         account_id: account.id(),
                         side,
@@ -99,22 +173,22 @@ impl Ledger {
                     });
                 }
                 AccountCategory::Equity => {
-                    equity = equity.checked_add(signed)?;
+                    equity_amounts.push(signed);
                     accounts.push(AccountBalance {
                         account_id: account.id(),
                         side,
                         amount,
                     });
                 }
-                AccountCategory::Income => {
-                    cumulative_net_income = cumulative_net_income.checked_add(signed)?
-                }
-                AccountCategory::Expense => {
-                    cumulative_net_income = cumulative_net_income.checked_sub(signed)?
-                }
+                AccountCategory::Income => cumulative_income_amounts.push(signed),
+                AccountCategory::Expense => cumulative_income_amounts.push(signed.checked_neg()?),
             }
         }
-        equity = equity.checked_add(cumulative_net_income)?;
+        let assets = sum_signed(asset_amounts, self.currency())?;
+        let liabilities = sum_signed(liability_amounts, self.currency())?;
+        let cumulative_net_income = sum_signed(cumulative_income_amounts, self.currency())?;
+        equity_amounts.push(cumulative_net_income);
+        let equity = sum_signed(equity_amounts, self.currency())?;
         let cash_flow_statement = self.cash_flow_statement(start, end, cash_accounts)?;
         Ok(FinancialProjection {
             balance_sheet: BalanceSheet {
@@ -135,8 +209,8 @@ impl Ledger {
         start: YearMonth,
         end: YearMonth,
     ) -> Result<IncomeStatement, AccountError> {
-        let zero = Money::new(0.into(), self.currency());
-        let (mut income, mut expenses) = (zero, zero);
+        let mut income_amounts = Vec::new();
+        let mut expense_amounts = Vec::new();
         let mut income_accounts = Vec::new();
         let mut expense_accounts = Vec::new();
         for account in self.chart().accounts_by_code() {
@@ -146,7 +220,7 @@ impl Ledger {
             ) {
                 continue;
             }
-            let mut signed = zero;
+            let mut signed_entries = Vec::new();
             for tx in self
                 .transactions()
                 .filter(|tx| tx.period() >= start && tx.period() <= end)
@@ -156,17 +230,17 @@ impl Ledger {
                     .iter()
                     .filter(|e| e.account_id() == account.id())
                 {
-                    signed = match entry.side() {
-                        BalanceSide::Debit => signed.checked_add(entry.amount()),
-                        BalanceSide::Credit => signed.checked_sub(entry.amount()),
-                    }
-                    .map_err(AccountError::Arithmetic)?;
+                    signed_entries.push(match entry.side() {
+                        BalanceSide::Debit => entry.amount(),
+                        BalanceSide::Credit => entry.amount().checked_neg()?,
+                    });
                 }
             }
-            let amount = Money::new(signed.amount().abs(), self.currency());
-            let side = if signed.amount().is_zero() {
+            let signed = sum_signed(signed_entries, self.currency())?;
+            let amount = signed.abs()?;
+            let side = if signed.is_zero() {
                 account.normal_balance()
-            } else if signed.amount().is_sign_negative() {
+            } else if signed.is_negative() {
                 BalanceSide::Credit
             } else {
                 BalanceSide::Debit
@@ -178,17 +252,19 @@ impl Ledger {
             };
             match account.category() {
                 AccountCategory::Income => {
-                    let value = Money::new(-signed.amount(), self.currency());
-                    income = income.checked_add(value)?;
+                    let value = signed.checked_neg()?;
+                    income_amounts.push(value);
                     income_accounts.push(balance);
                 }
                 AccountCategory::Expense => {
-                    expenses = expenses.checked_add(signed)?;
+                    expense_amounts.push(signed);
                     expense_accounts.push(balance);
                 }
                 _ => unreachable!(),
             }
         }
+        let income = sum_signed(income_amounts, self.currency())?;
+        let expenses = sum_signed(expense_amounts, self.currency())?;
         let net_income = income.checked_sub(expenses)?;
         Ok(IncomeStatement {
             start,
@@ -207,78 +283,63 @@ impl Ledger {
         end: YearMonth,
         cash_accounts: &[AccountId],
     ) -> Result<CashFlowStatement, AccountError> {
-        let zero = Money::new(0.into(), self.currency());
-        if cash_accounts.is_empty() {
-            return Err(AccountError::CashFlowAccountsRequired);
-        }
-        for id in cash_accounts {
-            let account = self
-                .chart()
-                .get(*id)
-                .ok_or(AccountError::UnknownPostingAccount(*id))?;
-            if account.category() != AccountCategory::Asset || account.is_contra() {
-                return Err(AccountError::CashFlowAccountMustBeAsset(*id));
-            }
-        }
-        let mut by_account = cash_accounts
+        let mut postings_by_account = cash_accounts
             .iter()
-            .map(|id| {
-                (
-                    *id,
-                    CashFlowTotals {
-                        operating: zero,
-                        investing: zero,
-                        financing: zero,
-                    },
-                )
-            })
+            .map(|id| (*id, [Vec::new(), Vec::new(), Vec::new()]))
             .collect::<BTreeMap<_, _>>();
         for tx in self
             .transactions()
             .filter(|tx| tx.period() >= start && tx.period() <= end)
         {
             for entry in tx.entries() {
-                let is_cash = by_account.contains_key(&entry.account_id());
-                match (is_cash, entry.cash_flow_category()) {
-                    (true, None) => {
-                        return Err(AccountError::CashFlowCategoryMissing(entry.account_id()));
-                    }
-                    (false, Some(_)) => {
-                        return Err(AccountError::CashFlowCategoryOnNonCashAccount(
-                            entry.account_id(),
-                        ));
-                    }
-                    (true, Some(category)) => {
-                        let amount = match entry.side() {
-                            BalanceSide::Debit => entry.amount(),
-                            BalanceSide::Credit => {
-                                Money::new(-entry.amount().amount(), self.currency())
-                            }
-                        };
-                        let totals = by_account
-                            .get_mut(&entry.account_id())
-                            .expect("cash account was checked");
-                        let target = match category {
-                            CashFlowCategory::Operating => &mut totals.operating,
-                            CashFlowCategory::Investing => &mut totals.investing,
-                            CashFlowCategory::Financing => &mut totals.financing,
-                        };
-                        *target = target.checked_add(amount)?;
-                    }
-                    _ => {}
+                let is_cash = postings_by_account.contains_key(&entry.account_id());
+                if is_cash {
+                    let category = entry
+                        .cash_flow_category()
+                        .expect("cash posting classification is validated before posting");
+                    let amount = match entry.side() {
+                        BalanceSide::Debit => entry.amount(),
+                        BalanceSide::Credit => entry.amount().checked_neg()?,
+                    };
+                    let postings = postings_by_account
+                        .get_mut(&entry.account_id())
+                        .expect("cash account was checked");
+                    let category_index = match category {
+                        CashFlowCategory::Operating => 0,
+                        CashFlowCategory::Investing => 1,
+                        CashFlowCategory::Financing => 2,
+                    };
+                    postings[category_index].push(amount);
                 }
             }
         }
-        let mut totals = CashFlowTotals {
-            operating: zero,
-            investing: zero,
-            financing: zero,
+        let by_account = postings_by_account
+            .into_iter()
+            .map(|(id, postings)| {
+                Ok((
+                    id,
+                    CashFlowTotals {
+                        operating: sum_signed(postings[0].iter().copied(), self.currency())?,
+                        investing: sum_signed(postings[1].iter().copied(), self.currency())?,
+                        financing: sum_signed(postings[2].iter().copied(), self.currency())?,
+                    },
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, AccountError>>()?;
+        let totals = CashFlowTotals {
+            operating: sum_signed(
+                by_account.values().map(|value| value.operating),
+                self.currency(),
+            )?,
+            investing: sum_signed(
+                by_account.values().map(|value| value.investing),
+                self.currency(),
+            )?,
+            financing: sum_signed(
+                by_account.values().map(|value| value.financing),
+                self.currency(),
+            )?,
         };
-        for value in by_account.values() {
-            totals.operating = totals.operating.checked_add(value.operating)?;
-            totals.investing = totals.investing.checked_add(value.investing)?;
-            totals.financing = totals.financing.checked_add(value.financing)?;
-        }
         Ok(CashFlowStatement {
             start,
             end,
@@ -286,6 +347,153 @@ impl Ledger {
             totals,
         })
     }
+}
+
+/// Adds signed amounts without overflowing on intermediate values that later cancel.
+/// An error is returned only when the resulting net value cannot fit in `Money`.
+fn sum_signed(
+    values: impl IntoIterator<Item = Money>,
+    currency: Currency,
+) -> Result<Money, AccountError> {
+    let values = values.into_iter().collect::<Vec<_>>();
+    let scale = values.iter().map(|value| value.scale()).max().unwrap_or(0);
+    let mut total = SignedDecimal::zero();
+    total.scale = scale;
+    for value in values {
+        if value.currency() != currency {
+            return Err(property_simulation_domain::DomainError::CurrencyMismatch.into());
+        }
+        let magnitude = value
+            .coefficient()
+            .unsigned_abs()
+            .to_string()
+            .bytes()
+            .rev()
+            .map(|digit| digit - b'0')
+            .collect::<Vec<_>>();
+        let extra_zeros = usize::from(scale - value.scale());
+        let mut aligned = vec![0; extra_zeros];
+        aligned.extend(magnitude);
+        total.add(value.is_negative(), aligned);
+    }
+
+    while total.scale > 0 && total.digits.len() > 1 && total.digits.first() == Some(&0) {
+        total.digits.remove(0);
+        total.scale -= 1;
+    }
+    let magnitude = total
+        .digits
+        .iter()
+        .rev()
+        .map(|digit| char::from(b'0' + digit))
+        .collect::<String>();
+    let magnitude = magnitude
+        .parse::<u128>()
+        .map_err(|_| property_simulation_domain::DomainError::ArithmeticOverflow)?;
+    let coefficient = if total.negative {
+        if magnitude == (i128::MAX as u128) + 1 {
+            i128::MIN
+        } else if magnitude <= i128::MAX as u128 {
+            -(magnitude as i128)
+        } else {
+            return Err(property_simulation_domain::DomainError::ArithmeticOverflow.into());
+        }
+    } else {
+        i128::try_from(magnitude)
+            .map_err(|_| property_simulation_domain::DomainError::ArithmeticOverflow)?
+    };
+    Ok(Money::from_parts(coefficient, total.scale, currency)?)
+}
+
+/// Small signed base-10 accumulator used only for intermediate statement totals.
+/// The public `Money` result remains checked and bounded to its `i128` representation.
+struct SignedDecimal {
+    negative: bool,
+    digits: Vec<u8>,
+    scale: u8,
+}
+
+impl SignedDecimal {
+    fn zero() -> Self {
+        Self {
+            negative: false,
+            digits: vec![0],
+            scale: 0,
+        }
+    }
+
+    fn add(&mut self, negative: bool, mut magnitude: Vec<u8>) {
+        trim_high_zeros(&mut magnitude);
+        if magnitude == [0] {
+            return;
+        }
+        if self.digits == [0] {
+            self.negative = negative;
+            self.digits = magnitude;
+            return;
+        }
+        if self.negative == negative {
+            add_magnitudes(&mut self.digits, &magnitude);
+            return;
+        }
+        match compare_magnitudes(&self.digits, &magnitude) {
+            std::cmp::Ordering::Equal => {
+                self.negative = false;
+                self.digits = vec![0];
+            }
+            std::cmp::Ordering::Greater => subtract_magnitude(&mut self.digits, &magnitude),
+            std::cmp::Ordering::Less => {
+                subtract_magnitude(&mut magnitude, &self.digits);
+                self.digits = magnitude;
+                self.negative = negative;
+            }
+        }
+    }
+}
+
+fn trim_high_zeros(digits: &mut Vec<u8>) {
+    while digits.len() > 1 && digits.last() == Some(&0) {
+        digits.pop();
+    }
+}
+
+fn compare_magnitudes(left: &[u8], right: &[u8]) -> std::cmp::Ordering {
+    left.len()
+        .cmp(&right.len())
+        .then_with(|| left.iter().rev().cmp(right.iter().rev()))
+}
+
+fn add_magnitudes(left: &mut Vec<u8>, right: &[u8]) {
+    let mut carry = 0;
+    for index in 0..left.len().max(right.len()) {
+        if index == left.len() {
+            left.push(0);
+        }
+        let sum = left[index] + right.get(index).copied().unwrap_or(0) + carry;
+        left[index] = sum % 10;
+        carry = sum / 10;
+    }
+    if carry > 0 {
+        left.push(carry);
+    }
+}
+
+fn subtract_magnitude(left: &mut Vec<u8>, right: &[u8]) {
+    let mut borrow = 0_i8;
+    for (index, left_digit) in left.iter_mut().enumerate() {
+        let difference = i8::try_from(*left_digit).expect("decimal digit fits i8")
+            - i8::try_from(right.get(index).copied().unwrap_or(0)).expect("decimal digit fits i8")
+            - borrow;
+        if difference < 0 {
+            *left_digit = u8::try_from(difference + 10).expect("adjusted digit is non-negative");
+            borrow = 1;
+        } else {
+            *left_digit = u8::try_from(difference).expect("difference is a decimal digit");
+            borrow = 0;
+        }
+    }
+    debug_assert_eq!(borrow, 0, "left magnitude must be at least right magnitude");
+    trim_high_zeros(left);
 }
 
 fn signed_category_amount(
@@ -302,7 +510,7 @@ fn signed_category_amount(
     Ok(if positive {
         amount
     } else {
-        Money::new(-amount.amount(), amount.currency())
+        amount.checked_neg()?
     })
 }
 
@@ -329,15 +537,59 @@ mod tests {
     fn m(n: i64, c: Currency) -> Money {
         Money::new(Decimal::from(n), c)
     }
+
+    #[test]
+    fn signed_aggregation_cancels_before_summing_and_ignores_order() {
+        let c = Currency::from_code("CAD").unwrap();
+        let maximum = Money::from_parts(i128::MAX, 0, c).unwrap();
+        let one = m(1, c);
+        let negative_maximum = maximum.checked_neg().unwrap();
+
+        assert_eq!(
+            sum_signed([maximum, one, negative_maximum], c).unwrap(),
+            one
+        );
+        assert_eq!(
+            sum_signed([negative_maximum, one, maximum], c).unwrap(),
+            one
+        );
+        let maximum_at_scale_one = Money::from_parts(i128::MAX, 1, c).unwrap();
+        assert_eq!(
+            sum_signed(
+                [
+                    maximum,
+                    maximum_at_scale_one,
+                    maximum_at_scale_one.checked_neg().unwrap(),
+                    negative_maximum,
+                ],
+                c
+            )
+            .unwrap(),
+            Money::from_parts(0, 0, c).unwrap()
+        );
+        assert_eq!(
+            sum_signed([Money::from_parts(i128::MIN, 0, c).unwrap(), maximum], c).unwrap(),
+            Money::from_parts(-1, 0, c).unwrap()
+        );
+        assert_eq!(
+            CashFlowTotals {
+                operating: maximum,
+                investing: one,
+                financing: negative_maximum,
+            }
+            .net_change()
+            .unwrap(),
+            one
+        );
+    }
+
     fn account(n: u8, code: u16, category: AccountCategory, name: &str) -> Account {
-        Account::new(
-            id(n),
-            AccountCode::new(code).unwrap(),
-            category,
-            false,
-            name,
-        )
-        .unwrap()
+        let code = AccountCode::new(code).unwrap();
+        if category == AccountCategory::Asset && name.to_lowercase().contains("cash") {
+            Account::new_cash_position(id(n), code, name).unwrap()
+        } else {
+            Account::new(id(n), code, category, false, name).unwrap()
+        }
     }
     fn tx(n: u8, entries: Vec<LedgerEntry>) -> LedgerTransaction {
         LedgerTransaction::new(txid(n), YearMonth::new(2025, 1).unwrap(), entries)
@@ -443,7 +695,12 @@ mod tests {
                 ],
             ))
             .unwrap();
-        let projection = ledger.project(month, month, &[id(1)]).unwrap();
+        let validated = ledger.validate_projection(month, month, &[id(1)]).unwrap();
+        assert!(matches!(
+            ledger.validate_projection(month, month, &[]),
+            Err(AccountError::CashFlowAccountsRequired)
+        ));
+        let projection = validated.project().unwrap();
         let bs = projection.balance_sheet;
         assert_eq!(bs.assets, m(319_400, c));
         assert_eq!(bs.liabilities, m(199_000, c));
@@ -481,24 +738,21 @@ mod tests {
         .unwrap();
         let mut ledger = Ledger::new(chart, opening).unwrap();
         let month = YearMonth::new(2025, 1).unwrap();
-        ledger
-            .post(LedgerTransaction::new(
+        assert_eq!(
+            ledger.post(LedgerTransaction::new(
                 txid(1),
                 month,
                 [
                     LedgerEntry::new(id(2), BalanceSide::Debit, m(1, c)),
                     LedgerEntry::new(id(1), BalanceSide::Credit, m(1, c)),
                 ],
-            ))
-            .unwrap();
-        assert_eq!(
-            ledger.project(month, month, &[id(1)]),
+            )),
             Err(AccountError::CashFlowCategoryMissing(id(1)))
         );
         let mut other =
             Ledger::new(ledger.chart().clone(), ledger.opening_balances().clone()).unwrap();
-        other
-            .post(LedgerTransaction::new(
+        assert_eq!(
+            other.post(LedgerTransaction::new(
                 txid(2),
                 month,
                 [
@@ -515,19 +769,18 @@ mod tests {
                         Some(CashFlowCategory::Operating),
                     ),
                 ],
-            ))
-            .unwrap();
-        assert_eq!(
-            other.project(month, month, &[id(1)]),
+            )),
             Err(AccountError::CashFlowCategoryOnNonCashAccount(id(2)))
         );
         assert_eq!(
-            other.project(month, month, &[]),
+            other.validate_projection(month, month, &[]).map(|_| ()),
             Err(AccountError::CashFlowAccountsRequired)
         );
         let next_month = month.checked_add_months(1).unwrap();
         assert_eq!(
-            other.project(next_month, month, &[id(1)]),
+            other
+                .validate_projection(next_month, month, &[id(1)])
+                .map(|_| ()),
             Err(AccountError::InvalidProjectionRange)
         );
     }
@@ -710,5 +963,135 @@ mod tests {
         assert_eq!(cash_flow.totals.financing, m(20, c));
         assert_eq!(cash_flow.totals.investing, m(-7, c));
         assert_eq!(cash_flow.totals.net_change().unwrap(), m(13, c));
+    }
+
+    #[test]
+    fn large_amounts_aggregate_across_accounts_and_months_exactly() {
+        let c = Currency::from_code("CAD").unwrap();
+        let large = Money::parse("100000000000000000000000000000000000", c).unwrap();
+        let total = Money::parse("200000000000000000000000000000000000", c).unwrap();
+        let chart = ChartOfAccounts::new([
+            account(1, 1000, AccountCategory::Asset, "Cash"),
+            account(2, 3000, AccountCategory::Equity, "Opening equity"),
+            account(3, 4000, AccountCategory::Income, "Rent A"),
+            account(4, 4001, AccountCategory::Income, "Rent B"),
+        ])
+        .unwrap();
+        let opening = OpeningBalances::new(
+            &chart,
+            [
+                OpeningBalance::new(id(1), BalanceSide::Debit, m(0, c)).unwrap(),
+                OpeningBalance::new(id(2), BalanceSide::Credit, m(0, c)).unwrap(),
+            ],
+            None,
+        )
+        .unwrap();
+        let mut ledger = Ledger::new(chart, opening).unwrap();
+        let jan = YearMonth::new(2025, 1).unwrap();
+        let feb = jan.checked_add_months(1).unwrap();
+        ledger
+            .post(LedgerTransaction::new(
+                txid(1),
+                jan,
+                [
+                    LedgerEntry::new(id(1), BalanceSide::Debit, large)
+                        .with_cash_flow_category(CashFlowCategory::Operating),
+                    LedgerEntry::new(id(3), BalanceSide::Credit, large),
+                ],
+            ))
+            .unwrap();
+        ledger
+            .post(LedgerTransaction::new(
+                txid(2),
+                feb,
+                [
+                    LedgerEntry::new(id(1), BalanceSide::Debit, large)
+                        .with_cash_flow_category(CashFlowCategory::Operating),
+                    LedgerEntry::new(id(4), BalanceSide::Credit, large),
+                ],
+            ))
+            .unwrap();
+
+        assert_eq!(ledger.balance(id(1)).unwrap(), (BalanceSide::Debit, total));
+        let projection = ledger
+            .validate_projection(jan, feb, &[id(1)])
+            .unwrap()
+            .project()
+            .unwrap();
+        assert_eq!(projection.balance_sheet.assets, total);
+        assert_eq!(projection.balance_sheet.equity, total);
+        assert_eq!(projection.balance_sheet.cumulative_net_income, total);
+        assert_eq!(projection.income_statement.income, total);
+        assert_eq!(projection.income_statement.net_income, total);
+        assert_eq!(projection.cash_flow_statement.totals.operating, total);
+    }
+
+    #[test]
+    fn projection_nets_large_signed_asset_balances_before_aggregation() {
+        let c = Currency::from_code("CAD").unwrap();
+        let chart = ChartOfAccounts::new([
+            account(1, 1000, AccountCategory::Asset, "Property one"),
+            account(2, 1100, AccountCategory::Asset, "Property two"),
+            account(3, 1900, AccountCategory::Asset, "Cash"),
+            account(4, 2000, AccountCategory::Liability, "Mortgage"),
+            account(5, 3000, AccountCategory::Equity, "Equity"),
+            account(6, 5000, AccountCategory::Expense, "Repairs"),
+        ])
+        .unwrap();
+        let opening = OpeningBalances::new(
+            &chart,
+            [
+                OpeningBalance::new(id(3), BalanceSide::Debit, m(0, c)).unwrap(),
+                OpeningBalance::new(id(5), BalanceSide::Credit, m(0, c)).unwrap(),
+            ],
+            None,
+        )
+        .unwrap();
+        let mut ledger = Ledger::new(chart, opening).unwrap();
+        let month = YearMonth::new(2025, 1).unwrap();
+        let maximum = Money::from_parts(i128::MAX, 0, c).unwrap();
+
+        ledger
+            .post_batch([
+                LedgerTransaction::new(
+                    txid(1),
+                    month,
+                    [
+                        LedgerEntry::new(id(1), BalanceSide::Debit, maximum),
+                        LedgerEntry::new(id(4), BalanceSide::Credit, maximum),
+                    ],
+                ),
+                LedgerTransaction::new(
+                    txid(2),
+                    month,
+                    [
+                        LedgerEntry::new(id(2), BalanceSide::Debit, m(1, c)),
+                        LedgerEntry::new(id(5), BalanceSide::Credit, m(1, c)),
+                    ],
+                ),
+                LedgerTransaction::new(
+                    txid(3),
+                    month,
+                    [
+                        LedgerEntry::new(id(6), BalanceSide::Debit, maximum),
+                        LedgerEntry::new(id(3), BalanceSide::Credit, maximum)
+                            .with_cash_flow_category(CashFlowCategory::Operating),
+                    ],
+                ),
+            ])
+            .unwrap();
+
+        let projection = ledger.project(month, month, &[id(3)]).unwrap();
+        assert_eq!(projection.balance_sheet.assets, m(1, c));
+        assert_eq!(projection.balance_sheet.liabilities, maximum);
+        assert_eq!(
+            projection.balance_sheet.equity,
+            m(1, c).checked_sub(maximum).unwrap()
+        );
+        assert_eq!(projection.income_statement.expenses, maximum);
+        assert_eq!(
+            projection.cash_flow_statement.totals.operating,
+            maximum.checked_neg().unwrap()
+        );
     }
 }

@@ -35,3 +35,5 @@ Copy [`TEMPLATE.md`](TEMPLATE.md) for new records.
 | [15](ADR-15-random-streams-and-branches.md) | Random streams, branches, and recovery | Accepted |
 | [16](ADR-16-configuration-and-run-control.md) | Configuration and run controls | Accepted |
 | [17](ADR-17-money-and-identifiers.md) | Currency-tagged money and opaque identifiers | Accepted |
+| [18](ADR-18-sufficient-state-transition.md) | Sufficient state and single-period transition | Accepted |
+| [19](ADR-19-validation-only-domain-errors.md) | Validation boundary and total domain transition | Accepted |

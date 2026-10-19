@@ -1,7 +1,7 @@
 # Property Simulation Sandbox (PSS)
 
 **Project specification v0.5 — 2026-10-19**
-**Status:** M0 design baseline complete, including ADRs and M1/M2 test vectors; domain implementation remains pending.
+**Status:** M0 design baseline and M1 Ledger primitives complete; M2 monthly activity and Slice implementation is pending. Ledger/mortgage vectors are indexed in `docs/test-vectors.md`.
 
 The detailed specification is split by topic so each document has one main responsibility. Section numbers are retained from the original specification for reference; use the documents below as the current source of truth.
 
@@ -11,12 +11,12 @@ The detailed specification is split by topic so each document has one main respo
 - [Architecture decision records](docs/adr/README.md): numbered decision archive and template.
 - [Implementation roadmap and milestones](docs/implementation-roadmap.md): core-first phases, M0 checklist, M1–M5 acceptance criteria, baseline decisions.
 - [Engineering practices and quality gates](docs/engineering-practices.md): layering, lint/format, testing, review checklist.
-- [M1/M2 test vectors](docs/test-vectors.md): shared ledger and mortgage hand-calculation cases.
+- [Ledger and mortgage test vectors](docs/test-vectors.md): shared ledger and mortgage hand-calculation cases.
 - [Desktop application design](docs/desktop-application.md): future GPUI workflows and UI principles.
 
 ## Current implementation order
 
-1. Domain kernel: M0 engineering/design baseline, then M1 ledger primitives, M2 mortgage, M3 stochastic monthly runs and snapshot branches, M4 Slice composition, M5 stable core data contract.
+1. Domain kernel: M0 engineering/design baseline, then M1 ledger primitives, M2 monthly activity and Slice foundations, M3 monthly runs/random streams and the first domain Slice, M4 Slice composition, M5 stable core data contract.
 2. Application and persistence: CLI, SQLite, input workflow, save/restore, exports.
 3. Desktop application: GPUI scenario builder and simulation exploration.
 

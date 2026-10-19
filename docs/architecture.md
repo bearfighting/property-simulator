@@ -25,15 +25,19 @@
 | [ADR-15](adr/ADR-15-random-streams-and-branches.md) | 随机流、分支与恢复 | 新分支创建新 trial；checkpoint 恢复同一 trial |
 | [ADR-16](adr/ADR-16-configuration-and-run-control.md) | 配置与运行控制 | 初始配置、月度输入、终止条件及历史分支 |
 | [ADR-17](adr/ADR-17-money-and-identifiers.md) | 货币金额与标识符 | 单币种账本、不兑换；强类型 ID 与科目代码分离 |
+| [ADR-18](adr/ADR-18-sufficient-state-transition.md) | 充分状态与单期转移 | 完整期初状态、当期输入/随机输入决定当期结果；历史仅作显式状态或审计记录 |
+| [ADR-19](adr/ADR-19-validation-only-domain-errors.md) | 验证边界与计算错误 | 可纠正的结构错误在验证边界产生；有限金额表示导致的 checked overflow 明确报告 |
 
 
 ## 6. Slice 架构与契约
 
 ### 6.1 目标
 
-每个 Slice 负责自己的领域状态、规则、事件类型、配置校验与测试；引擎负责时间、排序、依赖协调、随机流、提交、保存和输出。**Slice 不得直接修改共享世界或 Ledger。**
+领域计算的基本契约是“完整期初状态 + 当期冻结输入 + 当期随机输入 → 当期结果 + 期末状态”。Slice 是计算规则的代码边界，不是活动种类的固定容器：实现和活动实例不要求一一对应；一个实现可处理多个同类独立实例，也可由多个实现共同计算一项活动。每个生效活动经相应规则计算后产生带来源的事件、Effects 和 Ledger 交易。规则只依赖显式传入的状态、输入和同月中间结果；若需要历史信息，其继续有效的影响必须已进入明确定义的状态字段。事件与账簿历史可供审计、展示和投影，不作为隐式计算上下文。**Slice 不得直接修改共享世界或 Ledger。**
 
-运行器提供统一的逐月执行流程：每月读取冻结输入，执行各 Slice，原子提交并生成月末快照，再评估运行控制。结束月份、终止条件和逐月继续/停止都是运行控制输入；快速运行与逐月交互由应用层决定何时提供这些输入，不得复制领域规则或实现两套模拟流程。
+输入验证器负责拒绝并报告用户可修正的结构问题，并产生满足不变量的冻结输入。该边界之后，状态转移、余额重算和投影不得因缺失引用、分类或投影前置条件而失败。金额采用有限 `i128` 表示；运行时 checked overflow 是显式数值错误，不能包装成经济结果，也不能静默夹值。若计算期间出现其他未预见的不变量破坏，它是实现缺陷/基础设施故障，不是模拟结果，也不能回退成用户输入错误。
+
+单期协调器提供统一的状态转移：读取期初状态与本期冻结输入/随机输入，按依赖执行 Slice，解析提案，原子提交并生成期末状态。它不读取总运行期限，也不选择下一期。更高层运行控制器决定是否再次调用单期协调器，并评估结束月份、终止条件和逐期继续/停止；快速运行与逐期交互复用同一个单期转移，不复制领域规则。
 
 ### 6.2 建议接口（概念草案）
 
@@ -44,8 +48,15 @@ trait SimulationSlice {
     fn required_inputs(&self) -> InputRequirements;
     fn dependencies(&self) -> Vec<SliceDependency>;
     fn validate(&self, scenario: &Scenario) -> Vec<ValidationIssue>;
-    fn propose(&self, ctx: &SliceContext<'_>, rng: &mut dyn RngCore)
+    fn propose(&self, ctx: &SliceContext<'_>, random: &mut dyn RandomInput)
         -> Result<SliceProposal, SimulationError>;
+}
+
+struct SliceContext<'a> {
+    period: YearMonth,
+    opening_state: &'a WorldState,
+    input: &'a FrozenMonthlyInput,
+    prior_stage_results: &'a StageResults,
 }
 
 struct SliceProposal {
@@ -57,6 +68,8 @@ struct SliceProposal {
 }
 ```
 
+上述随机输入只是概念接口：实现可以由外部流产生本期抽样，也可以从显式 checkpoint 状态推进；Slice 不依赖隐藏的全局 RNG 或完整历史日志。单期调用须能基于显式输入独立理解和测试。
+
 该接口只是方向；初期可用静态 enum 和具体结构，避免过早动态分发、类型擦除及插件化。需要确定 Slice 能否在一个月内多轮被调用；推荐引擎提供稳定阶段/依赖协议，而非无限循环互调。
 
 `DecisionRequest` 表示需要策略处理的领域选择，不意味着暂停运行。v1 使用场景配置的自动规则解析；交互式等待用户输入属于未来能力。
@@ -65,7 +78,9 @@ struct SliceProposal {
 
 - Slice 声明 `reads`、`writes` 和必要前置条件；如 Mortgage 写 loan principal 和 cash，Rental 写 occupancy 和 cash。
 - **现金变化可加总**，但贷款本金、房屋状况、出租状态等状态 Effects 不应无条件相加。
-- 对同一实体的冲突写入，由领域规则合并、串行处理或报错。
+- 每月结果由当月生效活动的已提交记录汇总；现金余额按分录推导，现金流按账户和分类投影。保留逐项活动及来源，不以净额替代活动记录。随机模型可决定活动是否发生及其数值，由活动规则生成对应结果。
+- 多笔贷款由同一贷款规则实现逐笔计算并分别保存状态；首版贷款实例之间不建立相关性或联动规则。借款用途/资金流向由用户输入决定，不隐式假定贷款所得进入模拟现金账户或用于房产。
+- 对同一实体的多项写入，由领域规则确定性合并或串行处理；无法支持的配置在运行前/输入冻结时拒绝。已接受配置不得在月度运行中因写入冲突失败。
 - 所有提案带 `slice_id`、`model_version`、`source_event_id`（若有）、`period`。
 - 引擎确保事件 ID、流水 ID 稳定且唯一。
 

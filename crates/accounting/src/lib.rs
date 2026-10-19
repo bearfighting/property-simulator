@@ -22,5 +22,5 @@ pub use ledger::{Ledger, LedgerEntry, LedgerTransaction};
 pub use opening_balance::{OpeningBalance, OpeningBalances, OpeningTotals};
 pub use projection::{
     AccountBalance, BalanceSheet, CashFlowStatement, CashFlowTotals, FinancialProjection,
-    IncomeStatement,
+    IncomeStatement, ValidatedProjection,
 };

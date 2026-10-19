@@ -83,19 +83,67 @@ pub struct Ledger {
     chart: ChartOfAccounts,
     opening: OpeningBalances,
     currency: Currency,
+    cash_accounts: BTreeSet<AccountId>,
     posted: Vec<PostedTransaction>,
 }
 
 impl Ledger {
     pub fn new(chart: ChartOfAccounts, opening: OpeningBalances) -> Result<Self, AccountError> {
+        let cash_accounts = chart
+            .accounts_by_code()
+            .filter(|account| account.is_cash_position())
+            .map(|account| account.id())
+            .collect::<Vec<_>>();
+        Self::new_with_cash_accounts(chart, opening, cash_accounts)
+    }
+
+    /// Creates a ledger with its cash-position accounts fixed for the branch.
+    pub fn new_with_cash_accounts(
+        chart: ChartOfAccounts,
+        opening: OpeningBalances,
+        cash_accounts: impl IntoIterator<Item = AccountId>,
+    ) -> Result<Self, AccountError> {
         if !opening.belongs_to(&chart) {
             return Err(AccountError::OpeningChartMismatch);
+        }
+        let supplied_cash_accounts = cash_accounts.into_iter().collect::<Vec<_>>();
+        let cash_accounts = supplied_cash_accounts
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        if cash_accounts.len() != supplied_cash_accounts.len() {
+            let mut seen = BTreeSet::new();
+            let duplicate = supplied_cash_accounts
+                .iter()
+                .find(|id| !seen.insert(**id))
+                .copied()
+                .expect("a size mismatch means there is a duplicate");
+            return Err(AccountError::DuplicateCashFlowAccount(duplicate));
+        }
+        for id in &cash_accounts {
+            let account = chart
+                .get(*id)
+                .ok_or(AccountError::UnknownPostingAccount(*id))?;
+            if !account.is_cash_position()
+                || account.category() != crate::AccountCategory::Asset
+                || account.is_contra()
+            {
+                return Err(AccountError::CashFlowAccountMustBeAsset(*id));
+            }
+        }
+        if chart
+            .accounts_by_code()
+            .filter(|a| a.is_cash_position())
+            .any(|a| !cash_accounts.contains(&a.id()))
+        {
+            return Err(AccountError::CashFlowAccountsRequired);
         }
         let currency = opening.currency();
         Ok(Self {
             chart,
             opening,
             currency,
+            cash_accounts,
             posted: Vec::new(),
         })
     }
@@ -111,6 +159,9 @@ impl Ledger {
     }
     pub fn transactions(&self) -> impl Iterator<Item = &LedgerTransaction> {
         self.posted.iter().map(|posted| &posted.0)
+    }
+    pub fn cash_accounts(&self) -> impl Iterator<Item = AccountId> + '_ {
+        self.cash_accounts.iter().copied()
     }
 
     /// Validates the complete transaction before mutating the posted ledger.
@@ -162,7 +213,7 @@ impl Ledger {
             if entry.amount.currency() != self.currency {
                 return Err(AccountError::TransactionCurrencyMismatch);
             }
-            if entry.amount.amount().is_sign_negative() {
+            if entry.amount.is_negative() {
                 return Err(AccountError::NegativePostingAmount);
             }
             if entry.amount.rounded_for_posting(RoundingPolicy::HalfUp)? != entry.amount {
@@ -179,44 +230,52 @@ impl Ledger {
                 }
             }
         }
+        self.validate_cash_classifications(&transaction)?;
         if !has_debit || !has_credit {
             return Err(AccountError::MissingDebitOrCredit);
         }
         if debits != credits {
             return Err(AccountError::TransactionDoesNotBalance { debits, credits });
         }
-        // Ensure the committed ledger remains computable before mutating it.
-        for account_id in transaction
-            .entries
-            .iter()
-            .map(|entry| entry.account_id)
-            .collect::<std::collections::BTreeSet<_>>()
-        {
-            let mut signed = self.signed_balance(account_id)?;
-            for entry in transaction
-                .entries
-                .iter()
-                .filter(|entry| entry.account_id == account_id)
-            {
-                signed = match entry.side {
-                    BalanceSide::Debit => signed.checked_add(entry.amount),
-                    BalanceSide::Credit => signed.checked_sub(entry.amount),
+        self.posted.push(PostedTransaction(transaction));
+        Ok(())
+    }
+
+    fn validate_cash_classifications(
+        &self,
+        transaction: &LedgerTransaction,
+    ) -> Result<(), AccountError> {
+        for entry in &transaction.entries {
+            match (
+                self.cash_accounts.contains(&entry.account_id),
+                entry.cash_flow_category,
+            ) {
+                (true, None) => {
+                    return Err(AccountError::CashFlowCategoryMissing(entry.account_id));
                 }
-                .map_err(AccountError::Arithmetic)?;
+                (false, Some(_)) => {
+                    return Err(AccountError::CashFlowCategoryOnNonCashAccount(
+                        entry.account_id,
+                    ));
+                }
+                _ => {}
             }
         }
-        self.posted.push(PostedTransaction(transaction));
         Ok(())
     }
 
     fn validate_non_contra_asset_month_ends(&self) -> Result<(), AccountError> {
         let months: BTreeSet<_> = self.posted.iter().map(|posted| posted.0.period).collect();
-        for account in self.chart.accounts_by_code().filter(|account| {
-            account.category() == crate::AccountCategory::Asset && !account.is_contra()
-        }) {
+        for account in self.chart.accounts_by_code() {
             for month in &months {
-                let (side, amount) = self.balance_through(account.id(), *month)?;
-                if side == BalanceSide::Credit && !amount.amount().is_zero() {
+                let signed = self.signed_balance_through(account.id(), Some(*month))?;
+                // The public side+magnitude balance representation must be valid at each close.
+                signed.abs()?;
+                if account.category() == crate::AccountCategory::Asset
+                    && !account.is_contra()
+                    && !account.is_cash_position()
+                    && signed.is_negative()
+                {
                     return Err(AccountError::NegativeAssetBalance(account.id()));
                 }
             }
@@ -231,18 +290,18 @@ impl Ledger {
             .get(account_id)
             .ok_or(AccountError::UnknownPostingAccount(account_id))?;
         let signed = self.signed_balance(account_id)?;
-        let side = if signed.amount().is_sign_negative() {
+        let side = if signed.is_negative() {
             BalanceSide::Credit
         } else {
             BalanceSide::Debit
         };
         // A zero balance is represented using the account's normal side.
-        let side = if signed.amount().is_zero() {
+        let side = if signed.is_zero() {
             account.normal_balance()
         } else {
             side
         };
-        Ok((side, Money::new(signed.amount().abs(), self.currency)))
+        Ok((side, signed.abs()?))
     }
 
     fn signed_balance(&self, account_id: AccountId) -> Result<Money, AccountError> {
@@ -261,8 +320,9 @@ impl Ledger {
         let mut signed = if opening_side == BalanceSide::Debit {
             opening_amount
         } else {
-            Money::new(-opening_amount.amount(), self.currency)
+            opening_amount.checked_neg()?
         };
+        let mut by_month = BTreeMap::<YearMonth, Vec<(BalanceSide, Money)>>::new();
         for transaction in self
             .posted
             .iter()
@@ -274,12 +334,14 @@ impl Ledger {
                 .iter()
                 .filter(|entry| entry.account_id == account_id)
             {
-                signed = match entry.side {
-                    BalanceSide::Debit => signed.checked_add(entry.amount),
-                    BalanceSide::Credit => signed.checked_sub(entry.amount),
-                }
-                .map_err(AccountError::Arithmetic)?;
+                by_month
+                    .entry(transaction.0.period)
+                    .or_default()
+                    .push((entry.side, entry.amount));
             }
+        }
+        for postings in by_month.into_values() {
+            signed = signed.checked_add(net_posting_change(postings, self.currency)?)?;
         }
         Ok(signed)
     }
@@ -301,15 +363,58 @@ impl Ledger {
             .get(account_id)
             .ok_or(AccountError::UnknownPostingAccount(account_id))?;
         let signed = self.signed_balance_through(account_id, Some(through))?;
-        let side = if signed.amount().is_sign_negative() {
+        let side = if signed.is_negative() {
             BalanceSide::Credit
-        } else if signed.amount().is_zero() {
+        } else if signed.is_zero() {
             account.normal_balance()
         } else {
             BalanceSide::Debit
         };
-        Ok((side, Money::new(signed.amount().abs(), self.currency)))
+        Ok((side, signed.abs()?))
     }
+}
+
+/// Nets a month's postings before summing, so transaction ordering cannot cause a
+/// temporary account-balance overflow when the month-end amount is representable.
+fn net_posting_change(
+    postings: impl IntoIterator<Item = (BalanceSide, Money)>,
+    currency: Currency,
+) -> Result<Money, AccountError> {
+    let mut debits = Vec::new();
+    let mut credits = Vec::new();
+    for (side, amount) in postings {
+        match side {
+            BalanceSide::Debit => debits.push(amount),
+            BalanceSide::Credit => credits.push(amount),
+        }
+    }
+
+    let mut remaining_debits = Vec::new();
+    for mut debit in debits {
+        while !debit.is_zero() {
+            let Some(credit) = credits.pop() else { break };
+            match debit.checked_cmp(credit)? {
+                std::cmp::Ordering::Equal => debit = Money::new(0.into(), currency),
+                std::cmp::Ordering::Greater => debit = debit.checked_sub(credit)?,
+                std::cmp::Ordering::Less => {
+                    credits.push(credit.checked_sub(debit)?);
+                    debit = Money::new(0.into(), currency);
+                }
+            }
+        }
+        if !debit.is_zero() {
+            remaining_debits.push(debit);
+        }
+    }
+
+    let mut change = Money::new(0.into(), currency);
+    for debit in remaining_debits {
+        change = change.checked_add(debit)?;
+    }
+    for credit in credits {
+        change = change.checked_sub(credit)?;
+    }
+    Ok(change)
 }
 
 #[cfg(test)]
@@ -588,6 +693,150 @@ mod tests {
     }
 
     #[test]
+    fn batch_recalculation_is_independent_of_order_near_numeric_limit() {
+        let c = Currency::from_code("CAD").unwrap();
+        let chart = ChartOfAccounts::new([
+            Account::new_cash_position(id(1), AccountCode::new(1000).unwrap(), "Cash").unwrap(),
+            Account::new(
+                id(5),
+                AccountCode::new(3000).unwrap(),
+                AccountCategory::Equity,
+                false,
+                "Equity",
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let maximum = Money::from_parts(i128::MAX, 0, c).unwrap();
+        let opening = OpeningBalances::new(
+            &chart,
+            [
+                OpeningBalance::new(id(1), BalanceSide::Debit, maximum).unwrap(),
+                OpeningBalance::new(id(5), BalanceSide::Credit, maximum).unwrap(),
+            ],
+            None,
+        )
+        .unwrap();
+        let make_ledger = || Ledger::new(chart.clone(), opening.clone()).unwrap();
+        let month = YearMonth::new(2025, 1).unwrap();
+        let increase = LedgerTransaction::new(
+            txid(1),
+            month,
+            [
+                LedgerEntry::new(id(1), BalanceSide::Debit, money(1, c))
+                    .with_cash_flow_category(CashFlowCategory::Operating),
+                LedgerEntry::new(id(5), BalanceSide::Credit, money(1, c)),
+            ],
+        );
+        let decrease = LedgerTransaction::new(
+            txid(2),
+            month,
+            [
+                LedgerEntry::new(id(5), BalanceSide::Debit, money(1, c)),
+                LedgerEntry::new(id(1), BalanceSide::Credit, money(1, c))
+                    .with_cash_flow_category(CashFlowCategory::Operating),
+            ],
+        );
+
+        let mut forward = make_ledger();
+        let mut reverse = make_ledger();
+        forward
+            .post_batch([increase.clone(), decrease.clone()])
+            .unwrap();
+        reverse.post_batch([decrease, increase]).unwrap();
+
+        assert_eq!(forward.balances().unwrap(), reverse.balances().unwrap());
+        assert_eq!(forward.balance(id(1)).unwrap().1, maximum);
+        assert_eq!(forward.balance(id(5)).unwrap().1, maximum);
+    }
+
+    #[test]
+    fn l08_negative_cash_position_continues_across_months_without_funding_entries() {
+        use crate::{CashFlowCategory, FinancialProjection};
+        let c = Currency::from_code("CAD").unwrap();
+        let chart = ChartOfAccounts::new([
+            Account::new_cash_position(id(1), AccountCode::new(1000).unwrap(), "Cash").unwrap(),
+            Account::new(
+                id(2),
+                AccountCode::new(5000).unwrap(),
+                AccountCategory::Expense,
+                false,
+                "Repairs",
+            )
+            .unwrap(),
+            Account::new(
+                id(3),
+                AccountCode::new(4000).unwrap(),
+                AccountCategory::Income,
+                false,
+                "Rent",
+            )
+            .unwrap(),
+            Account::new(
+                id(4),
+                AccountCode::new(3000).unwrap(),
+                AccountCategory::Equity,
+                false,
+                "Equity",
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let opening = OpeningBalances::new(
+            &chart,
+            [
+                OpeningBalance::new(id(1), BalanceSide::Debit, money(10, c)).unwrap(),
+                OpeningBalance::new(id(4), BalanceSide::Credit, money(10, c)).unwrap(),
+            ],
+            None,
+        )
+        .unwrap();
+        let mut ledger = Ledger::new(chart, opening).unwrap();
+        let jan = YearMonth::new(2025, 1).unwrap();
+        let feb = jan.checked_add_months(1).unwrap();
+        ledger
+            .post(LedgerTransaction::new(
+                txid(1),
+                jan,
+                [
+                    LedgerEntry::new(id(2), BalanceSide::Debit, money(15, c)),
+                    LedgerEntry::new(id(1), BalanceSide::Credit, money(15, c))
+                        .with_cash_flow_category(CashFlowCategory::Operating),
+                ],
+            ))
+            .unwrap();
+        ledger
+            .post(LedgerTransaction::new(
+                txid(2),
+                feb,
+                [
+                    LedgerEntry::new(id(1), BalanceSide::Debit, money(3, c))
+                        .with_cash_flow_category(CashFlowCategory::Operating),
+                    LedgerEntry::new(id(3), BalanceSide::Credit, money(3, c)),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(
+            ledger.balance(id(1)).unwrap(),
+            (BalanceSide::Credit, money(2, c))
+        );
+        assert_eq!(ledger.transactions().count(), 2);
+        let projected = ledger.project(jan, feb, &[id(1)]).unwrap();
+        assert_eq!(projected.balance_sheet.assets, money(-2, c));
+        assert_eq!(projected.balance_sheet.equity, money(-2, c));
+        assert_eq!(projected.income_statement.net_income, money(-12, c));
+        assert_eq!(
+            projected.cash_flow_statement.totals.operating,
+            money(-12, c)
+        );
+        assert_eq!(
+            projected.cash_flow_statement.totals.net_change().unwrap(),
+            money(-12, c)
+        );
+        let _: FinancialProjection = projected;
+    }
+
+    #[test]
     fn invalid_batch_does_not_partially_commit() {
         let (mut ledger, c) = fixture();
         let valid = transaction(
@@ -676,7 +925,7 @@ mod tests {
             .unwrap(),
         ])
         .unwrap();
-        let maximum = Money::new(Decimal::MAX, c);
+        let maximum = Money::from_parts(i128::MAX, 0, c).unwrap();
         let opening = OpeningBalances::new(
             &chart,
             [
@@ -695,7 +944,7 @@ mod tests {
                     entry(2, BalanceSide::Credit, money(1, c)),
                 ],
             )),
-            Err(AccountError::Arithmetic(
+            Err(AccountError::Numeric(
                 property_simulation_domain::DomainError::ArithmeticOverflow
             ))
         );

@@ -1,6 +1,6 @@
-# M1/M2 test vectors
+# Ledger and mortgage test vectors
 
-These hand-calculated vectors are the shared initial verification baseline. Amounts are CAD unless stated; all values are exact dollars. Posted values use cents and positive half-up rounding. `Dr` and `Cr` mean debit and credit. A transaction balances when debits equal credits. ADRs reference IDs here to avoid duplicated arithmetic.
+These hand-calculated vectors are the shared initial verification baseline for Ledger and mortgage calculations. Amounts are CAD unless stated; all values are exact dollars. Posted values use cents and positive half-up rounding. `Dr` and `Cr` mean debit and credit. A transaction balances when debits equal credits. ADRs reference IDs here to avoid duplicated arithmetic.
 
 ## Ledger vectors
 
@@ -17,6 +17,21 @@ The minimal accounts used below are Cash (asset), Property (asset), Mortgage pay
 | L-07 | Interest due $100, payment $50; $50 unpaid interest capitalizes (M-03) | Interest expense 100 | Cash 50; Mortgage payable 50 | 100 = 100; expense is fully recognized, $50 operating cash outflow is recorded, liability rises by $50 without a cash flow |
 
 M1.3 opening-balance checks: L-01 is represented by four opening facts (property debit $300,000; cash debit $20,000; mortgage credit $200,000; equity credit $120,000), with derived totals of assets $320,000, liabilities $200,000, equity/net worth $120,000. The opening facts remain outside period transactions and cash flow. A negative-net-worth case uses assets debit $80, liabilities credit $100, and equity debit $20; the debit equity balance is valid and the opening set still balances. A normal asset credit balance is rejected; a contra-asset credit balance reduces net assets. Reject an unbalanced set, negative amount, duplicate or unknown account, income/expense account, mixed currency, or declared net worth that differs from assets less liabilities.
+
+### L-08 — Negative cash-position continuity
+
+| Period activity | Debit | Credit | Check |
+|---|---|---|---|
+| Month 1: repairs $15 | Repairs expense 15 | Cash position 15 | Balanced |
+| Month 2: rent received $3 | Cash position 3 | Rental income 3 | Balanced |
+
+Opening cash position is $10 Dr. Month 1 closes at cash position $5 Cr (signed −$5), not a generated overdraft/loan; month 2 closes at $2 Cr (signed −$2). Cumulative property operating cash flow is −$12; cumulative net income is −$12; modeled assets are signed cash −$2; liabilities $0; equity −$2. Both month-end states reconcile and simulation continues.
+
+L-08 is a scoped property-ledger result. The negative cash position does not assert that a real bank paid the shortfall, that the household borrowed, or that any off-ledger household funding occurred.
+
+### Money range vectors
+
+Money uses a signed `i128` coefficient and scale up to 28. Parsing a 38-digit integer and adding it to another amount must remain exact when the result fits; adding one to `i128::MAX` must return an explicit arithmetic overflow. A value with scale 29 is rejected. No accepted or calculated amount may wrap or be clamped.
 
 ## Mortgage vectors
 
@@ -40,4 +55,4 @@ M-03/04/05 use the same principal/rate to distinguish payment allocation boundar
 
 ### Structural input errors
 
-Reject negative annual interest rate, non-positive principal on an active loan, negative planned payment, invalid currency precision, and terms effective other than at a month start. Zero annual rate and an absent/paid-off loan are valid. These vectors define calculation expectations; tests are added with M1/M2 implementation, not as placeholder tests in M0.
+Reject negative annual interest rate, non-positive principal on an active loan, negative planned payment, invalid currency precision, and terms effective other than at a month start. Zero annual rate and an absent/paid-off loan are valid. These vectors define calculation expectations; Ledger vectors are implemented with M1, and mortgage vectors with the mortgage milestone, not as placeholder tests in M0.

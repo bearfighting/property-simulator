@@ -51,13 +51,14 @@ impl AccountCategory {
 }
 
 /// An account definition. IDs are supplied by the caller and codes remain
-/// separate from account identity.
+/// separate from account identity. Cash-position behavior is explicit metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account {
     id: AccountId,
     code: AccountCode,
     category: AccountCategory,
     contra: bool,
+    cash_position: bool,
     name: String,
 }
 
@@ -82,8 +83,20 @@ impl Account {
             code,
             category,
             contra,
+            cash_position: false,
             name,
         })
+    }
+
+    /// Designates this asset as an in-scope signed property cash position.
+    pub fn new_cash_position(
+        id: AccountId,
+        code: AccountCode,
+        name: impl Into<String>,
+    ) -> Result<Self, AccountError> {
+        let mut account = Self::new(id, code, AccountCategory::Asset, false, name)?;
+        account.cash_position = true;
+        Ok(account)
     }
 
     pub const fn id(&self) -> AccountId {
@@ -100,6 +113,10 @@ impl Account {
 
     pub const fn is_contra(&self) -> bool {
         self.contra
+    }
+
+    pub const fn is_cash_position(&self) -> bool {
+        self.cash_position
     }
 
     pub fn name(&self) -> &str {
