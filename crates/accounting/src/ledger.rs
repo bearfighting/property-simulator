@@ -1,97 +1,10 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
-use property_simulation_domain::{
-    AccountId, ActivityInstanceId, Currency, EventId, LedgerTransactionId, ModelVersionId, Money,
-    RoundingPolicy, SliceId, YearMonth,
-};
+use property_simulation_domain::{AccountId, Currency, Money, RoundingPolicy, YearMonth};
 
-use crate::{AccountError, BalanceSide, CashFlowCategory, ChartOfAccounts, OpeningBalances};
-
-/// One debit or credit in a proposed ledger transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LedgerEntry {
-    account_id: AccountId,
-    side: BalanceSide,
-    amount: Money,
-    cash_flow_category: Option<CashFlowCategory>,
-}
-
-impl LedgerEntry {
-    pub const fn new(account_id: AccountId, side: BalanceSide, amount: Money) -> Self {
-        Self {
-            account_id,
-            side,
-            amount,
-            cash_flow_category: None,
-        }
-    }
-    pub const fn account_id(self) -> AccountId {
-        self.account_id
-    }
-    pub const fn side(self) -> BalanceSide {
-        self.side
-    }
-    pub const fn amount(self) -> Money {
-        self.amount
-    }
-    pub const fn cash_flow_category(self) -> Option<CashFlowCategory> {
-        self.cash_flow_category
-    }
-    pub const fn with_cash_flow_category(mut self, category: CashFlowCategory) -> Self {
-        self.cash_flow_category = Some(category);
-        self
-    }
-}
-
-/// A caller-identified transaction proposed for a specific inclusive month.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LedgerTransactionSource {
-    pub instance_id: ActivityInstanceId,
-    pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
-    pub output_key: String,
-    pub source_event_id: Option<EventId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LedgerTransaction {
-    id: LedgerTransactionId,
-    period: YearMonth,
-    entries: Vec<LedgerEntry>,
-    source: Option<LedgerTransactionSource>,
-}
-
-impl LedgerTransaction {
-    pub fn new(
-        id: LedgerTransactionId,
-        period: YearMonth,
-        entries: impl IntoIterator<Item = LedgerEntry>,
-    ) -> Self {
-        Self {
-            id,
-            period,
-            entries: entries.into_iter().collect(),
-            source: None,
-        }
-    }
-    pub fn with_source(mut self, source: LedgerTransactionSource) -> Self {
-        self.source = Some(source);
-        self
-    }
-    pub const fn id(&self) -> LedgerTransactionId {
-        self.id
-    }
-    pub const fn period(&self) -> YearMonth {
-        self.period
-    }
-    pub fn entries(&self) -> &[LedgerEntry] {
-        &self.entries
-    }
-    pub fn source(&self) -> Option<&LedgerTransactionSource> {
-        self.source.as_ref()
-    }
-}
+use crate::transaction::LedgerTransaction;
+use crate::{AccountError, BalanceSide, ChartOfAccounts, OpeningBalances};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PostedTransaction(LedgerTransaction);
@@ -449,8 +362,10 @@ fn net_posting_change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Account, AccountCategory, AccountCode, OpeningBalance};
-    use property_simulation_domain::Currency;
+    use crate::{
+        Account, AccountCategory, AccountCode, CashFlowCategory, LedgerEntry, OpeningBalance,
+    };
+    use property_simulation_domain::{Currency, LedgerTransactionId};
     use rust_decimal::Decimal;
 
     fn id(n: u8) -> AccountId {
