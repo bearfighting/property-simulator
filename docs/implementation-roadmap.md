@@ -113,11 +113,12 @@ M2 范围明确为通用最小 Slice 框架；不实现贷款、随机流分配�
   - [x] 将已有租金/维修结果接入贡献投影，验证来源可追溯、负现金贡献有效、期内/累计合计一致；贡献不因该投影被强制转成每实例 Ledger 账户。
 
 - **M3.4 — 随机根密钥与语义子流**
-  - [ ] 在基础设施/适配边界读取 OS 32-byte root key；熵读取失败时拒绝启动，不以时钟替代。领域 Slice 和运行器通过显式接口接收随机源，不直接访问 OS。
-  - [ ] 按 ADR-21 用 BLAKE3 keyed hashing 派生每次运行 key，再按版本化、无歧义编码的 `(trial_id, category, slice_id, activity_id, YearMonth, model_version, sample_purpose/key)` 派生子流；PRNG 使用 ChaCha12。
-  - [ ] 每个不同样本目的使用独立语义 key；同一子流内部允许采样器消费多个随机值。固定 seed/确定性 key 只通过测试和诊断入口注入。
-  - [ ] 证明月份、实例或 Slice 的调用顺序/额外抽样不改变其他语义子流；新增独立 Slice 不改变现有类别和实例的随机分配；不把具体随机值唯一性或跨版本回放作为产品保证。
-  - [ ] 不持久化 root/run key、PRNG 状态或未完成月份抽样；完成结果只保存其数据契约要求的业务输出和版本/来源信息。
+- [x] 在独立 randomness 适配 crate 读取 OS 32-byte root key；熵读取失败时拒绝创建 factory，不以时钟替代。Slice 和运行器通过显式接口接收随机源，不直接访问 OS。
+  - [x] 为初始运行提供显式 trial/branch 身份构造入口；匿名运行继续可用，但请求随机流时在采样前返回错误。
+  - [x] 按 ADR-21 为每次 `SimulationRun` 派生并在月度调用间暂存 run key，再按版本化、无歧义编码的 `(trial_id, category, slice_id, activity_id, YearMonth, model_version, sample_purpose/key)` 派生子流；PRNG 使用 ChaCha12。
+- [x] 每个不同样本目的使用独立语义 key；同一子流内部允许采样器消费多个随机值。固定 seed/确定性 key 只通过测试和诊断入口注入。
+- [x] 测试月份、实例、Slice、类别、版本、trial 和用途字段隔离，以及另一独立流额外消费不改变既有流；不把具体随机值唯一性或跨版本回放作为产品保证。
+- [x] root/run key、PRNG 状态和未完成月份抽样不进入结果或快照；完成结果仍只保存业务输出和来源/版本信息。
 
 - **M3.5 — 首个随机端到端模型**
   - [ ] 以 M2 已有维修分布/采样器为首个随机端到端样例；把随机子流适配到 sampler 输入，输出既有类型化样本，再由 RepairSlice 产生提案和现金流贡献。

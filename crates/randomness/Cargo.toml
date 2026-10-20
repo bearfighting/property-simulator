@@ -1,0 +1,17 @@
+[package]
+name = "property-simulation-randomness"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+blake3 = "1"
+getrandom = "0.2"
+property-simulation-domain = { path = "../domain" }
+property-simulation-models = { path = "../models" }
+rand_chacha = "0.3"
+rand_core = "0.6"
+
+[lints]
+workspace = true

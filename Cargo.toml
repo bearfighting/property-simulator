@@ -4,6 +4,7 @@ members = [
     "crates/accounting",
     "crates/simulation",
     "crates/models",
+    "crates/randomness",
 ]
 resolver = "3"
 

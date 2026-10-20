@@ -91,6 +91,7 @@ pub enum RunControlError {
     Input(crate::ValidationErrors),
     InvalidExecutionInput(SimulationError),
     Simulation(SimulationError),
+    Randomness(&'static str),
 }
 
 /// Executes one already frozen month. Implementations compose sampling, Slices and
@@ -105,6 +106,19 @@ pub trait SingleMonthExecutor {
         activities: &[crate::ActivityInstance],
     ) -> Result<(), SimulationError>;
 
+    fn requires_random_streams(&self) -> bool {
+        false
+    }
+
+    /// Optional explicit stream allocation hook. Random-aware executors may use
+    /// an injected OS-backed (or test-keyed) factory; default executors stay deterministic.
+    fn create_random_streams(
+        &mut self,
+        _identity: Option<RunIdentity>,
+    ) -> Result<Option<property_simulation_randomness::RandomStreams>, &'static str> {
+        Ok(None)
+    }
+
     fn execute(
         &mut self,
         input: &ValidatedInput,
@@ -112,6 +126,17 @@ pub trait SingleMonthExecutor {
         activities: &[crate::ActivityInstance],
         identity: Option<RunIdentity>,
     ) -> Result<(MonthlyResult, Ledger), SimulationError>;
+
+    fn execute_with_random_streams(
+        &mut self,
+        input: &ValidatedInput,
+        opening_ledger: &Ledger,
+        activities: &[crate::ActivityInstance],
+        identity: Option<RunIdentity>,
+        _random_streams: Option<&property_simulation_randomness::RandomStreams>,
+    ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        self.execute(input, opening_ledger, activities, identity)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +156,8 @@ pub struct SimulationRun {
     latest: Option<MonthSnapshot>,
     identity: Option<(TrialId, BranchId)>,
     execution_identity: Option<RunIdentity>,
+    randomness_mode: Option<bool>,
+    random_streams: Option<property_simulation_randomness::RandomStreams>,
     status: RunStatus,
 }
 
@@ -203,10 +230,45 @@ impl SimulationRun {
             latest: None,
             identity: None,
             execution_identity: None,
+            randomness_mode: None,
+            random_streams: None,
             status: RunStatus::Running {
                 next_month: frozen_input.period,
             },
         })
+    }
+
+    /// Construct a run with the trial and branch identity required by
+    /// identity-bound outputs and random streams.
+    pub fn new_with_identity(
+        config: RunConfig,
+        opening_state: OpeningState,
+        frozen_input: FrozenInput,
+        ledger: Ledger,
+        identity: RunIdentity,
+    ) -> Result<Self, RunControlError> {
+        Self::new_with_activities_and_identity(
+            config,
+            opening_state,
+            frozen_input,
+            ledger,
+            vec![],
+            identity,
+        )
+    }
+
+    pub fn new_with_activities_and_identity(
+        config: RunConfig,
+        opening_state: OpeningState,
+        frozen_input: FrozenInput,
+        ledger: Ledger,
+        activities: Vec<crate::ActivityInstance>,
+        identity: RunIdentity,
+    ) -> Result<Self, RunControlError> {
+        let mut run =
+            Self::new_with_activities(config, opening_state, frozen_input, ledger, activities)?;
+        run.set_execution_identity(identity.trial_id, identity.branch_id);
+        Ok(run)
     }
 
     pub fn status(&self) -> &RunStatus {
@@ -329,11 +391,40 @@ impl SimulationRun {
             return Err(RunControlError::InvalidExecutionInput(error));
         }
 
-        let (result, ledger) = match executor.execute(
+        let requires_random_streams = executor.requires_random_streams();
+        if self
+            .randomness_mode
+            .is_some_and(|previous| previous != requires_random_streams)
+        {
+            return Err(RunControlError::Randomness(
+                "executor randomness requirement changed during the run",
+            ));
+        }
+        if requires_random_streams && self.execution_identity.is_none() {
+            return Err(RunControlError::Randomness(
+                "random streams require a trial identity",
+            ));
+        }
+        let newly_created_streams = if requires_random_streams && self.random_streams.is_none() {
+            let streams = executor
+                .create_random_streams(self.execution_identity)
+                .map_err(|_| RunControlError::Randomness("failed to create random streams"))?;
+            Some(streams.ok_or(RunControlError::Randomness(
+                "executor requested random streams but did not create them",
+            ))?)
+        } else {
+            None
+        };
+        let random_streams = self
+            .random_streams
+            .as_ref()
+            .or(newly_created_streams.as_ref());
+        let (result, ledger) = match executor.execute_with_random_streams(
             &validated,
             &candidate_ledger,
             &activities,
             self.execution_identity,
+            random_streams,
         ) {
             Ok(completed) => completed,
             Err(error) => {
@@ -461,6 +552,10 @@ impl SimulationRun {
             result: result.clone(),
             ledger,
         });
+        self.randomness_mode = Some(requires_random_streams);
+        if let Some(streams) = newly_created_streams {
+            self.random_streams = Some(streams);
+        }
         self.identity = Some((result.trial_id(), result.branch_id()));
         if let Some(reason) = reason {
             self.status = RunStatus::Stopped(reason);
@@ -499,7 +594,10 @@ mod tests {
         Account, AccountCategory, AccountCode, BalanceSide, CashFlowCategory, ChartOfAccounts,
         LedgerEntry, OpeningBalances,
     };
-    use property_simulation_domain::{AccountId, BranchId, Currency, TrialId};
+    use property_simulation_domain::{
+        AccountId, ActivityInstanceId, BranchId, Currency, ModelVersionId, SliceId, TrialId,
+    };
+    use property_simulation_models::RandomSource;
 
     fn month(m: u8) -> YearMonth {
         YearMonth::new(2025, m).unwrap()
@@ -629,8 +727,20 @@ mod tests {
         fail: bool,
         seen_activity_count: Option<usize>,
         identity: Option<RunIdentity>,
+        require_randomness: bool,
     }
     impl SingleMonthExecutor for Executor {
+        fn requires_random_streams(&self) -> bool {
+            self.require_randomness
+        }
+
+        fn create_random_streams(
+            &mut self,
+            _identity: Option<RunIdentity>,
+        ) -> Result<Option<property_simulation_randomness::RandomStreams>, &'static str> {
+            Ok(None)
+        }
+
         fn validate_inputs(
             &self,
             _input: &ValidatedInput,
@@ -681,6 +791,130 @@ mod tests {
             )?;
             Ok((result, ledger.clone()))
         }
+    }
+
+    #[test]
+    fn requesting_random_streams_without_run_identity_is_an_execution_error() {
+        let mut run = fixture(None, vec![]);
+        let mut executor = Executor {
+            require_randomness: true,
+            ..Executor::default()
+        };
+        let error = run
+            .call(RunCommand::Continue, &[], &mut executor)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RunControlError::Randomness("random streams require a trial identity")
+        );
+        assert_eq!(executor.calls, 0);
+        assert!(run.latest_snapshot().is_none());
+    }
+
+    #[test]
+    fn random_run_key_is_allocated_once_and_reused_across_months() {
+        struct RandomExecutor {
+            inner: Executor,
+            factory: property_simulation_randomness::RunKeyFactory,
+            allocations: usize,
+            draws: Vec<u64>,
+        }
+
+        impl SingleMonthExecutor for RandomExecutor {
+            fn validate_inputs(
+                &self,
+                input: &ValidatedInput,
+                ledger: &Ledger,
+                activities: &[crate::ActivityInstance],
+            ) -> Result<(), SimulationError> {
+                self.inner.validate_inputs(input, ledger, activities)
+            }
+
+            fn requires_random_streams(&self) -> bool {
+                true
+            }
+
+            fn create_random_streams(
+                &mut self,
+                identity: Option<RunIdentity>,
+            ) -> Result<Option<property_simulation_randomness::RandomStreams>, &'static str>
+            {
+                self.allocations += 1;
+                self.factory
+                    .run_streams(identity.ok_or("missing run identity")?.trial_id)
+                    .map(Some)
+                    .map_err(|_| "random stream allocation failed")
+            }
+
+            fn execute(
+                &mut self,
+                input: &ValidatedInput,
+                ledger: &Ledger,
+                activities: &[crate::ActivityInstance],
+                identity: Option<RunIdentity>,
+            ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+                self.inner.execute(input, ledger, activities, identity)
+            }
+
+            fn execute_with_random_streams(
+                &mut self,
+                input: &ValidatedInput,
+                ledger: &Ledger,
+                activities: &[crate::ActivityInstance],
+                identity: Option<RunIdentity>,
+                streams: Option<&property_simulation_randomness::RandomStreams>,
+            ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+                let run_identity = identity.unwrap();
+                let mut stream = streams
+                    .unwrap()
+                    .stream(&property_simulation_randomness::SemanticIdentity {
+                        trial_id: run_identity.trial_id,
+                        category: property_simulation_randomness::RandomCategory::Property,
+                        slice_id: SliceId::from_bytes([2; 16]),
+                        activity_id: ActivityInstanceId::from_bytes([3; 16]),
+                        period: input.frozen_input().period,
+                        model_version: ModelVersionId::from_bytes([4; 16]),
+                        purpose: "test".into(),
+                    })
+                    .unwrap();
+                self.draws.push(stream.next_u64().unwrap());
+                self.inner.execute(input, ledger, activities, identity)
+            }
+        }
+
+        let trial_id = TrialId::from_bytes([8; 16]);
+        let branch_id = BranchId::from_bytes([9; 16]);
+        let (ledger, frozen_input, opening_state) = make_fixture_ledger();
+        let mut run = SimulationRun::new_with_identity(
+            RunConfig {
+                start: month(1),
+                end: Some(month(2)),
+                stop_conditions: vec![],
+            },
+            opening_state,
+            frozen_input,
+            ledger,
+            RunIdentity {
+                trial_id,
+                branch_id,
+            },
+        )
+        .unwrap();
+        let mut executor = RandomExecutor {
+            inner: Executor::default(),
+            factory: property_simulation_randomness::RunKeyFactory::new(
+                property_simulation_randomness::RootKey::from_seed([7; 32]),
+            ),
+            allocations: 0,
+            draws: Vec::new(),
+        };
+
+        run.call(RunCommand::Continue, &[], &mut executor).unwrap();
+        run.call(RunCommand::Continue, &[], &mut executor).unwrap();
+
+        assert_eq!(executor.allocations, 1);
+        assert_eq!(executor.draws.len(), 2);
+        assert_ne!(executor.draws[0], executor.draws[1]);
     }
 
     fn update(effective_month: YearMonth) -> RunUpdate {
@@ -1061,6 +1295,7 @@ mod tests {
             fail: true,
             seen_activity_count: None,
             identity: None,
+            ..Executor::default()
         };
         assert!(matches!(
             run.call(RunCommand::Continue, &[], &mut executor),

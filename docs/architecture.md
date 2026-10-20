@@ -97,6 +97,9 @@ M0-B 已选定最小 workspace 边界，当前实现位于 `crates/`：
 | `property-simulation-accounting` (`accounting`) | 科目、凭证、分录、余额和报表投影 | `domain` |
 | `property-simulation-models` (`models`) | 领域模型策略与概率分布 | `domain` |
 | `property-simulation-simulation` (`simulation`) | 月度生命周期、Slice 协调和运行控制 | `domain`、`accounting`、`models` |
+| `property-simulation-randomness` (`randomness`) | OS 熵适配、短期运行密钥与语义 ChaCha12 子流 | `domain`、`models` |
+
+`simulation` depends on `randomness` only for its explicit executor stream hook. Domain Slice implementations still receive caller-provided model `RandomSource` values and do not access operating-system entropy.
 
 Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出公开 API；`error` 统一模拟错误，`types` 保存共享状态、活动身份、提案数据与单期结果类型，`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束，`slices::rental` 与 `slices::repair` 分别实现示例活动规则。示例 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 持有账簿状态并负责交易验证、原子过账和余额推导，避免把依赖账簿上下文的不变量分散给独立服务。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
 
