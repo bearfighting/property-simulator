@@ -39,3 +39,4 @@ Copy [`TEMPLATE.md`](TEMPLATE.md) for new records.
 | [19](ADR-19-validation-only-domain-errors.md) | Validation boundary and fatal runtime failures | Accepted |
 | [20](ADR-20-composable-slices-and-random-sampling.md) | Composable proposals, stable provenance, and decoupled sampling | Accepted |
 | [21](ADR-21-m3-run-randomness-and-persistence.md) | M3 run randomness, persistence, and composition | Accepted |
+| [22](ADR-22-m3-run-inputs-snapshot-and-cashflow-contract.md) | M3 run inputs, snapshot references, and cash-flow aggregation | Accepted |

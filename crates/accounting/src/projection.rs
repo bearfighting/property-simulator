@@ -850,11 +850,11 @@ mod tests {
     }
 
     #[test]
-    fn l07_capitalized_interest_affects_expense_and_debt_but_not_cash_flow() {
+    fn l07_accrued_interest_liability_affects_expense_and_balance_sheet_but_not_cash_flow() {
         let c = Currency::from_code("CAD").unwrap();
         let chart = ChartOfAccounts::new([
             account(1, 1000, AccountCategory::Asset, "Cash"),
-            account(2, 2000, AccountCategory::Liability, "Mortgage"),
+            account(2, 2000, AccountCategory::Liability, "Interest payable"),
             account(3, 3000, AccountCategory::Equity, "Opening equity"),
             account(4, 5000, AccountCategory::Expense, "Interest"),
         ])

@@ -47,7 +47,7 @@ The minimal accounts used below are Cash (asset), Property (asset), Mortgage pay
 | L-04 | Rent received $2,000 | Cash 2,000 | Rental income 2,000 | 2,000 = 2,000 |
 | L-05 | Property tax paid $300 | Property tax expense 300 | Cash 300 | 300 = 300 |
 | L-06 | Reconciliation after L-02 to L-05 | Opening balances plus listed debits/credits | — | Cash = 20,000 - 1,500 - 800 + 2,000 - 300 = 19,400; operating cash flow = -500 - 800 + 2,000 - 300 = 400; financing cash flow = -1,000; net cash change = -600; mortgage = 199,000; net income = 400; assets 319,400 = liabilities 199,000 + opening equity 120,000 + net income 400 |
-| L-07 | Interest due $100, payment $50; $50 unpaid interest capitalizes (M-03) | Interest expense 100 | Cash 50; Mortgage payable 50 | 100 = 100; expense is fully recognized, $50 operating cash outflow is recorded, liability rises by $50 without a cash flow |
+| L-07 | Generic accrual edge: interest expense $100; cash interest paid $50; remaining accrued amount $50 credited to an interest payable | Interest expense 100 | Cash 50; Interest payable 50 | Balanced; $50 operating cash outflow; liability rises by $50; no cash-flow line for the liability credit. Ledger projection capability only; not an outcome of the ADR-14 mortgage convention |
 
 M1.3 opening-balance checks: L-01 is represented by four opening facts (property debit $300,000; cash debit $20,000; mortgage credit $200,000; equity credit $120,000), with derived totals of assets $320,000, liabilities $200,000, equity/net worth $120,000. The opening facts remain outside period transactions and cash flow. A negative-net-worth case uses assets debit $80, liabilities credit $100, and equity debit $20; the debit equity balance is valid and the opening set still balances. A normal asset credit balance is rejected; a contra-asset credit balance reduces net assets. Reject an unbalanced set, negative amount, duplicate or unknown account, income/expense account, mixed currency, or declared net worth that differs from assets less liabilities.
 
@@ -68,24 +68,36 @@ Money uses a signed `i128` coefficient and scale up to 28. Parsing a 38-digit in
 
 ## Mortgage vectors
 
-For every active loan vector, rate is nominal annual rate divided by 12. Compute with decimal precision, post interest rounded to cents half-up, then apply actual payment interest-first and principal-second; actual payment cannot exceed principal plus posted interest.
+For active fixed-rate, fully amortizing loans, derive the level payment from opening principal, remaining months and nominal annual rate using the annuity formula in ADR-14. The effective month is the first full interest month and first payment month; the first payment is made at that month's close. Round the scheduled payment and each month's interest to cents half-up. The scheduled payment stays constant; the final payment is adjusted to the remaining principal plus that month's interest. Values below are CAD.
 
-| ID | Opening principal | Annual rate | Planned payment | Interest | Actual payment | Principal paid | Interest capitalized | Closing principal |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| M-01 Zero rate | 1,000.00 | 0% | 100.00 | 0.00 | 100.00 | 100.00 | 0.00 | 900.00 |
-| M-02 Normal month | 10,000.00 | 12% | 200.00 | 100.00 | 200.00 | 100.00 | 0.00 | 9,900.00 |
-| M-03 Payment below interest | 10,000.00 | 12% | 50.00 | 100.00 | 50.00 | 0.00 | 50.00 | 10,050.00 |
-| M-04 Payment equals interest | 10,000.00 | 12% | 100.00 | 100.00 | 100.00 | 0.00 | 0.00 | 10,000.00 |
-| M-05 Payment above interest | 10,000.00 | 12% | 200.00 | 100.00 | 200.00 | 100.00 | 0.00 | 9,900.00 |
-| M-06 Capitalization carried forward | 10,000.00 | 12% | 50.00 (month 1); 100.50 (month 2) | 100.00; 100.50 | 50.00; 100.50 | 0.00; 0.00 | 50.00; 0.00 | 10,050.00; 10,050.00 |
-| M-07 Final payment cap | 100.00 | 12% | 1,000.00 | 1.00 | 101.00 | 100.00 | 0.00 | 0.00 |
-| M-08 Half-cent rounding | 0.50 | 12% | 1.00 | 0.01 | 0.51 | 0.50 | 0.00 | 0.00 |
-| M-09 No loan | Absent / paid off | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| M-10 Low balance below half cent interest | 0.01 | 6% | 0.01 | 0.00 | 0.01 | 0.01 | 0.00 | 0.00 |
-| M-11 Zero payment | 10,000.00 | 12% | 0.00 | 100.00 | 0.00 | 0.00 | 100.00 | 10,100.00 |
+| ID | Opening balance | Annual rate | Term (months) | Scheduled payment | Period | Interest | Actual payment | Principal paid | Closing balance |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| M-01 Zero rate | 1,000.00 | 0% | 10 | 100.00 | 1 | 0.00 | 100.00 | 100.00 | 900.00 |
+| M-02 Ordinary amortization | 10,000.00 | 12% | 12 | 888.49 | 1 | 100.00 | 888.49 | 788.49 | 9,211.51 |
+| M-03 One-month payoff | 100.00 | 12% | 1 | 101.00 | 1 (final) | 1.00 | 101.00 | 100.00 | 0.00 |
+| M-04 Monthly payment rounding | 0.50 | 12% | 1 | 0.51 | 1 (final) | 0.01 | 0.51 | 0.50 | 0.00 |
+| M-05 Interest below half-cent | 0.01 | 6% | 1 | 0.01 | 1 (final) | 0.00 | 0.01 | 0.01 | 0.00 |
+| M-06 Continuation month | 9,211.51 | 12% | 11 remaining | 888.49 | 2 | 92.12 | 888.49 | 796.37 | 8,415.14 |
+| M-07 Final-payment adjustment | 879.67 | 12% | 1 remaining | 888.49 (M-02 schedule) | 12 (final) | 8.80 | 888.47 | 879.67 | 0.00 |
+| M-08 No active loan | 0.00 / paid off | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 |
+| M-09 Zero term rejected | 1,000.00 | 12% | 0 | — | — | — | — | — | Reject before transition |
+| M-10 Negative rate rejected | 1,000.00 | -1% | 12 | — | — | — | — | — | Reject before transition |
+| M-11 Non-positive active balance rejected | 0.00 | 12% | 12 | — | — | — | — | — | Reject before transition |
 
-M-03/04/05 use the same principal/rate to distinguish payment allocation boundaries. M-06 verifies a shortfall is capitalized and the next month accrues on the increased opening principal. M-08 is the positive half-up midpoint: $0.50 × 1% = $0.005 → $0.01. M-10 is $0.01 × 0.5% = $0.00005 → $0.00. M-11 confirms zero payment is allowed and all posted interest capitalizes; this is not delinquency/default.
+M-02's unrounded annuity payment is approximately $888.4878868 and therefore posts at $888.49. M-06 continues that schedule from the first closing balance; its payment remains unchanged. M-07 is the twelfth payment of the M-02 schedule after eleven regular payments: $888.49 is the scheduled payment carried forward from that schedule, not a new payment derived from the displayed final-month balance and one remaining period. The actual payment is adjusted down to settle the remaining balance exactly after monthly interest rounding. M-04 tests a half-cent midpoint: $0.50 × 1% = $0.005 → $0.01 interest, while the formula-derived payment $0.505 rounds to $0.51. M-05 tests a positive balance whose monthly interest rounds to zero.
+M-02 period 1 is the effective month and includes both the full month's interest and its first month-end payment.
+
+### Mortgage Ledger posting cross-checks
+
+These M3 cross-checks apply the mortgage outputs above to the Ledger. Opening principal is an opening liability balance, not a past-period transaction. New simulated borrowing posts cash received against the loan liability as financing inflow. For an active payment month, debit interest expense by interest and debit the loan liability by principal paid; credit cash for interest as operating flow and principal as financing flow. The loan continuation balance equals the associated Ledger liability, whether represented by one account per loan or a shared account with traceable instance allocations.
+
+| Case | Mortgage output | Balanced Ledger posting | Closing check |
+|---|---|---|---|
+| M-02 first payment | Interest 100.00; payment 888.49; principal 788.49 | Dr Interest expense 100.00; Dr Mortgage liability 788.49; Cr Cash (operating) 100.00; Cr Cash (financing) 788.49 | Liability falls from 10,000.00 to 9,211.51; cash falls 888.49 |
+| M-03 final payoff | Interest 1.00; payment 101.00; principal 100.00 | Dr Interest expense 1.00; Dr Mortgage liability 100.00; Cr Cash (operating) 1.00; Cr Cash (financing) 100.00 | Liability falls from 100.00 to 0.00; cash falls 101.00 |
+
+The cash postings may share one cash account but retain their separate cash-flow classifications. Each transaction balances, and the sum of loan instance balances reconciles to the liability account balance.
 
 ### Structural input errors
 
-Reject negative annual interest rate, non-positive principal on an active loan, negative planned payment, invalid currency precision, and terms effective other than at a month start. Zero annual rate and an absent/paid-off loan are valid. These vectors define calculation expectations; Ledger vectors are implemented with M1, and mortgage vectors with the mortgage milestone, not as placeholder tests in M0.
+Reject negative annual interest rate, non-positive principal on an active loan, non-positive remaining term, invalid currency precision, and terms effective other than at a month start. Zero annual rate and an absent/paid-off loan are valid. These vectors define calculation expectations; Ledger vectors are implemented with M1, and mortgage vectors with the mortgage milestone, not as placeholder tests in M0.

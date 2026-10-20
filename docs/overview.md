@@ -98,11 +98,7 @@ initial_state:
     - id: mortgage-1
       outstanding_principal: '275000.00'
       annual_rate: '0.045'
-      payment_amount: '1739.00'
       remaining_amortization_months: 240
-      next_payment_month: 2030-01
-      rate_type: fixed
-      term_end_month: 2034-12
   components:
     - { id: roof-1, kind: roof, age_months: 144, condition: 0.75 }
 enabled_slices:
@@ -113,12 +109,12 @@ assumptions:
   maintenance_policy: manual_above_threshold
 ```
 
-上述贷款数值仅演示结构，**并未保证还款额与其他字段精确匹配**；有效运行必须执行条款一致性校验，并明确计息/还款约定。
+按 ADR-14 的固定利率等额摊还约定，上述余额、年利率和 240 个月剩余摊还期推导出约 CAD 1,739.79 的月供；贷款计算输入只有余额、期限和年利率，月供是计算结果。此期初贷款从 Scenario 的起始月 2030-01 生效，当月计息并在月末首次还款；模拟中新增或调整贷款时，生效月份由 Activity Schedule 提供。本例不模拟合同续约或浮动利率。
 
 ### 4.5 校验规则
 
 - 必须提供有效 `start_month`，并至少选择一种用户控制的结束方式：结束月份、至少一个月末终止条件，或逐月人工继续/停止控制；若提供 `end_month`，则须满足 `start_month <= end_month`。不设置产品层固定期限。
-- 启用 Mortgage 且本金 > 0 时，必须具备利率、付款计划、计息约定、下一次还款时间、必要的续约假设。
+- 启用 M3 固定利率等额摊还 Mortgage 且未偿余额 > 0 时，必须具备正数期初余额、正整数剩余摊还月数和非负固定名义年利率；有效月份由活动时序提供。系统按 ADR-14 推导月供，不接受另行输入的月供金额。
 - 已有租客时必须提供租金和支付周期，或明确选择默认规则。
 - 组件状况必须在合法区间；安装年龄与状态可以相关，但不强制仅由年龄决定。
 - 购房交易不得与已经入账的期初房产资产、贷款和现金重复计入。
@@ -130,7 +126,7 @@ assumptions:
 ## 18. 推荐的第一份可执行样例
 
 **Scenario A — New Purchase**
-- 2030-01 至 2049-12；2030-01 购入房产；首付+贷款；固定月供；无租客；从第二个 Slice 开始加入税费。
+- 2030-01 至 2049-12；2030-01 购入房产；首付+贷款；月供由贷款余额、固定利率和摊还期限推导；无租客；从第二个 Slice 开始加入税费。
 
 **Scenario B — Existing Mortgaged Home**
 - 2035-01 至 2054-12；已经持有房产；存在未偿贷款；不产生历史购房交易；贷款可能在模拟中途结清，模拟继续。

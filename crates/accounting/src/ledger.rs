@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn posts_balanced_mortgage_payment_and_recomputes_opening_plus_entries() {
+    fn posts_balanced_principal_and_interest_entries_and_recomputes_balances() {
         let (mut ledger, c) = fixture();
         ledger
             .post(transaction(
