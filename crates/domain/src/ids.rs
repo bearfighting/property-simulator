@@ -22,7 +22,8 @@ opaque_id!(
     AccountId,
     ModelVersionId,
     ActivityInstanceId,
-    EffectId
+    EffectId,
+    SnapshotId
 );
 
 /// Stable, extensible key for a shared simulation resource.

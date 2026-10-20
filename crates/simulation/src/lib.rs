@@ -1,6 +1,7 @@
 //! Core simulation orchestration and monthly lifecycle, built on domain, accounting, and models.
 
 mod activity;
+mod archive;
 mod composition;
 mod coordinator;
 mod error;
@@ -11,6 +12,9 @@ mod types;
 mod validation;
 
 pub use activity::*;
+pub use archive::{
+    ArchiveError, BranchRecord, SavedMonth, SimulationArchive, UserSettings, saved_month,
+};
 pub use composition::{
     SliceResources, account_resource_key, plan_slice_stages, validate_composition,
 };
@@ -18,8 +22,8 @@ pub use coordinator::coordinate_month;
 pub use error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 pub use proposals::{OutputIdentity, identify_proposal, merge_proposals};
 pub use run_control::{
-    MonthSnapshot, RunCallResult, RunCommand, RunConfig, RunControlError, RunStatus, RunUpdate,
-    RunUpdateValue, SimulationRun, SingleMonthExecutor, StopCondition, StopReason,
+    MonthSnapshot, RunCallResult, RunCommand, RunConfig, RunControlError, RunIdentity, RunStatus,
+    RunUpdate, RunUpdateValue, SimulationRun, SingleMonthExecutor, StopCondition, StopReason,
 };
 pub use slices::{RentalSlice, RepairSlice};
 pub use types::*;

@@ -61,8 +61,17 @@ pub enum RunStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonthSnapshot {
-    pub result: MonthlyResult,
-    pub ledger: Ledger,
+    result: MonthlyResult,
+    ledger: Ledger,
+}
+
+impl MonthSnapshot {
+    pub fn result(&self) -> &MonthlyResult {
+        &self.result
+    }
+    pub fn ledger(&self) -> &Ledger {
+        &self.ledger
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +109,14 @@ pub trait SingleMonthExecutor {
         input: &ValidatedInput,
         opening_ledger: &Ledger,
         activities: &[crate::ActivityInstance],
+        identity: Option<RunIdentity>,
     ) -> Result<(MonthlyResult, Ledger), SimulationError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunIdentity {
+    pub trial_id: TrialId,
+    pub branch_id: BranchId,
 }
 
 pub struct SimulationRun {
@@ -113,6 +129,7 @@ pub struct SimulationRun {
     history: Vec<RunUpdate>,
     latest: Option<MonthSnapshot>,
     identity: Option<(TrialId, BranchId)>,
+    execution_identity: Option<RunIdentity>,
     status: RunStatus,
 }
 
@@ -184,6 +201,7 @@ impl SimulationRun {
             history: Vec::new(),
             latest: None,
             identity: None,
+            execution_identity: None,
             status: RunStatus::Running {
                 next_month: frozen_input.period,
             },
@@ -204,6 +222,24 @@ impl SimulationRun {
     }
     pub fn opening_state(&self) -> &OpeningState {
         &self.opening_state
+    }
+    pub fn config(&self) -> &RunConfig {
+        &self.config
+    }
+    pub fn next_month(&self) -> YearMonth {
+        self.next_month
+    }
+    pub fn frozen_input(&self) -> FrozenInput {
+        self.frozen_input
+    }
+    pub fn activities(&self) -> &[crate::ActivityInstance] {
+        &self.activities
+    }
+    pub(crate) fn set_execution_identity(&mut self, trial_id: TrialId, branch_id: BranchId) {
+        self.execution_identity = Some(RunIdentity {
+            trial_id,
+            branch_id,
+        });
     }
 
     pub fn call(
@@ -290,7 +326,12 @@ impl SimulationRun {
             return Err(RunControlError::InvalidExecutionInput(error));
         }
 
-        let (result, ledger) = match executor.execute(&validated, &candidate_ledger, &activities) {
+        let (result, ledger) = match executor.execute(
+            &validated,
+            &candidate_ledger,
+            &activities,
+            self.execution_identity,
+        ) {
             Ok(completed) => completed,
             Err(error) => {
                 self.status = RunStatus::Failed;
@@ -329,6 +370,13 @@ impl SimulationRun {
             })
             == Some(result.closing_state().cash);
         let output_is_consistent = period == self.next_month
+            && self.execution_identity.is_none_or(|identity| {
+                identity
+                    == RunIdentity {
+                        trial_id: result.trial_id(),
+                        branch_id: result.branch_id(),
+                    }
+            })
             && self
                 .identity
                 .is_none_or(|identity| identity == (result.trial_id(), result.branch_id()))
@@ -577,6 +625,7 @@ mod tests {
         calls: usize,
         fail: bool,
         seen_activity_count: Option<usize>,
+        identity: Option<RunIdentity>,
     }
     impl SingleMonthExecutor for Executor {
         fn validate_inputs(
@@ -593,7 +642,9 @@ mod tests {
             input: &ValidatedInput,
             ledger: &Ledger,
             activities: &[crate::ActivityInstance],
+            identity: Option<RunIdentity>,
         ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+            self.identity = identity;
             self.calls += 1;
             self.seen_activity_count = Some(activities.len());
             if self.fail {
@@ -613,8 +664,10 @@ mod tests {
                 })
                 .collect();
             let result = MonthlyResult::new(
-                TrialId::from_bytes([4; 16]),
-                BranchId::from_bytes([5; 16]),
+                self.identity
+                    .map_or(TrialId::from_bytes([4; 16]), |id| id.trial_id),
+                self.identity
+                    .map_or(BranchId::from_bytes([5; 16]), |id| id.branch_id),
                 input.frozen_input().period,
                 state.clone(),
                 *input.frozen_input(),
@@ -778,6 +831,7 @@ mod tests {
                 input: &ValidatedInput,
                 opening_ledger: &Ledger,
                 activities: &[crate::ActivityInstance],
+                _identity: Option<RunIdentity>,
             ) -> Result<(MonthlyResult, Ledger), SimulationError> {
                 let currency = input.opening_state().cash.currency();
                 let amount = Money::new(1.into(), currency);
@@ -1002,6 +1056,7 @@ mod tests {
             calls: 0,
             fail: true,
             seen_activity_count: None,
+            identity: None,
         };
         assert!(matches!(
             run.call(RunCommand::Continue, &[], &mut executor),
@@ -1059,6 +1114,7 @@ mod tests {
                 _input: &ValidatedInput,
                 _ledger: &Ledger,
                 _activities: &[crate::ActivityInstance],
+                _identity: Option<RunIdentity>,
             ) -> Result<(MonthlyResult, Ledger), SimulationError> {
                 panic!("input validation failure must prevent the monthly transition")
             }
@@ -1105,6 +1161,7 @@ mod tests {
                 _input: &ValidatedInput,
                 _ledger: &Ledger,
                 _activities: &[crate::ActivityInstance],
+                _identity: Option<RunIdentity>,
             ) -> Result<(MonthlyResult, Ledger), SimulationError> {
                 panic!("fatal preflight errors must prevent the monthly transition")
             }
@@ -1137,6 +1194,7 @@ mod tests {
                 input: &ValidatedInput,
                 ledger: &Ledger,
                 _activities: &[crate::ActivityInstance],
+                _identity: Option<RunIdentity>,
             ) -> Result<(MonthlyResult, Ledger), SimulationError> {
                 let mut opening = input.opening_state().clone();
                 opening.condition = AssetCondition::NeedsRepair;
@@ -1233,6 +1291,7 @@ mod tests {
                 input: &ValidatedInput,
                 opening_ledger: &Ledger,
                 _activities: &[crate::ActivityInstance],
+                _identity: Option<RunIdentity>,
             ) -> Result<(MonthlyResult, Ledger), SimulationError> {
                 let amount = Money::new(1.into(), input.opening_state().cash.currency());
                 let mut ledger = opening_ledger.clone();
@@ -1316,6 +1375,7 @@ mod tests {
                 input: &ValidatedInput,
                 ledger: &Ledger,
                 _activities: &[crate::ActivityInstance],
+                _identity: Option<RunIdentity>,
             ) -> Result<(MonthlyResult, Ledger), SimulationError> {
                 self.calls += 1;
                 let state = input.opening_state().clone();
@@ -1348,5 +1408,94 @@ mod tests {
                 .map(|snapshot| snapshot.result.period()),
             Some(month(1))
         );
+    }
+
+    #[test]
+    fn archive_branches_from_saved_snapshot_and_keeps_latest_settings_independent() {
+        use crate::{BranchRecord, SimulationArchive, saved_month};
+        use property_simulation_domain::{RunId, SnapshotId};
+
+        let mut run = fixture(None, vec![]);
+        let mut executor = Executor::default();
+        run.call(RunCommand::Continue, &[], &mut executor).unwrap();
+        let snapshot = run.latest_snapshot().unwrap().clone();
+        let parent_id = SnapshotId::from_bytes([9; 16]);
+        let run_id = RunId::from_bytes([7; 16]);
+        let branch_id = snapshot.result.branch_id();
+        let mut archive = SimulationArchive::default();
+        archive
+            .register_branch(BranchRecord {
+                id: branch_id,
+                run_id,
+                trial_id: snapshot.result.trial_id(),
+                start_month: month(1),
+                parent_snapshot: None,
+                fork_month: None,
+            })
+            .unwrap();
+        archive
+            .save_month(saved_month(parent_id, run_id, snapshot.clone(), None))
+            .unwrap();
+        let mut mismatched_start_archive = SimulationArchive::default();
+        mismatched_start_archive
+            .register_branch(BranchRecord {
+                id: branch_id,
+                run_id,
+                trial_id: snapshot.result.trial_id(),
+                start_month: month(2),
+                parent_snapshot: None,
+                fork_month: None,
+            })
+            .unwrap();
+        assert_eq!(
+            mismatched_start_archive.save_month(saved_month(
+                parent_id,
+                run_id,
+                snapshot.clone(),
+                None
+            )),
+            Err(crate::ArchiveError::NonContiguousMonth)
+        );
+        let child_branch = BranchId::from_bytes([6; 16]);
+        let mut child = archive
+            .create_branch(
+                parent_id,
+                RunId::from_bytes([8; 16]),
+                child_branch,
+                TrialId::from_bytes([3; 16]),
+                Some(month(3)),
+                vec![],
+            )
+            .unwrap();
+        assert_eq!(child.next_month(), month(2));
+        assert_eq!(child.opening_state(), snapshot.result.closing_state());
+        assert_eq!(child.ledger(), &snapshot.ledger);
+        assert_eq!(archive.snapshot(parent_id).unwrap().snapshot, snapshot);
+        assert_eq!(
+            archive.branch(child_branch).unwrap().fork_month,
+            Some(month(1))
+        );
+        let mut branch_executor = Executor::default();
+        let branch_result = child
+            .call(RunCommand::Continue, &[], &mut branch_executor)
+            .unwrap()
+            .monthly_result
+            .unwrap();
+        assert_eq!(branch_result.trial_id(), TrialId::from_bytes([3; 16]));
+        assert_eq!(branch_result.branch_id(), child_branch);
+        assert_eq!(branch_result.period(), month(2));
+        let mut latest_input = snapshot.result.frozen_input().to_owned();
+        latest_input.rent = Money::new(125.into(), latest_input.rent.currency());
+        archive.update_latest_settings(crate::UserSettings {
+            config: run.config().clone(),
+            opening_state: snapshot.result.closing_state().clone(),
+            frozen_input: latest_input,
+            activities: snapshot.result.activities().to_vec(),
+        });
+        assert_eq!(
+            archive.latest_settings().unwrap().frozen_input.rent,
+            latest_input.rent
+        );
+        assert_eq!(archive.snapshot(parent_id).unwrap().snapshot, snapshot);
     }
 }
