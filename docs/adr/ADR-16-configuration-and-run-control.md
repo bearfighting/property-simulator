@@ -24,9 +24,17 @@ The backend run-control boundary is one invocation per caller command. Each invo
 
 One invocation therefore advances no more than one month. Stop, month-end evaluation, and error classification are run-control responsibilities; the single-period transition remains the sole owner of monthly domain coordination.
 
+### M3.1 Rust boundary
+
+`SimulationRun` stores the immutable run boundaries, next month, current opening state and frozen assumptions, active instances, update history, latest completed result/snapshot, and status. Its `call` method accepts one command and typed updates. Updates carry a source and must target exactly the next month. An opening Ledger may contain postings only before the run start. Assumption and condition updates are applied to candidates and validated before the run changes. An economically accounted state adjustment is represented as one `StateAdjustment` containing both the revised state and a balanced transaction for the effective month; the revised cash amount must equal the resulting Ledger cash-account balance.
+
+The run invokes an injected `SingleMonthExecutor` with validated frozen input, the candidate opening Ledger, and active instances. Before a monthly transition, the executor performs deterministic, side-effect-free validation of executor-specific activity and composition constraints; a validation rejection leaves the run retryable, while a fatal diagnostic fails it. The executor then samples, invokes Slices, and uses `coordinate_month`, returning the completed monthly result and new Ledger. Before committing the result as a snapshot, run control checks that its month, opening state, frozen input, active instances, closing cash, Ledger history, and complete posted transactions (including entries and source metadata) agree. The first successful result establishes the run's trial/branch identity; later months must preserve it. Run control then applies end-month/condition checks. If the final representable `YearMonth` completes without another stop condition, the result is retained and the run stops with a calendar-limit reason because no next period can be represented. Persistence and random-stream allocation remain outside M3.1.
+
 ## Alternatives considered
 - AND-combined stopping conditions: can continue after a configured safety/desired stop is met.
 - Retroactively edit a committed month: destroys audit history and reproducibility.
+- Defer executor-specific activity validation until monthly execution: would make a correctable configuration error fail the run.
+- Treat the final representable month as a failed transition when no next month can be created: would discard a successfully completed period and its snapshot.
 
 ## Consequences
 Run control, configuration, and monthly input snapshots are separate explicit records. Mid-month changes are not supported.
