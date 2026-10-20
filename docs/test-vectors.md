@@ -13,16 +13,18 @@ retain an event-to-transaction source link.
 | Case | Opening state | Frozen input / sample | Expected result |
 |---|---|---|---|
 | No repair | cash 100, NeedsRepair | rent 80, limit 50, NoRepair | cash 180; rental +80 operating; no repair transaction/effect |
-| Minor-unit rounding | cash 0, NeedsRepair | rent 80.005, limit 50.005, Repair(1.005) | rent posts 80.01; repair expense/cash post 1.01; both transactions balance |
+| Minor-unit rounding | cash 0, NeedsRepair | rent 80.005, limit 50.005, Repair(1.00) | rent posts 80.01; repair expense/cash post 1.00; both transactions balance |
 | Repair lower bound | cash 0, NeedsRepair | rent 80, limit 50, Repair(0) | cash 80; condition Available; zero-cost balanced transaction |
 | Preventive repair | cash 10, Available | rent 0, limit 50, Repair(5) | cash 5; expense 5; condition remains Available |
 | Repair upper bound | cash 10, NeedsRepair | rent 80, limit 50, Repair(50) | cash 40; expense 50, rental 80; operating net +30; Available |
 | Negative cash remains valid | cash 0, NeedsRepair | rent 0, limit 50, Repair(50) | cash -50; expense 50; operating cash flow -50; Available |
 | Above support rejected | cash 10, NeedsRepair | limit 50, Repair(50.01) | injected out-of-support sample rejected by the Slice |
 
-Repair cost support is the closed interval `[0, configured maximum]`; `NoRepair` is a separate
-outcome. The configured distribution maximum must match the frozen input limit and is validated
-before sampling. An injected sample outside the support is rejected by the Slice. This bounded
+Repair outcomes range from zero through the largest supported minor-unit amount; `NoRepair` is a
+separate outcome. The configured distribution maximum must match the frozen input limit and is validated
+before sampling, including whether its integer minor-unit support fits the sampler's `u64` range.
+Repair outcomes are discrete integer minor-unit values through `floor(maximum / minor_unit)`;
+fractional-minor-unit samples and a fractional upper-bound tail are rejected. This bounded
 example does not admit an unbounded distribution. Positive rent and repair amounts are rounded
 to the currency minor unit using half-up before proposal entries are created; this keeps every
 accepted proposal postable by the Ledger.

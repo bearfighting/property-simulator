@@ -3,10 +3,10 @@ use property_simulation_domain::{BranchId, TrialId};
 
 use crate::activity::{ActivitySample, ActivitySampleValue, SliceOutput};
 use crate::composition::validate_composition;
-use crate::error::SimulationError;
+use crate::error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 use crate::proposals::{OutputIdentity, identify_proposal, merge_proposals};
 use crate::types::{AssetCondition, MonthlyResult, OutputIdFactory, ProposedEffect};
-use crate::validation::ValidatedInput;
+use crate::validation::{ValidatedInput, validate_proposal_transactions};
 
 /// Coordinates already evaluated Slice outputs into an atomic monthly result.
 /// Returns a new ledger; the caller's opening ledger is never modified.
@@ -67,6 +67,9 @@ pub fn coordinate_month(
     }
     validate_composition(&declarations, &identified)?;
     let proposal = merge_proposals(identified)?;
+    let condition = reduce_condition(input.opening_state().condition, proposal.effects())?;
+    validate_proposal_transactions(opening_ledger, &proposal)
+        .map_err(SimulationError::InvalidTransactions)?;
 
     let mut ledger = opening_ledger.clone();
     let transactions = proposal
@@ -75,9 +78,27 @@ pub fn coordinate_month(
         .cloned()
         .map(|transaction| transaction.into_ledger_transaction())
         .collect::<Vec<_>>();
-    ledger.post_batch(transactions)?;
-    let closing_cash = signed_balance(&ledger, input.frozen_input().cash_account)?;
-    let condition = reduce_condition(input.opening_state().condition, proposal.effects())?;
+    ledger.post_batch(transactions).map_err(|source| {
+        SimulationError::Fatal(FatalSimulationFailure::new(
+            FatalSimulationPhase::LedgerCommit,
+            period,
+            Some(trial_id),
+            Some(branch_id),
+            None,
+            source.into(),
+        ))
+    })?;
+    let closing_cash =
+        signed_balance(&ledger, input.frozen_input().cash_account).map_err(|source| {
+            SimulationError::Fatal(FatalSimulationFailure::new(
+                FatalSimulationPhase::ClosingStateDerivation,
+                period,
+                Some(trial_id),
+                Some(branch_id),
+                None,
+                source,
+            ))
+        })?;
     let closing_state = crate::types::OpeningState {
         cash: closing_cash,
         condition,
@@ -92,7 +113,17 @@ pub fn coordinate_month(
         samples,
         closing_state,
         proposal,
-    )?;
+    )
+    .map_err(|source| {
+        SimulationError::Fatal(FatalSimulationFailure::new(
+            FatalSimulationPhase::MonthlyResultConstruction,
+            period,
+            Some(trial_id),
+            Some(branch_id),
+            None,
+            source,
+        ))
+    })?;
     Ok((result, ledger))
 }
 

@@ -25,9 +25,12 @@ impl RepairCostDistribution {
 
     pub fn validate_sample(&self, value: Money) -> Result<(), DomainError> {
         self.validate_support()?;
+        let rounded = value.rounded_for_posting(RoundingPolicy::HalfUp)?;
+        let maximum_supported = self.money_for_minor_units(self.maximum_minor_units()?)?;
         if value.is_negative()
+            || value != rounded
             || value.currency() != self.maximum.currency()
-            || value.checked_cmp(self.maximum)? == std::cmp::Ordering::Greater
+            || value.checked_cmp(maximum_supported)? == std::cmp::Ordering::Greater
         {
             return Err(DomainError::InvalidMoneyAmount);
         }
@@ -146,6 +149,24 @@ mod tests {
         assert!(d.validate_sample(d.maximum).is_ok());
         assert!(
             d.validate_sample(Money::parse("50.01", cad).unwrap())
+                .is_err()
+        );
+        let fractional_limit = RepairCostDistribution {
+            maximum: Money::parse("1.239", cad).unwrap(),
+        };
+        assert!(
+            fractional_limit
+                .validate_sample(Money::parse("1.23", cad).unwrap())
+                .is_ok()
+        );
+        assert!(
+            fractional_limit
+                .validate_sample(Money::parse("1.239", cad).unwrap())
+                .is_err()
+        );
+        assert!(
+            fractional_limit
+                .validate_sample(Money::parse("1.005", cad).unwrap())
                 .is_err()
         );
     }

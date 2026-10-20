@@ -64,6 +64,14 @@ pub fn validate_input(
             message: "repair distribution support must be non-negative",
         });
     }
+    if repair_distribution.validate_support().is_ok()
+        && repair_distribution.maximum_minor_units().is_err()
+    {
+        issues.push(ValidationIssue {
+            field: "repair_distribution.maximum",
+            message: "repair distribution support exceeds the sampler's representable range",
+        });
+    }
     if input.rent.is_negative() {
         issues.push(ValidationIssue {
             field: "rent",

@@ -26,7 +26,7 @@
 | [ADR-16](adr/ADR-16-configuration-and-run-control.md) | 配置与运行控制 | 初始配置、月度输入、终止条件及历史分支 |
 | [ADR-17](adr/ADR-17-money-and-identifiers.md) | 货币金额与标识符 | 单币种账本、不兑换；强类型 ID 与科目代码分离 |
 | [ADR-18](adr/ADR-18-sufficient-state-transition.md) | 充分状态与单期转移 | 完整期初状态、当期输入/随机输入决定当期结果；历史仅作显式状态或审计记录 |
-| [ADR-19](adr/ADR-19-validation-only-domain-errors.md) | 验证边界与计算错误 | 可纠正的结构错误在验证边界产生；有限金额表示导致的 checked overflow 明确报告 |
+| [ADR-19](adr/ADR-19-validation-only-domain-errors.md) | 验证边界与计算错误 | 可纠正的结构错误在验证边界产生；运行期 fatal 携带阶段、月份、可用身份和原始错误 |
 | [ADR-20](adr/ADR-20-composable-slices-and-random-sampling.md) | Slice 组合、来源标识与随机采样解耦 | 独立提案可交换合并；采样分布、采样器和 Slice 分离；不可恢复运行时错误终止运行 |
 
 

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use crate::composition::SliceResources;
-use crate::error::SimulationError;
+use crate::error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 use crate::types::{
     ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState, RepairSample, SliceProposal,
 };
@@ -102,13 +102,24 @@ pub fn propose_slice<S: SimulationSlice>(
             "resource declaration provenance does not match Slice",
         ));
     }
-    let proposal = slice.propose_validated(
-        state,
-        frozen_input,
-        &ValidatedActivitySample {
-            value: &sample.value,
-        },
-    )?;
+    let proposal = slice
+        .propose_validated(
+            state,
+            frozen_input,
+            &ValidatedActivitySample {
+                value: &sample.value,
+            },
+        )
+        .map_err(|source| {
+            SimulationError::Fatal(FatalSimulationFailure::new(
+                FatalSimulationPhase::SliceTransition,
+                frozen_input.period,
+                None,
+                None,
+                Some(slice.instance().id),
+                source,
+            ))
+        })?;
     Ok(SliceOutput {
         proposal,
         instance: slice.instance().clone(),

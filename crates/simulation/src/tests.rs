@@ -530,10 +530,76 @@ fn coordinator_rejects_unknown_effect_and_invalid_journal_without_partial_commit
             BranchId::from_bytes([7; 16]),
             &TestIds,
         ),
-        Err(SimulationError::Accounting(_))
+        Err(SimulationError::InvalidTransactions(report))
+            if report.0.len() == 1
+                && report.0[0].transaction_key.as_deref() == Some("unbalanced")
+                && matches!(
+                    report.0[0].error,
+                    property_simulation_accounting::AccountError::TransactionDoesNotBalance { .. }
+                )
     ));
     assert_eq!(ledger.transactions().count(), 0);
     assert_eq!(ledger.balance(frozen.cash_account).unwrap().1, money("100"));
+}
+
+#[test]
+fn slice_transition_errors_are_fatal_with_activity_and_month_diagnostics() {
+    struct BrokenSlice(ActivityInstance);
+    impl SimulationSlice for BrokenSlice {
+        type Sample = RepairSample;
+        const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Repair;
+        fn instance(&self) -> &ActivityInstance {
+            &self.0
+        }
+        fn resources(&self, input: &FrozenInput) -> SliceResources {
+            RepairSlice {
+                instance: self.0.clone(),
+            }
+            .resources(input)
+        }
+        fn sample_value(&self, sample: &RepairSample) -> ActivitySampleValue {
+            ActivitySampleValue::Repair(*sample)
+        }
+        fn propose_validated(
+            &self,
+            _: &OpeningState,
+            _: &FrozenInput,
+            _: &ValidatedActivitySample<'_, RepairSample>,
+        ) -> Result<SliceProposal, SimulationError> {
+            Err(property_simulation_domain::DomainError::ArithmeticOverflow.into())
+        }
+    }
+
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let slice = BrokenSlice(activity(29));
+    let sample = ActivitySample::new(&slice.0, frozen.period, RepairSample::NoRepair);
+    let error = propose_slice(&slice, &validated, &sample).unwrap_err();
+    let SimulationError::Fatal(failure) = error else {
+        panic!("expected fatal failure")
+    };
+    assert_eq!(failure.phase, FatalSimulationPhase::SliceTransition);
+    assert_eq!(failure.period, frozen.period);
+    assert_eq!(failure.activity_instance_id, Some(slice.0.id));
+    assert_eq!(failure.trial_id, None);
+    assert_eq!(failure.branch_id, None);
+    assert_eq!(
+        *failure.source,
+        SimulationError::Domain(property_simulation_domain::DomainError::ArithmeticOverflow)
+    );
 }
 
 #[test]
@@ -582,6 +648,22 @@ fn input_validation_checks_repair_distribution_support_before_sampling() {
             .iter()
             .any(|issue| issue.message.contains("must match"))
     );
+
+    let mut oversized_input = input();
+    oversized_input.repair_cost_limit = money("184467440737095516.16");
+    let oversized_errors = validate_input(
+        &oversized_input,
+        &RepairCostDistribution {
+            maximum: oversized_input.repair_cost_limit,
+        },
+        &ledger_for_cash(state.cash),
+        &state,
+    )
+    .unwrap_err();
+    assert!(oversized_errors.0.iter().any(|issue| {
+        issue.field == "repair_distribution.maximum"
+            && issue.message.contains("sampler's representable range")
+    }));
 }
 
 #[test]
@@ -793,18 +875,18 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
             &repair.instance,
             frozen.period,
             RepairSample::Repair {
-                cost: money("1.005"),
+                cost: money("1.00"),
             },
         ),
     )
     .unwrap();
     assert_eq!(
         repair_proposal.transactions[0].entries[0].amount(),
-        money("1.01")
+        money("1.00")
     );
     assert_eq!(
         repair_proposal.transactions[0].entries[1].amount(),
-        money("1.01")
+        money("1.00")
     );
 
     frozen.rent = money("0.004");

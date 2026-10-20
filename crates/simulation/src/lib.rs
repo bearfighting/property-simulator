@@ -14,7 +14,7 @@ pub use composition::{
     SliceResources, account_resource_key, plan_slice_stages, validate_composition,
 };
 pub use coordinator::coordinate_month;
-pub use error::SimulationError;
+pub use error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 pub use proposals::{OutputIdentity, identify_proposal, merge_proposals};
 pub use slices::{RentalSlice, RepairSlice};
 pub use types::*;
