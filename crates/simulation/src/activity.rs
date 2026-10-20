@@ -28,15 +28,19 @@ impl<T> ValidatedActivitySample<'_, T> {
     }
 }
 
-/// A deliberately small, statically registered Slice contract. Samples are
-/// explicit inputs; implementations cannot access a random generator. Call
-/// `propose_slice` to validate provenance before dispatching to a Slice.
+/// A deliberately small, statically registered Slice contract. Each instance
+/// reads only its shared opening state, frozen inputs, and explicit sample;
+/// implementations cannot access another instance's result or a random
+/// generator. Outputs must obey the associative/commutative proposal merge
+/// contract and be compatible with the active composition. Call `propose_slice`
+/// to validate provenance before dispatching to a Slice.
 pub trait SimulationSlice {
     type Sample;
     const SAMPLE_KIND: ActivitySampleKind;
     fn instance(&self) -> &ActivityInstance;
-    /// Declare all resources and same-period prerequisites for this active
-    /// instance, including accounts affected by the frozen period inputs.
+    /// Declare the resources read from the shared opening context and written
+    /// by this active instance, including accounts affected by frozen inputs.
+    /// Declarations do not establish dependencies or execution order.
     fn resources(&self, input: &FrozenInput) -> SliceResources;
     /// Preserve the exact typed value used for this evaluation in the result record.
     fn sample_value(&self, sample: &Self::Sample) -> ActivitySampleValue;

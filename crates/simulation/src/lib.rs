@@ -16,9 +16,7 @@ pub use archive::{
     ArchiveError, BranchRecord, RunCashFlowSummary, SavedMonth, SimulationArchive, UserSettings,
     saved_month,
 };
-pub use composition::{
-    SliceResources, account_resource_key, plan_slice_stages, validate_composition,
-};
+pub use composition::{SliceResources, account_resource_key, validate_composition};
 pub use coordinator::coordinate_month;
 pub use error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 pub use proposals::{OutputIdentity, identify_proposal, merge_proposals};

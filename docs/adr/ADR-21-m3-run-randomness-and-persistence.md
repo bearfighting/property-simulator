@@ -19,7 +19,7 @@ The earlier M3 outline required recovery of an unfinished run with the same rand
 - These choices define the implementation, not a replay contract. The product does not promise that a given seed and semantic identity will yield the same draw across runs, code versions, or model versions. Fixed seeds may be injected in tests and diagnostics.
 - Normal run completion occurs only when a user-configured end boundary/termination condition is reached or the user issues a between-period stop command. If an end month and one or more conditions are configured, any one reached/satisfied ends the run. Loan payoff, sale, negative cash flow, or another domain event does not stop a run unless explicitly selected as a user termination condition; fatal failures remain errors, not normal completion.
 - A loan is not a special run-control or funds-routing case. It is configured through opening facts and ordinary monthly Slice effects. User opening asset/liability values determine opening net worth/equity as the balancing residual under assets = liabilities + net worth; if the user explicitly supplies net worth, validate it against that amount. Opening facts are not fabricated as past transactions. A monthly loan effect is recorded through the ordinary coordinated Slice and Ledger path.
-- Slice composition guarantees apply to merging independent, conflict-free proposals: the merge operation is associative with an identity, and is commutative for independent proposals. They do not require every Slice state transformation to commute with every other transformation. Explicit dependencies, conflicts, and stages remain governed by ADR-20.
+- Every active Slice instance computes independently from the same opening state, frozen inputs, and explicit samples. Accepted instance results combine associatively and commutatively; dependencies, stages, and cross-instance result reads are not part of the current design. Incompatible results are rejected before commit, as specified by ADR-20.
 - The first stochastic model in M3 is an implementation milestone, not a user-selectable model family or an architectural choice. Any suitable model may be implemented first, provided it follows the sampling/Slice boundary and composition contract.
 
 ## Alternatives considered
@@ -28,7 +28,7 @@ The earlier M3 outline required recovery of an unfinished run with the same rand
 - Guarantee that identical settings either always reproduce or always differ: rejected; neither behavior is promised.
 - Prevent repeated random values: rejected because it would alter the modeled probability distribution.
 - Route all new loan proceeds through a required special-purpose allocation: rejected because loan accounting follows the configured opening state and ordinary monthly Slice effects, like other domain activity.
-- Require each Slice transformation itself to commute: rejected; ADR-20 defines the algebraic contract for combining independent proposals and handles causal dependencies explicitly.
+- Allow same-month causal dependencies between Slice instances: rejected; they would invalidate result permutation and grouping invariance.
 
 ## Consequences
 

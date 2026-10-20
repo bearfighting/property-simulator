@@ -35,7 +35,6 @@ impl SimulationSlice for RepairSlice {
             ]
             .into_iter()
             .collect(),
-            dependencies: BTreeSet::new(),
         }
     }
     fn sample_value(&self, sample: &Self::Sample) -> crate::activity::ActivitySampleValue {

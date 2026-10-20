@@ -591,6 +591,86 @@ fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
 }
 
 #[test]
+fn independent_repair_instances_superpose_in_any_order() {
+    use crate::{RepairSlice, coordinate_month, propose_slice};
+
+    let frozen = input();
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let first = activity(31);
+    let second = activity(32);
+    let first_value = RepairSample::Repair { cost: money("10") };
+    let second_value = RepairSample::Repair { cost: money("20") };
+    let first_output = propose_slice(
+        &RepairSlice {
+            instance: first.clone(),
+        },
+        &validated,
+        &sample(&first, first_value),
+    )
+    .unwrap();
+    let second_output = propose_slice(
+        &RepairSlice {
+            instance: second.clone(),
+        },
+        &validated,
+        &sample(&second, second_value),
+    )
+    .unwrap();
+    let samples = vec![
+        ActivitySample::new(
+            &first,
+            frozen.period,
+            ActivitySampleValue::Repair(first_value),
+        ),
+        ActivitySample::new(
+            &second,
+            frozen.period,
+            ActivitySampleValue::Repair(second_value),
+        ),
+    ];
+    let identity = identity();
+    let (forward_result, forward_ledger) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![first_output.clone(), second_output.clone()],
+        samples.clone(),
+        identity.trial,
+        identity.branch,
+        identity.factory,
+    )
+    .unwrap();
+    let (reverse_result, reverse_ledger) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![second_output, first_output],
+        samples.into_iter().rev().collect(),
+        identity.trial,
+        identity.branch,
+        identity.factory,
+    )
+    .unwrap();
+
+    assert_eq!(forward_result, reverse_result);
+    assert_eq!(forward_ledger, reverse_ledger);
+    assert_eq!(forward_result.closing_state().cash, money("70"));
+    assert_eq!(forward_result.proposal().effects().len(), 2);
+    assert_eq!(forward_result.proposal().transactions().len(), 2);
+}
+
+#[test]
 fn coordinator_rejects_a_ledger_other_than_the_validated_opening_ledger() {
     use crate::coordinate_month;
     use property_simulation_accounting::{
@@ -1498,6 +1578,40 @@ fn output_ids_do_not_depend_on_proposal_input_order() {
 }
 
 #[test]
+fn proposal_composition_is_permutation_and_grouping_invariant() {
+    let period = input().period;
+    let proposal = |activity_id: u8, key: &'static str| {
+        identify_proposal_for(
+            SliceProposal {
+                events: vec![EventProposal {
+                    period,
+                    key: key.into(),
+                }],
+                ..Default::default()
+            },
+            identity(),
+            &activity(activity_id),
+            period,
+        )
+        .unwrap()
+    };
+    let a = proposal(1, "a");
+    let b = proposal(2, "b");
+    let c = proposal(3, "c");
+
+    let canonical = merge_proposals([a.clone(), b.clone(), c.clone()]).unwrap();
+    assert_eq!(
+        merge_proposals([c.clone(), a.clone(), b.clone()]).unwrap(),
+        canonical
+    );
+    let left_grouped =
+        merge_proposals([merge_proposals([a.clone(), b.clone()]).unwrap(), c.clone()]).unwrap();
+    let right_grouped = merge_proposals([a, merge_proposals([b, c]).unwrap()]).unwrap();
+    assert_eq!(left_grouped, canonical);
+    assert_eq!(right_grouped, canonical);
+}
+
+#[test]
 fn identification_uses_coordinator_source_and_rejects_wrong_period() {
     let draft = SliceProposal {
         events: vec![EventProposal {
@@ -2016,40 +2130,7 @@ fn merge_rejects_different_periods() {
 }
 
 #[test]
-fn slice_stage_planning_is_stable_and_rejects_invalid_graphs() {
-    let resource = |id: u8, slice: u8, dependencies: Vec<u8>| SliceResources {
-        instance_id: ActivityInstanceId::from_bytes([id; 16]),
-        slice_id: SliceId::from_bytes([slice; 16]),
-        version: ModelVersionId::from_bytes([2; 16]),
-        reads: Default::default(),
-        writes: Default::default(),
-        dependencies: dependencies
-            .into_iter()
-            .map(|d| ActivityInstanceId::from_bytes([d; 16]))
-            .collect(),
-    };
-    let items = vec![
-        resource(3, 3, vec![1]),
-        resource(2, 1, vec![]),
-        resource(1, 2, vec![]),
-    ];
-    let plan = plan_slice_stages(&items).unwrap();
-    assert_eq!(
-        plan,
-        vec![
-            vec![
-                ActivityInstanceId::from_bytes([2; 16]),
-                ActivityInstanceId::from_bytes([1; 16])
-            ],
-            vec![ActivityInstanceId::from_bytes([3; 16])]
-        ]
-    );
-    assert!(plan_slice_stages(&[resource(1, 1, vec![9])]).is_err());
-    assert!(plan_slice_stages(&[resource(1, 1, vec![2]), resource(2, 2, vec![1])]).is_err());
-}
-
-#[test]
-fn composition_accepts_shared_writes_but_rejects_undeclared_effect_and_unordered_read_write() {
+fn composition_allows_independent_read_write_overlap_and_rejects_undeclared_effect() {
     let key = property_simulation_domain::ResourceKey::new("property.condition").unwrap();
     let a = SliceResources {
         instance_id: ActivityInstanceId::from_bytes([1; 16]),
@@ -2057,7 +2138,6 @@ fn composition_accepts_shared_writes_but_rejects_undeclared_effect_and_unordered
         version: ModelVersionId::from_bytes([2; 16]),
         reads: Default::default(),
         writes: [key.clone()].into_iter().collect(),
-        dependencies: Default::default(),
     };
     let b = SliceResources {
         instance_id: ActivityInstanceId::from_bytes([2; 16]),
@@ -2065,7 +2145,6 @@ fn composition_accepts_shared_writes_but_rejects_undeclared_effect_and_unordered
         version: ModelVersionId::from_bytes([2; 16]),
         writes: Default::default(),
         reads: [key.clone()].into_iter().collect(),
-        dependencies: Default::default(),
     };
     let same_writer = SliceResources {
         instance_id: ActivityInstanceId::from_bytes([3; 16]),
@@ -2073,29 +2152,9 @@ fn composition_accepts_shared_writes_but_rejects_undeclared_effect_and_unordered
         version: ModelVersionId::from_bytes([2; 16]),
         reads: Default::default(),
         writes: [key.clone()].into_iter().collect(),
-        dependencies: Default::default(),
     };
     assert!(validate_composition(&[a.clone(), same_writer], &[]).is_ok());
-    assert!(validate_composition(&[a.clone(), b], &[]).is_err());
-    // Being placed in different topological stages by an unrelated dependency
-    // does not establish an ordering between the conflicting pair.
-    let unrelated = SliceResources {
-        instance_id: ActivityInstanceId::from_bytes([4; 16]),
-        slice_id: SliceId::from_bytes([4; 16]),
-        version: ModelVersionId::from_bytes([2; 16]),
-        reads: Default::default(),
-        writes: Default::default(),
-        dependencies: Default::default(),
-    };
-    let later_reader = SliceResources {
-        instance_id: ActivityInstanceId::from_bytes([5; 16]),
-        slice_id: SliceId::from_bytes([5; 16]),
-        version: ModelVersionId::from_bytes([2; 16]),
-        reads: [key.clone()].into_iter().collect(),
-        writes: Default::default(),
-        dependencies: [unrelated.instance_id].into_iter().collect(),
-    };
-    assert!(validate_composition(&[a.clone(), unrelated, later_reader], &[]).is_err());
+    assert!(validate_composition(&[a.clone(), b], &[]).is_ok());
     let proposal = identify_proposal_for(
         SliceProposal {
             effects: vec![EffectProposal {
@@ -2119,7 +2178,6 @@ fn composition_accepts_shared_writes_but_rejects_undeclared_effect_and_unordered
         version: active.version,
         reads: Default::default(),
         writes: Default::default(),
-        dependencies: Default::default(),
     };
     assert!(validate_composition(&[undeclared], std::slice::from_ref(&proposal)).is_err());
 
@@ -2131,7 +2189,6 @@ fn composition_accepts_shared_writes_but_rejects_undeclared_effect_and_unordered
         writes: [property_simulation_domain::ResourceKey::new("property.condition").unwrap()]
             .into_iter()
             .collect(),
-        dependencies: Default::default(),
     };
     assert!(validate_composition(&[wrong_version], &[proposal]).is_err());
 }

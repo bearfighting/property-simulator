@@ -130,8 +130,10 @@ pub(crate) fn identify_proposal_for(
     })
 }
 
-/// Merge only disjoint transaction IDs and non-conflicting state effects. Cash
-/// postings remain separate traceable transactions and are summed by Ledger.
+/// Merge compatible proposals. On that domain, merge is associative and
+/// commutative with an empty proposal as identity. Duplicate IDs and
+/// incompatible state writes are rejected; cash postings remain separate
+/// traceable transactions and are summed by Ledger.
 pub fn merge_proposals(
     proposals: impl IntoIterator<Item = IdentifiedProposal>,
 ) -> Result<IdentifiedProposal, SimulationError> {

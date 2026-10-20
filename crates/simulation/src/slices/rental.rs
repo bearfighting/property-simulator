@@ -30,7 +30,6 @@ impl SimulationSlice for RentalSlice {
                 .into_iter()
                 .map(account_resource_key)
                 .collect(),
-            dependencies: BTreeSet::new(),
         }
     }
     fn sample_value(&self, _sample: &Self::Sample) -> crate::activity::ActivitySampleValue {

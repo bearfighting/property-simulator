@@ -9,7 +9,7 @@
 Multiple slices can affect shared state and accounts in the same month.
 
 ## Decision
-Slices read context and propose changes. A shared coordinator validates conflicts and commits world effects, ledger transactions, events, and snapshots as one successful period result. Unexpected runtime failures are fatal; the system does not promise rollback, recovery, or persistent-state consistency after such a failure. Independent, conflict-free proposals follow the associative and commutative merge contract in [ADR-20](ADR-20-composable-slices-and-random-sampling.md).
+Each Slice instance reads the same immutable opening context and proposes changes independently; it cannot read another instance's result. The shared coordinator accepts only combinations whose result merge is associative and commutative with an identity, rejecting incompatible shared writes before commit as specified in [ADR-20](ADR-20-composable-slices-and-random-sampling.md). It commits world effects, Ledger transactions, events, and snapshots as one successful period result. Unexpected runtime failures are fatal; the system does not promise rollback, recovery, or persistent-state consistency after such a failure.
 
 ## Alternatives considered
 - Direct slice mutation: hides dependencies and makes independent results order-dependent.

@@ -9,7 +9,7 @@
 Random models span distinct property and operating domains, but no correlation model is specified.
 
 ## Decision
-Organize streams by environment, physical property/component, policy/macro, and occupancy/operations. Treat categories as independent initially. Explicit generated shared state may be read, but hidden cross-category random correlation is prohibited.
+Organize streams by environment, physical property/component, policy/macro, and occupancy/operations. Treat categories as independent initially. A Slice instance may read shared environmental or policy state only when it is part of the immutable opening state or the frozen period input; it cannot read a state/result produced by another Slice instance during the current month. Hidden cross-category random correlation is prohibited.
 
 ## Alternatives considered
 - Implicit correlations: hard to audit and unsupported by a calibrated model.
