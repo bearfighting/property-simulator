@@ -15,6 +15,7 @@ use property_simulation_models::{
 pub enum ActivitySampleValue {
     Rental,
     Repair(RepairSample),
+    Loan(Option<property_simulation_models::FixedRateLoan>),
 }
 
 /// An opaque sample token created only by `propose_slice` after provenance checks.

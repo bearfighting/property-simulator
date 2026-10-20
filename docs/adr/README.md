@@ -40,3 +40,4 @@ Copy [`TEMPLATE.md`](TEMPLATE.md) for new records.
 | [20](ADR-20-composable-slices-and-random-sampling.md) | Composable proposals, stable provenance, and decoupled sampling | Accepted |
 | [21](ADR-21-m3-run-randomness-and-persistence.md) | M3 run randomness, persistence, and composition | Accepted |
 | [22](ADR-22-m3-run-inputs-snapshot-and-cashflow-contract.md) | M3 run inputs, snapshot references, and cash-flow aggregation | Accepted |
+| [23](ADR-23-loan-ledger-account-granularity.md) | Loan Ledger account granularity | Accepted |

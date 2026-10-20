@@ -26,7 +26,12 @@ pub use run_control::{
     MonthSnapshot, RunCallResult, RunCommand, RunConfig, RunControlError, RunIdentity, RunStatus,
     RunUpdate, RunUpdateValue, SimulationRun, SingleMonthExecutor, StopCondition, StopReason,
 };
-pub use slices::{RentalSlice, RepairSlice};
+pub use slices::{
+    LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanMonthCommand, LoanMonthInput,
+    LoanMonthOutput, LoanRunUpdate, LoanSlice, LoanStateEffect, LoanStateEffectProposal,
+    LoanTermsUpdate, RentalSlice, RepairSlice, apply_loan_terms_update, coordinate_loan_month,
+    coordinate_month_with_loans,
+};
 pub use types::*;
 pub use validation::{
     ProposalValidationErrors, ProposalValidationIssue, ValidatedInput, ValidationErrors,

@@ -12,6 +12,7 @@ pub use property_simulation_models::RepairSample;
 use crate::activity::{ActivitySample, ActivitySampleValue};
 use crate::error::SimulationError;
 use crate::proposals::merge_proposals;
+use crate::slices::{LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanStateEffect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetCondition {
@@ -43,6 +44,7 @@ pub struct ActivityInstance {
 pub enum ActivitySampleKind {
     Rental,
     Repair,
+    Loan,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventProposal {
@@ -183,6 +185,9 @@ pub struct MonthlyResult {
     closing_state: OpeningState,
     proposal: IdentifiedProposal,
     cash_flow_contributions: Vec<CashFlowContribution>,
+    loan_continuations: Vec<LoanContinuation>,
+    loan_events: Vec<LoanEvent>,
+    loan_effects: Vec<LoanStateEffect>,
 }
 
 /// Net signed cash impact for one committed transaction and cash-flow category.
@@ -281,6 +286,7 @@ impl MonthlyResult {
                         (&sample.value, activity.sample_kind),
                         (ActivitySampleValue::Rental, ActivitySampleKind::Rental)
                             | (ActivitySampleValue::Repair(_), ActivitySampleKind::Repair)
+                            | (ActivitySampleValue::Loan(_), ActivitySampleKind::Loan)
                     )
                 })
         };
@@ -372,6 +378,7 @@ impl MonthlyResult {
             let bound = match activity.sample_kind {
                 ActivitySampleKind::Rental => frozen_input.rent,
                 ActivitySampleKind::Repair => frozen_input.repair_cost_limit,
+                ActivitySampleKind::Loan => continue,
             }
             .rounded_for_posting(property_simulation_domain::RoundingPolicy::HalfUp)?;
             if actual_support
@@ -397,6 +404,9 @@ impl MonthlyResult {
             closing_state,
             proposal,
             cash_flow_contributions,
+            loan_continuations: Vec::new(),
+            loan_events: Vec::new(),
+            loan_effects: Vec::new(),
         })
     }
     pub const fn trial_id(&self) -> TrialId {
@@ -428,6 +438,159 @@ impl MonthlyResult {
     }
     pub fn cash_flow_contributions(&self) -> &[CashFlowContribution] {
         &self.cash_flow_contributions
+    }
+    pub fn loan_continuations(&self) -> &[LoanContinuation] {
+        &self.loan_continuations
+    }
+    pub fn loan_events(&self) -> &[LoanEvent] {
+        &self.loan_events
+    }
+    pub fn loan_effects(&self) -> &[LoanStateEffect] {
+        &self.loan_effects
+    }
+
+    pub(crate) fn attach_loan_month(
+        &self,
+        output: LoanCoordinatedMonth,
+    ) -> Result<Self, SimulationError> {
+        if output.period != self.period
+            || self
+                .loan_continuations
+                .iter()
+                .any(|loan| loan.instance_id == output.instance_id)
+        {
+            return Err(SimulationError::InvalidProposal(
+                "loan month period is invalid or loan instance is duplicated",
+            ));
+        }
+        let mut proposal = self.proposal.clone();
+        for event in &output.events {
+            proposal.events.push(ProposedEvent {
+                id: event.id,
+                instance_id: event.instance_id,
+                slice_id: event.slice_id,
+                version: event.model_version,
+                period: event.period,
+                key: event.key.clone(),
+            });
+        }
+        for transaction in &output.transactions {
+            let source = transaction
+                .source()
+                .ok_or(SimulationError::InvalidProposal(
+                    "loan transaction is missing source metadata",
+                ))?;
+            if source.instance_id != output.instance_id
+                || source.slice_id != output.slice_id
+                || source.model_version != output.model_version
+                || transaction.period() != self.period
+                || source
+                    .source_event_id
+                    .is_none_or(|event_id| !output.events.iter().any(|event| event.id == event_id))
+            {
+                return Err(SimulationError::InvalidProposal(
+                    "loan transaction source does not match its event and activity",
+                ));
+            }
+            proposal.transactions.push(ProposedTransaction {
+                id: transaction.id(),
+                instance_id: source.instance_id,
+                slice_id: source.slice_id,
+                version: source.model_version,
+                period: transaction.period(),
+                key: source.output_key.clone(),
+                source_event_id: source.source_event_id,
+                entries: transaction.entries().to_vec(),
+            });
+        }
+        let mut activities = self.activities.clone();
+        let loan_activity = ActivityInstance {
+            id: output.instance_id,
+            slice_id: output.slice_id,
+            version: output.model_version,
+            sample_kind: ActivitySampleKind::Loan,
+        };
+        if activities
+            .iter()
+            .any(|activity| activity.id == output.instance_id)
+        {
+            return Err(SimulationError::InvalidProposal(
+                "loan instance conflicts with an existing monthly activity",
+            ));
+        }
+        activities.push(loan_activity.clone());
+        let mut samples = self.samples.clone();
+        samples.push(crate::activity::ActivitySample::new(
+            &loan_activity,
+            self.period,
+            ActivitySampleValue::Loan(output.closing_loan),
+        ));
+        // OpeningState has one canonical cash account from FrozenInput. A loan may
+        // post through any declared cash-position account, so do not overwrite the
+        // state from that particular loan account when composing multiple accounts.
+        let (cash_side, cash_balance) = output.ledger.balance(self.frozen_input.cash_account)?;
+        let cash = if cash_side == property_simulation_accounting::BalanceSide::Debit {
+            cash_balance
+        } else {
+            cash_balance.checked_neg()?
+        };
+        let mut closing_state = self.closing_state.clone();
+        closing_state.cash = cash;
+        let mut result = Self::new(
+            self.trial_id,
+            self.branch_id,
+            self.period,
+            self.opening_state.clone(),
+            self.frozen_input,
+            activities,
+            samples,
+            closing_state,
+            proposal,
+        )?;
+        result.loan_continuations = self.loan_continuations.clone();
+        result.loan_continuations.push(LoanContinuation {
+            instance_id: output.instance_id,
+            slice_id: output.slice_id,
+            model_version: output.model_version,
+            loan: output.closing_loan,
+        });
+        result
+            .loan_continuations
+            .sort_by_key(|loan| loan.instance_id);
+        result.loan_events = self.loan_events.clone();
+        result.loan_events.extend(output.events.iter().cloned());
+        result.loan_events.sort_by_key(|event| event.id);
+        result.loan_effects = self.loan_effects.clone();
+        if let Some(effect) = output.state_effect {
+            if effect.period != self.period
+                || effect.instance_id != output.instance_id
+                || effect.slice_id != output.slice_id
+                || effect.model_version != output.model_version
+                || !output
+                    .events
+                    .iter()
+                    .any(|event| event.id == effect.source_event_id)
+            {
+                return Err(SimulationError::InvalidProposal(
+                    "loan Effect identity or source does not match its monthly output",
+                ));
+            }
+            if result
+                .proposal
+                .effects
+                .iter()
+                .any(|existing| existing.id == effect.id)
+                || result
+                    .loan_effects
+                    .iter()
+                    .any(|existing| existing.id == effect.id)
+            {
+                return Err(SimulationError::DuplicateOutputId);
+            }
+            result.loan_effects.push(effect);
+            result.loan_effects.sort_by_key(|effect| effect.id);
+        }
+        Ok(result)
     }
     pub fn cash_flow_totals(&self) -> Result<CashFlowContributionTotals, SimulationError> {
         CashFlowContributionTotals::sum(

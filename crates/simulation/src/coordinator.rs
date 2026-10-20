@@ -21,14 +21,69 @@ pub fn coordinate_month(
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
 ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+    coordinate_month_inner(
+        input,
+        opening_ledger,
+        outputs,
+        samples,
+        trial_id,
+        branch_id,
+        ids,
+        false,
+    )
+}
+
+pub(crate) fn coordinate_month_allow_empty(
+    input: &ValidatedInput,
+    opening_ledger: &Ledger,
+    outputs: Vec<SliceOutput>,
+    samples: Vec<ActivitySample<ActivitySampleValue>>,
+    trial_id: TrialId,
+    branch_id: BranchId,
+    ids: &dyn OutputIdFactory,
+) -> Result<(MonthlyResult, Ledger), SimulationError> {
+    coordinate_month_inner(
+        input,
+        opening_ledger,
+        outputs,
+        samples,
+        trial_id,
+        branch_id,
+        ids,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn coordinate_month_inner(
+    input: &ValidatedInput,
+    opening_ledger: &Ledger,
+    outputs: Vec<SliceOutput>,
+    samples: Vec<ActivitySample<ActivitySampleValue>>,
+    trial_id: TrialId,
+    branch_id: BranchId,
+    ids: &dyn OutputIdFactory,
+    allow_empty: bool,
+) -> Result<(MonthlyResult, Ledger), SimulationError> {
     if !input.matches_opening_ledger(opening_ledger) {
         return Err(SimulationError::InvalidInput(
             "opening ledger differs from the ledger used to validate monthly input",
         ));
     }
-    if outputs.is_empty() {
+    if outputs.is_empty() && !allow_empty {
         return Err(SimulationError::InvalidProposal(
             "monthly coordination requires at least one active output",
+        ));
+    }
+    if outputs
+        .iter()
+        .any(|output| output.instance.sample_kind == crate::types::ActivitySampleKind::Loan)
+        || samples
+            .iter()
+            .any(|sample| matches!(&sample.value, ActivitySampleValue::Loan(_)))
+    {
+        return Err(SimulationError::InvalidProposal(
+            "loan activities must be coordinated through coordinate_month_with_loans",
         ));
     }
     let period = input.frozen_input().period;
@@ -166,6 +221,9 @@ fn validate_sample_set(
                 ) | (
                     ActivitySampleValue::Repair(_),
                     crate::types::ActivitySampleKind::Repair
+                ) | (
+                    ActivitySampleValue::Loan(_),
+                    crate::types::ActivitySampleKind::Loan
                 )
             )
         {

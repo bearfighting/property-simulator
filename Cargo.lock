@@ -258,6 +258,7 @@ name = "property-simulation-models"
 version = "0.1.0"
 dependencies = [
  "property-simulation-domain",
+ "rust_decimal",
 ]
 
 [[package]]
@@ -280,6 +281,7 @@ dependencies = [
  "property-simulation-domain",
  "property-simulation-models",
  "property-simulation-randomness",
+ "rust_decimal",
 ]
 
 [[package]]

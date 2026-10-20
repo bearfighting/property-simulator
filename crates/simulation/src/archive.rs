@@ -5,8 +5,8 @@ use property_simulation_domain::{
 };
 
 use crate::{
-    ActivityInstance, CashFlowContributionTotals, FrozenInput, MonthSnapshot, OpeningState,
-    RunConfig, SimulationError, SimulationRun,
+    ActivityInstance, CashFlowContributionTotals, FrozenInput, LoanContinuation, MonthSnapshot,
+    OpeningState, RunConfig, SimulationError, SimulationRun,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +41,7 @@ pub struct UserSettings {
     pub opening_state: OpeningState,
     pub frozen_input: FrozenInput,
     pub activities: Vec<ActivityInstance>,
+    pub loan_continuations: Vec<LoanContinuation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,7 +259,7 @@ impl SimulationArchive {
         let result = parent.snapshot.result();
         let mut input = *result.frozen_input();
         input.period = next;
-        let mut run = SimulationRun::new_with_activities(
+        let mut run = SimulationRun::new_with_activities_and_loans(
             RunConfig {
                 start: next,
                 end,
@@ -268,6 +269,7 @@ impl SimulationArchive {
             input,
             parent.snapshot.ledger().clone(),
             result.activities().to_vec(),
+            result.loan_continuations().to_vec(),
         )
         .map_err(|_| ArchiveError::InvalidRunBoundary)?;
         run.set_execution_identity(trial_id, branch_id);

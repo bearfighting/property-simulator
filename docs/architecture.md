@@ -30,6 +30,7 @@
 | [ADR-20](adr/ADR-20-composable-slices-and-random-sampling.md) | Slice 组合、来源标识与随机采样解耦 | 独立提案可交换合并；采样分布、采样器和 Slice 分离；不可恢复运行时错误终止运行 |
 | [ADR-21](adr/ADR-21-m3-run-randomness-and-persistence.md) | M3 随机性、保存边界与组合 | 启动读取 OS 熵，ChaCha12/BLAKE3 语义子流；保存已完成快照和最新用户设置，不恢复未完成运行 |
 | [ADR-22](adr/ADR-22-m3-run-inputs-snapshot-and-cashflow-contract.md) | M3 运行输入、快照引用与现金流合计 | 后端命令参数、父快照引用、逐 Slice 现金流追踪及求和代数 |
+| [ADR-23](adr/ADR-23-loan-ledger-account-granularity.md) | 贷款 Ledger 科目粒度 | 每笔贷款独立负债科目，利息费用科目共享 |
 
 
 ## 6. Slice 架构与契约

@@ -234,6 +234,9 @@ pub(crate) fn validate_cashflow_support(
         let bound = match activity.sample_kind {
             ActivitySampleKind::Rental => rent,
             ActivitySampleKind::Repair => repair,
+            ActivitySampleKind::Loan => {
+                property_simulation_domain::Money::from_parts(0, 0, currency)?
+            }
         };
         absolute_support = absolute_support.checked_add(bound).map_err(|_| {
             SimulationError::InvalidInput(

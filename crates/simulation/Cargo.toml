@@ -10,6 +10,7 @@ property-simulation-accounting = { path = "../accounting" }
 property-simulation-domain = { path = "../domain" }
 property-simulation-models = { path = "../models" }
 property-simulation-randomness = { path = "../randomness" }
+rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

@@ -3,8 +3,8 @@ use property_simulation_domain::{BranchId, Money, TrialId, YearMonth};
 use property_simulation_models::RepairCostDistribution;
 
 use crate::{
-    FrozenInput, MonthlyResult, OpeningState, SimulationError, ValidatedInput, validate_input,
-    validation::validate_cashflow_support,
+    FrozenInput, LoanContinuation, LoanRunUpdate, MonthlyResult, OpeningState, SimulationError,
+    ValidatedInput, validate_input, validation::validate_cashflow_support,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub enum RunUpdateValue {
     RepairCostLimit(Money),
     Condition(crate::AssetCondition),
     Activities(Vec<crate::ActivityInstance>),
+    LoanTerms(Box<LoanRunUpdate>),
     /// A known state adjustment and its balanced accounting posting are one update.
     StateAdjustment {
         state: OpeningState,
@@ -106,6 +107,24 @@ pub trait SingleMonthExecutor {
         activities: &[crate::ActivityInstance],
     ) -> Result<(), SimulationError>;
 
+    /// Validate loan continuation and month-start terms updates before transition.
+    /// Executors without loan support keep the default rejection behavior.
+    fn validate_loan_context(
+        &self,
+        _input: &ValidatedInput,
+        _opening_ledger: &Ledger,
+        loans: &[LoanContinuation],
+        updates: &[LoanRunUpdate],
+    ) -> Result<(), SimulationError> {
+        if loans.is_empty() && updates.is_empty() {
+            Ok(())
+        } else {
+            Err(SimulationError::InvalidInput(
+                "monthly executor does not support loan state or updates",
+            ))
+        }
+    }
+
     fn requires_random_streams(&self) -> bool {
         false
     }
@@ -137,6 +156,31 @@ pub trait SingleMonthExecutor {
     ) -> Result<(MonthlyResult, Ledger), SimulationError> {
         self.execute(input, opening_ledger, activities, identity)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_with_loan_context(
+        &mut self,
+        input: &ValidatedInput,
+        opening_ledger: &Ledger,
+        activities: &[crate::ActivityInstance],
+        loans: &[LoanContinuation],
+        updates: &[LoanRunUpdate],
+        identity: Option<RunIdentity>,
+        random_streams: Option<&property_simulation_randomness::RandomStreams>,
+    ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        if !loans.is_empty() || !updates.is_empty() {
+            return Err(SimulationError::InvalidInput(
+                "monthly executor does not support loan state or updates",
+            ));
+        }
+        self.execute_with_random_streams(
+            input,
+            opening_ledger,
+            activities,
+            identity,
+            random_streams,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +195,7 @@ pub struct SimulationRun {
     opening_state: OpeningState,
     frozen_input: FrozenInput,
     activities: Vec<crate::ActivityInstance>,
+    loan_continuations: Vec<LoanContinuation>,
     ledger: Ledger,
     history: Vec<RunUpdate>,
     latest: Option<MonthSnapshot>,
@@ -164,6 +209,167 @@ pub struct SimulationRun {
 fn has_duplicate_activity_ids(activities: &[crate::ActivityInstance]) -> bool {
     let mut ids = std::collections::BTreeSet::new();
     activities.iter().any(|activity| !ids.insert(activity.id))
+}
+
+fn loan_output_matches(
+    activities: &[crate::ActivityInstance],
+    prior_loans: &[LoanContinuation],
+    updates: &[LoanRunUpdate],
+    period: YearMonth,
+    result: &MonthlyResult,
+) -> bool {
+    let expected: std::collections::BTreeMap<_, _> = activities
+        .iter()
+        .filter(|activity| activity.sample_kind == crate::ActivitySampleKind::Loan)
+        .map(|activity| (activity.id, (activity.slice_id, activity.version)))
+        .collect();
+    let actual: std::collections::BTreeMap<_, _> = result
+        .loan_continuations()
+        .iter()
+        .map(|loan| (loan.instance_id, loan))
+        .collect();
+    let prior: std::collections::BTreeMap<_, _> = prior_loans
+        .iter()
+        .map(|loan| (loan.instance_id, loan))
+        .collect();
+    if actual.len() != expected.len() || actual.len() != result.loan_continuations().len() {
+        return false;
+    }
+    for (instance_id, (slice_id, version)) in &expected {
+        let (Some(before), Some(after)) = (prior.get(instance_id), actual.get(instance_id)) else {
+            return false;
+        };
+        if before.slice_id != *slice_id
+            || before.model_version != *version
+            || after.slice_id != *slice_id
+            || after.model_version != *version
+        {
+            return false;
+        }
+        let update = updates
+            .iter()
+            .find(|update| update.instance_id == *instance_id);
+        let mut loan = match (update, before.loan) {
+            (Some(update), Some(current)) if update.update.expected_loan() == current => {
+                update.update.updated_loan()
+            }
+            (None, current) => current,
+            _ => return false,
+        };
+        let previous = before.loan;
+        let should_effect = loan.is_some() || update.is_some();
+        if let Some(active) = loan {
+            let Ok(month) = active.calculate_month() else {
+                return false;
+            };
+            loan = if month.closing_balance.is_zero() {
+                None
+            } else {
+                Some(property_simulation_models::FixedRateLoan {
+                    opening_balance: month.closing_balance,
+                    remaining_months: month.remaining_months,
+                    annual_rate: active.annual_rate,
+                    scheduled_payment: Some(month.scheduled_payment),
+                })
+            };
+        }
+        if after.loan != loan {
+            return false;
+        }
+        let instance_events: Vec<_> = result
+            .loan_events()
+            .iter()
+            .filter(|event| event.instance_id == *instance_id && event.period == period)
+            .collect();
+        let payment_loan = update.map_or(previous, |u| u.update.updated_loan());
+        let expected_event_count =
+            usize::from(update.is_some()) + usize::from(payment_loan.is_some());
+        if instance_events.len() != expected_event_count
+            || instance_events
+                .iter()
+                .any(|event| !matches!(event.key.as_str(), "loan_terms_update" | "loan_payment"))
+        {
+            return false;
+        }
+        let update_event = instance_events
+            .iter()
+            .copied()
+            .find(|event| event.key == "loan_terms_update");
+        if let Some(update) = update {
+            let Some(event) = update_event else {
+                return false;
+            };
+            let (Some(previous_loan), updated_loan) = (previous, update.update.updated_loan())
+            else {
+                return false;
+            };
+            let updated_balance = updated_loan.map_or_else(
+                || Money::from_parts(0, 0, previous_loan.opening_balance.currency()),
+                |loan| Ok(loan.opening_balance),
+            );
+            let Ok(updated_balance) = updated_balance else {
+                return false;
+            };
+            if event.slice_id != *slice_id
+                || event.model_version != *version
+                || event.previous_balance != Some(previous_loan.opening_balance)
+                || event.updated_balance != Some(updated_balance)
+                || event.previous_remaining_months != Some(previous_loan.remaining_months)
+                || event.updated_remaining_months != updated_loan.map(|loan| loan.remaining_months)
+                || event.previous_annual_rate != Some(previous_loan.annual_rate)
+                || event.updated_annual_rate != updated_loan.map(|loan| loan.annual_rate)
+            {
+                return false;
+            }
+        }
+        let payment_event = instance_events
+            .iter()
+            .copied()
+            .find(|event| event.key == "loan_payment");
+        if let Some(payment_loan) = payment_loan {
+            let (Some(event), Ok(month)) = (payment_event, payment_loan.calculate_month()) else {
+                return false;
+            };
+            if event.slice_id != *slice_id
+                || event.model_version != *version
+                || event.previous_balance != Some(payment_loan.opening_balance)
+                || event.updated_balance != Some(month.closing_balance)
+                || event.previous_remaining_months != Some(payment_loan.remaining_months)
+                || event.updated_remaining_months != Some(month.remaining_months)
+                || event.previous_annual_rate != Some(payment_loan.annual_rate)
+                || event.updated_annual_rate != Some(payment_loan.annual_rate)
+            {
+                return false;
+            }
+        }
+        let effects: Vec<_> = result
+            .loan_effects()
+            .iter()
+            .filter(|effect| effect.instance_id == *instance_id && effect.period == period)
+            .collect();
+        if effects.len() != usize::from(should_effect) {
+            return false;
+        }
+        if let Some(effect) = effects.first() {
+            let expected_source = payment_event.or(update_event).map(|event| event.id);
+            if effect.slice_id != *slice_id
+                || effect.model_version != *version
+                || effect.previous != previous
+                || effect.updated != loan
+                || expected_source != Some(effect.source_event_id)
+            {
+                return false;
+            }
+        }
+    }
+    result
+        .loan_events()
+        .iter()
+        .all(|event| event.period != period || expected.contains_key(&event.instance_id))
+        && result
+            .loan_effects()
+            .iter()
+            .all(|effect| effect.period != period || expected.contains_key(&effect.instance_id))
 }
 
 impl SimulationRun {
@@ -183,6 +389,24 @@ impl SimulationRun {
         ledger: Ledger,
         activities: Vec<crate::ActivityInstance>,
     ) -> Result<Self, RunControlError> {
+        Self::new_with_activities_and_loans(
+            config,
+            opening_state,
+            frozen_input,
+            ledger,
+            activities,
+            vec![],
+        )
+    }
+
+    pub fn new_with_activities_and_loans(
+        config: RunConfig,
+        opening_state: OpeningState,
+        frozen_input: FrozenInput,
+        ledger: Ledger,
+        activities: Vec<crate::ActivityInstance>,
+        loan_continuations: Vec<LoanContinuation>,
+    ) -> Result<Self, RunControlError> {
         if config.end.is_some_and(|end| end < config.start) {
             return Err(RunControlError::InvalidConfig(
                 "end month precedes start month",
@@ -192,6 +416,40 @@ impl SimulationRun {
             return Err(RunControlError::InvalidConfig(
                 "active activity instance IDs must be unique",
             ));
+        }
+        let loan_activities: std::collections::BTreeMap<_, _> = activities
+            .iter()
+            .filter(|activity| activity.sample_kind == crate::ActivitySampleKind::Loan)
+            .map(|activity| (activity.id, activity))
+            .collect();
+        let mut loan_ids = std::collections::BTreeSet::new();
+        if loan_continuations.iter().any(|loan| {
+            !loan_ids.insert(loan.instance_id)
+                || loan_activities
+                    .get(&loan.instance_id)
+                    .is_none_or(|activity| {
+                        activity.slice_id != loan.slice_id || activity.version != loan.model_version
+                    })
+        }) || loan_ids.len() != loan_activities.len()
+        {
+            return Err(RunControlError::InvalidConfig(
+                "loan continuations must match active loan activities exactly",
+            ));
+        }
+        for continuation in &loan_continuations {
+            if let Some(loan) = continuation.loan {
+                loan.validate().map_err(|_| {
+                    RunControlError::InvalidConfig("active loan continuation is invalid")
+                })?;
+                loan.derive_payment().map_err(|_| {
+                    RunControlError::InvalidConfig("active loan continuation is invalid")
+                })?;
+                if loan.opening_balance.currency() != ledger.currency() {
+                    return Err(RunControlError::InvalidConfig(
+                        "loan continuation currency differs from ledger",
+                    ));
+                }
+            }
         }
         if frozen_input.period != config.start {
             return Err(RunControlError::InvalidConfig(
@@ -225,6 +483,7 @@ impl SimulationRun {
             opening_state,
             frozen_input,
             activities,
+            loan_continuations,
             ledger,
             history: Vec::new(),
             latest: None,
@@ -265,8 +524,34 @@ impl SimulationRun {
         activities: Vec<crate::ActivityInstance>,
         identity: RunIdentity,
     ) -> Result<Self, RunControlError> {
-        let mut run =
-            Self::new_with_activities(config, opening_state, frozen_input, ledger, activities)?;
+        Self::new_with_activities_and_loans_and_identity(
+            config,
+            opening_state,
+            frozen_input,
+            ledger,
+            activities,
+            vec![],
+            identity,
+        )
+    }
+
+    pub fn new_with_activities_and_loans_and_identity(
+        config: RunConfig,
+        opening_state: OpeningState,
+        frozen_input: FrozenInput,
+        ledger: Ledger,
+        activities: Vec<crate::ActivityInstance>,
+        loans: Vec<LoanContinuation>,
+        identity: RunIdentity,
+    ) -> Result<Self, RunControlError> {
+        let mut run = Self::new_with_activities_and_loans(
+            config,
+            opening_state,
+            frozen_input,
+            ledger,
+            activities,
+            loans,
+        )?;
         run.set_execution_identity(identity.trial_id, identity.branch_id);
         Ok(run)
     }
@@ -298,6 +583,9 @@ impl SimulationRun {
     pub fn activities(&self) -> &[crate::ActivityInstance] {
         &self.activities
     }
+    pub fn loan_continuations(&self) -> &[LoanContinuation] {
+        &self.loan_continuations
+    }
     pub(crate) fn set_execution_identity(&mut self, trial_id: TrialId, branch_id: BranchId) {
         self.execution_identity = Some(RunIdentity {
             trial_id,
@@ -324,6 +612,8 @@ impl SimulationRun {
         let mut candidate_ledger = self.ledger.clone();
         let mut state = self.opening_state.clone();
         let mut activities = self.activities.clone();
+        let mut loan_updates = Vec::new();
+        let mut updated_loan_ids = std::collections::BTreeSet::new();
         for update in updates {
             if update.source.trim().is_empty() || update.effective_month != self.next_month {
                 return Err(RunControlError::InvalidUpdate(
@@ -335,6 +625,26 @@ impl SimulationRun {
                 RunUpdateValue::RepairCostLimit(value) => input.repair_cost_limit = *value,
                 RunUpdateValue::Condition(value) => state.condition = *value,
                 RunUpdateValue::Activities(value) => activities = value.clone(),
+                RunUpdateValue::LoanTerms(value) => {
+                    let Some(current) = self
+                        .loan_continuations
+                        .iter()
+                        .find(|loan| loan.instance_id == value.instance_id)
+                    else {
+                        return Err(RunControlError::InvalidUpdate(
+                            "loan update references an unknown activity",
+                        ));
+                    };
+                    if current.loan != Some(value.update.expected_loan())
+                        || value.update.effective_period() != self.next_month
+                        || !updated_loan_ids.insert(value.instance_id)
+                    {
+                        return Err(RunControlError::InvalidUpdate(
+                            "loan update must match the current loan and be unique",
+                        ));
+                    }
+                    loan_updates.push((**value).clone());
+                }
                 RunUpdateValue::StateAdjustment {
                     state: updated,
                     transaction,
@@ -376,6 +686,39 @@ impl SimulationRun {
                 "active activity instance IDs must be unique",
             ));
         }
+        let loan_activity_map: std::collections::BTreeMap<_, _> = activities
+            .iter()
+            .filter(|activity| activity.sample_kind == crate::ActivitySampleKind::Loan)
+            .map(|activity| (activity.id, (activity.slice_id, activity.version)))
+            .collect();
+        let prior_loans: std::collections::BTreeMap<_, _> = self
+            .loan_continuations
+            .iter()
+            .map(|loan| (loan.instance_id, loan))
+            .collect();
+        let mut candidate_loans = Vec::with_capacity(loan_activity_map.len());
+        for (instance_id, (slice_id, version)) in &loan_activity_map {
+            let Some(loan) = prior_loans.get(instance_id) else {
+                return Err(RunControlError::InvalidUpdate(
+                    "a new loan activity requires an explicit opening loan state",
+                ));
+            };
+            if loan.slice_id != *slice_id || loan.model_version != *version {
+                return Err(RunControlError::InvalidUpdate(
+                    "loan activity identity cannot change while it is active",
+                ));
+            }
+            candidate_loans.push((*loan).clone());
+        }
+        if self
+            .loan_continuations
+            .iter()
+            .any(|loan| !loan_activity_map.contains_key(&loan.instance_id) && loan.loan.is_some())
+        {
+            return Err(RunControlError::InvalidUpdate(
+                "an active loan cannot be removed from the activity set",
+            ));
+        }
         let distribution = RepairCostDistribution {
             maximum: input.repair_cost_limit,
         };
@@ -384,6 +727,18 @@ impl SimulationRun {
         validate_cashflow_support(&input, &activities)
             .map_err(RunControlError::InvalidExecutionInput)?;
         if let Err(error) = executor.validate_inputs(&validated, &candidate_ledger, &activities) {
+            if matches!(error, SimulationError::Fatal(_)) {
+                self.status = RunStatus::Failed;
+                return Err(RunControlError::Simulation(error));
+            }
+            return Err(RunControlError::InvalidExecutionInput(error));
+        }
+        if let Err(error) = executor.validate_loan_context(
+            &validated,
+            &candidate_ledger,
+            &candidate_loans,
+            &loan_updates,
+        ) {
             if matches!(error, SimulationError::Fatal(_)) {
                 self.status = RunStatus::Failed;
                 return Err(RunControlError::Simulation(error));
@@ -419,10 +774,12 @@ impl SimulationRun {
             .random_streams
             .as_ref()
             .or(newly_created_streams.as_ref());
-        let (result, ledger) = match executor.execute_with_random_streams(
+        let (result, ledger) = match executor.execute_with_loan_context(
             &validated,
             &candidate_ledger,
             &activities,
+            &candidate_loans,
+            &loan_updates,
             self.execution_identity,
             random_streams,
         ) {
@@ -477,6 +834,20 @@ impl SimulationRun {
             && result.opening_state() == validated.opening_state()
             && result.frozen_input() == &input
             && result.activities() == expected_activities
+            && loan_output_matches(
+                &activities,
+                &candidate_loans,
+                &loan_updates,
+                self.next_month,
+                &result,
+            )
+            && loan_updates.iter().all(|update| {
+                result.loan_events().iter().any(|event| {
+                    event.instance_id == update.instance_id
+                        && event.period == self.next_month
+                        && event.key == "loan_terms_update"
+                })
+            })
             && cash_matches
             && ledger.chart() == candidate_ledger.chart()
             && ledger.opening_balances() == candidate_ledger.opening_balances()
@@ -546,6 +917,7 @@ impl SimulationRun {
         self.opening_state = result.closing_state().clone();
         self.frozen_input = input;
         self.activities = activities;
+        self.loan_continuations = result.loan_continuations().to_vec();
         self.ledger = ledger.clone();
         self.history.extend_from_slice(updates);
         self.latest = Some(MonthSnapshot {
@@ -772,6 +1144,7 @@ mod tests {
                         crate::ActivitySampleKind::Repair => {
                             ActivitySampleValue::Repair(crate::RepairSample::NoRepair)
                         }
+                        crate::ActivitySampleKind::Loan => ActivitySampleValue::Loan(None),
                     };
                     ActivitySample::new(activity, input.frozen_input().period, value)
                 })
@@ -1034,6 +1407,54 @@ mod tests {
         .unwrap();
         assert_eq!(executor.seen_activity_count, Some(1));
         assert_eq!(run.history(), &[update]);
+    }
+
+    #[test]
+    fn loan_run_requires_a_continuation_for_each_loan_activity() {
+        let (ledger, input, state) = make_fixture_ledger();
+        let activity = crate::ActivityInstance {
+            id: ActivityInstanceId::from_bytes([31; 16]),
+            slice_id: SliceId::from_bytes([32; 16]),
+            version: ModelVersionId::from_bytes([33; 16]),
+            sample_kind: crate::ActivitySampleKind::Loan,
+        };
+        let config = RunConfig {
+            start: month(1),
+            end: None,
+            stop_conditions: vec![],
+        };
+        assert!(matches!(
+            SimulationRun::new_with_activities(
+                config.clone(),
+                state.clone(),
+                input,
+                ledger.clone(),
+                vec![activity.clone()],
+            ),
+            Err(RunControlError::InvalidConfig(_))
+        ));
+        let loan = property_simulation_models::FixedRateLoan {
+            opening_balance: Money::new(100.into(), input.rent.currency()),
+            remaining_months: 12,
+            annual_rate: rust_decimal::Decimal::new(5, 2),
+            scheduled_payment: None,
+        };
+        let continuation = LoanContinuation {
+            instance_id: activity.id,
+            slice_id: activity.slice_id,
+            model_version: activity.version,
+            loan: Some(loan),
+        };
+        let run = SimulationRun::new_with_activities_and_loans(
+            config,
+            state,
+            input,
+            ledger,
+            vec![activity],
+            vec![continuation.clone()],
+        )
+        .unwrap();
+        assert_eq!(run.loan_continuations(), &[continuation]);
     }
 
     #[test]
@@ -1756,6 +2177,7 @@ mod tests {
             opening_state: snapshot.result.closing_state().clone(),
             frozen_input: latest_input,
             activities: snapshot.result.activities().to_vec(),
+            loan_continuations: snapshot.result.loan_continuations().to_vec(),
         });
         assert_eq!(
             archive.latest_settings().unwrap().frozen_input.rent,
