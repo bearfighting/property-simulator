@@ -4,6 +4,12 @@ These hand-calculated vectors are the shared initial verification baseline for L
 
 ## M2 monthly activity vectors
 
+### M3.3 cash-flow contribution vector
+
+For a month with rent of CAD 80.00 and repair cash cost of CAD 10.00, the result retains two operating contributions: rental transaction +80.00 and repair transaction -10.00. Each item carries its posted transaction ID and source identity (trial, branch, activity instance, Slice, model version, output key); monthly operating total is +70.00 and matches the Ledger direct cash-flow projection. A non-cash transaction has no contribution. Within one transaction, cash entries are netted per category; categories remain distinct.
+
+Before sampling, sum each active Rental instance's rounded rent ceiling and each Repair instance's rounded repair ceiling. If that absolute support sum exceeds `Money`, reject the month input. Month result construction also rejects actual per-instance contributions beyond that support. These checks keep every monthly partial sum representable under any order or grouping. Archive aggregation accumulates exact signed decimals and returns an explicit arithmetic error only if the final saved-run category total is outside the `Money` range. A child run summary includes its own saved months only, beginning after its parent snapshot.
+
 All amounts below are CAD and opening cash is a signed cash-position balance. Rental debits
 cash and credits rental income, classified as operating cash flow. Repair debits operating
 expense and credits cash. A repair event links to its condition Effect and balanced transaction;

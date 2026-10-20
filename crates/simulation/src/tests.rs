@@ -360,6 +360,33 @@ fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
         money("170")
     );
     assert_eq!(closing_ledger.transactions().count(), 2);
+    assert_eq!(result.cash_flow_contributions().len(), 2);
+    assert_eq!(result.cash_flow_totals().unwrap().operating, money("70"));
+    let projection = closing_ledger
+        .project(frozen.period, frozen.period, &[frozen.cash_account])
+        .unwrap();
+    assert_eq!(
+        result.cash_flow_totals().unwrap().operating,
+        projection.cash_flow_statement.totals.operating
+    );
+    let mut amounts = result
+        .cash_flow_contributions()
+        .iter()
+        .map(|c| c.amount)
+        .collect::<Vec<_>>();
+    amounts.sort_by_key(|amount| amount.coefficient());
+    assert_eq!(amounts, vec![money("-10"), money("80")]);
+    for contribution in result.cash_flow_contributions() {
+        assert!(closing_ledger.transactions().any(|transaction| {
+            transaction.id() == contribution.transaction_id
+                && transaction.source().is_some_and(|source| {
+                    source.instance_id == contribution.instance_id
+                        && source.slice_id == contribution.slice_id
+                        && source.model_version == contribution.model_version
+                        && source.output_key == contribution.output_key
+                })
+        }));
+    }
     assert_eq!(ledger.balance(frozen.cash_account).unwrap().1, money("100"));
     let (permuted_result, permuted_ledger) = coordinate_month(
         &validated,
@@ -664,6 +691,62 @@ fn input_validation_checks_repair_distribution_support_before_sampling() {
         issue.field == "repair_distribution.maximum"
             && issue.message.contains("sampler's representable range")
     }));
+}
+
+#[test]
+fn active_cashflow_support_bound_rejects_unrepresentable_monthly_absolute_sum() {
+    let mut frozen = input();
+    frozen.rent = Money::from_parts(i128::MAX, 0, frozen.rent.currency()).unwrap();
+    frozen.repair_cost_limit = Money::from_parts(i128::MAX, 0, frozen.rent.currency()).unwrap();
+    let active = vec![rental_activity(41), activity(42)];
+    assert!(crate::validation::validate_cashflow_support(&frozen, &active).is_err());
+    assert!(crate::validation::validate_cashflow_support(&frozen, &[rental_activity(43)]).is_ok());
+}
+
+#[test]
+fn contribution_aggregation_cancels_before_applying_money_range() {
+    use property_simulation_accounting::CashFlowCategory;
+    let currency = money("0").currency();
+    let maximum = Money::from_parts(i128::MAX, 0, currency).unwrap();
+    let values = [maximum, maximum.checked_neg().unwrap(), maximum];
+    let totals = CashFlowContributionTotals::sum(
+        values
+            .into_iter()
+            .map(|amount| (CashFlowCategory::Operating, amount)),
+        currency,
+    )
+    .unwrap();
+    assert_eq!(totals.operating, maximum);
+    assert_eq!(
+        CashFlowContributionTotals::sum([], currency).unwrap(),
+        CashFlowContributionTotals::zero(currency)
+    );
+    let reversed = CashFlowContributionTotals::sum(
+        values
+            .into_iter()
+            .rev()
+            .map(|amount| (CashFlowCategory::Operating, amount)),
+        currency,
+    )
+    .unwrap();
+    assert_eq!(reversed, totals);
+    assert!(
+        CashFlowContributionTotals::sum(
+            [maximum, money("1")]
+                .into_iter()
+                .map(|amount| (CashFlowCategory::Operating, amount)),
+            currency,
+        )
+        .is_err()
+    );
+    let fractions = CashFlowContributionTotals::sum(
+        [money("1.25"), money("-1.2")]
+            .into_iter()
+            .map(|amount| (CashFlowCategory::Operating, amount)),
+        currency,
+    )
+    .unwrap();
+    assert_eq!(fractions.operating, money("0.05"));
 }
 
 #[test]

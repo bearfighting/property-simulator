@@ -1,8 +1,20 @@
 use std::collections::BTreeMap;
 
-use property_simulation_domain::{BranchId, RunId, SnapshotId, TrialId, YearMonth};
+use property_simulation_domain::{
+    ActivityInstanceId, BranchId, RunId, SnapshotId, TrialId, YearMonth,
+};
 
-use crate::{ActivityInstance, FrozenInput, MonthSnapshot, OpeningState, RunConfig, SimulationRun};
+use crate::{
+    ActivityInstance, CashFlowContributionTotals, FrozenInput, MonthSnapshot, OpeningState,
+    RunConfig, SimulationError, SimulationRun,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunCashFlowSummary {
+    pub by_month: BTreeMap<YearMonth, CashFlowContributionTotals>,
+    pub by_activity: BTreeMap<ActivityInstanceId, CashFlowContributionTotals>,
+    pub cumulative: CashFlowContributionTotals,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedMonth {
@@ -158,6 +170,61 @@ impl SimulationArchive {
     }
     pub fn latest_settings(&self) -> Option<&UserSettings> {
         self.latest_settings.as_ref()
+    }
+
+    /// Derive this run's saved-period totals; parent branch history is excluded.
+    pub fn cash_flow_summary(&self, run_id: RunId) -> Result<RunCashFlowSummary, SimulationError> {
+        let currency = self
+            .snapshots
+            .values()
+            .find(|saved| saved.run_id == run_id)
+            .map(|saved| saved.snapshot.result().closing_state().cash.currency())
+            .ok_or(SimulationError::InvalidInput(
+                "run has no saved months to summarize",
+            ))?;
+        let mut month_amounts = BTreeMap::<YearMonth, Vec<_>>::new();
+        let mut activity_amounts = BTreeMap::<ActivityInstanceId, Vec<_>>::new();
+        let mut cumulative_amounts = Vec::new();
+        for saved in self
+            .snapshots
+            .values()
+            .filter(|saved| saved.run_id == run_id)
+        {
+            let result = saved.snapshot.result();
+            month_amounts.entry(result.period()).or_default();
+            for contribution in result.cash_flow_contributions() {
+                month_amounts
+                    .entry(result.period())
+                    .or_default()
+                    .push((contribution.category, contribution.amount));
+                activity_amounts
+                    .entry(contribution.instance_id)
+                    .or_default()
+                    .push((contribution.category, contribution.amount));
+                cumulative_amounts.push((contribution.category, contribution.amount));
+            }
+        }
+        let by_month = month_amounts
+            .into_iter()
+            .map(|(month, amounts)| {
+                Ok((month, CashFlowContributionTotals::sum(amounts, currency)?))
+            })
+            .collect::<Result<_, SimulationError>>()?;
+        let by_activity = activity_amounts
+            .into_iter()
+            .map(|(activity, amounts)| {
+                Ok((
+                    activity,
+                    CashFlowContributionTotals::sum(amounts, currency)?,
+                ))
+            })
+            .collect::<Result<_, SimulationError>>()?;
+        let cumulative = CashFlowContributionTotals::sum(cumulative_amounts, currency)?;
+        Ok(RunCashFlowSummary {
+            by_month,
+            by_activity,
+            cumulative,
+        })
     }
 
     pub fn create_branch(

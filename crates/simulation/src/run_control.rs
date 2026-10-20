@@ -4,6 +4,7 @@ use property_simulation_models::RepairCostDistribution;
 
 use crate::{
     FrozenInput, MonthlyResult, OpeningState, SimulationError, ValidatedInput, validate_input,
+    validation::validate_cashflow_support,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,6 +319,8 @@ impl SimulationRun {
         };
         let validated = validate_input(&input, &distribution, &candidate_ledger, &state)
             .map_err(RunControlError::Input)?;
+        validate_cashflow_support(&input, &activities)
+            .map_err(RunControlError::InvalidExecutionInput)?;
         if let Err(error) = executor.validate_inputs(&validated, &candidate_ledger, &activities) {
             if matches!(error, SimulationError::Fatal(_)) {
                 self.status = RunStatus::Failed;
@@ -914,7 +917,8 @@ mod tests {
             }
         }
 
-        let (ledger, input, state) = make_fixture_ledger();
+        let (ledger, mut input, state) = make_fixture_ledger();
+        input.repair_cost_limit = Money::new(15.into(), input.repair_cost_limit.currency());
         let activity = crate::ActivityInstance {
             id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
             slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
@@ -1436,6 +1440,12 @@ mod tests {
         archive
             .save_month(saved_month(parent_id, run_id, snapshot.clone(), None))
             .unwrap();
+        let parent_summary = archive.cash_flow_summary(run_id).unwrap();
+        assert_eq!(
+            parent_summary.by_month.keys().copied().collect::<Vec<_>>(),
+            vec![month(1)]
+        );
+        assert!(parent_summary.by_activity.is_empty());
         let mut mismatched_start_archive = SimulationArchive::default();
         mismatched_start_archive
             .register_branch(BranchRecord {
@@ -1484,6 +1494,26 @@ mod tests {
         assert_eq!(branch_result.trial_id(), TrialId::from_bytes([3; 16]));
         assert_eq!(branch_result.branch_id(), child_branch);
         assert_eq!(branch_result.period(), month(2));
+        let child_run_id = RunId::from_bytes([8; 16]);
+        let child_snapshot_id = SnapshotId::from_bytes([10; 16]);
+        archive
+            .save_month(saved_month(
+                child_snapshot_id,
+                child_run_id,
+                child.latest_snapshot().unwrap().clone(),
+                Some(parent_id),
+            ))
+            .unwrap();
+        let child_summary = archive.cash_flow_summary(child_run_id).unwrap();
+        assert_eq!(
+            child_summary.by_month.keys().copied().collect::<Vec<_>>(),
+            vec![month(2)]
+        );
+        assert!(!child_summary.by_month.contains_key(&month(1)));
+        assert_eq!(
+            child_summary.cumulative.operating,
+            Money::new(0.into(), child_summary.cumulative.operating.currency())
+        );
         let mut latest_input = snapshot.result.frozen_input().to_owned();
         latest_input.rent = Money::new(125.into(), latest_input.rent.currency());
         archive.update_latest_settings(crate::UserSettings {
@@ -1497,5 +1527,99 @@ mod tests {
             latest_input.rent
         );
         assert_eq!(archive.snapshot(parent_id).unwrap().snapshot, snapshot);
+    }
+
+    #[test]
+    fn archive_cashflow_summary_derives_nonzero_month_activity_and_run_totals() {
+        use crate::{
+            BranchRecord, IdentifiedProposal, ProposedTransaction, SimulationArchive, saved_month,
+        };
+        use property_simulation_domain::{
+            ActivityInstanceId, ModelVersionId, RunId, SliceId, SnapshotId,
+        };
+
+        let (mut ledger, mut input, state) = make_fixture_ledger();
+        input.rent = Money::new(25.into(), input.rent.currency());
+        let activity = crate::ActivityInstance {
+            id: ActivityInstanceId::from_bytes([21; 16]),
+            slice_id: SliceId::from_bytes([22; 16]),
+            version: ModelVersionId::from_bytes([23; 16]),
+            sample_kind: crate::ActivitySampleKind::Rental,
+        };
+        let trial = TrialId::from_bytes([24; 16]);
+        let branch = BranchId::from_bytes([25; 16]);
+        let transaction = ProposedTransaction {
+            id: property_simulation_domain::LedgerTransactionId::from_bytes([26; 16]),
+            instance_id: activity.id,
+            slice_id: activity.slice_id,
+            version: activity.version,
+            period: month(1),
+            key: "rent.received".into(),
+            source_event_id: None,
+            entries: vec![
+                LedgerEntry::new(id(1), BalanceSide::Debit, input.rent)
+                    .with_cash_flow_category(CashFlowCategory::Operating),
+                LedgerEntry::new(id(2), BalanceSide::Credit, input.rent),
+            ],
+        };
+        ledger
+            .post(transaction.clone().into_ledger_transaction())
+            .unwrap();
+        let proposal = IdentifiedProposal {
+            identity: Some((trial, branch, month(1))),
+            events: vec![],
+            effects: vec![],
+            transactions: vec![transaction],
+        };
+        let closing = OpeningState {
+            cash: input.rent,
+            condition: state.condition,
+        };
+        let result = MonthlyResult::new(
+            trial,
+            branch,
+            month(1),
+            state.clone(),
+            input,
+            vec![activity.clone()],
+            vec![ActivitySample::new(
+                &activity,
+                month(1),
+                ActivitySampleValue::Rental,
+            )],
+            closing,
+            proposal,
+        )
+        .unwrap();
+        let snapshot = MonthSnapshot { result, ledger };
+        let run = RunId::from_bytes([27; 16]);
+        let snapshot_id = SnapshotId::from_bytes([28; 16]);
+        let mut archive = SimulationArchive::default();
+        archive
+            .register_branch(BranchRecord {
+                id: branch,
+                run_id: run,
+                trial_id: trial,
+                start_month: month(1),
+                parent_snapshot: None,
+                fork_month: None,
+            })
+            .unwrap();
+        archive
+            .save_month(saved_month(snapshot_id, run, snapshot, None))
+            .unwrap();
+        let summary = archive.cash_flow_summary(run).unwrap();
+        assert_eq!(
+            summary.by_month[&month(1)].operating,
+            Money::new(25.into(), state.cash.currency())
+        );
+        assert_eq!(
+            summary.by_activity[&activity.id].operating,
+            Money::new(25.into(), state.cash.currency())
+        );
+        assert_eq!(
+            summary.cumulative.operating,
+            Money::new(25.into(), state.cash.currency())
+        );
     }
 }

@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use property_simulation_accounting::{LedgerEntry, LedgerTransaction, LedgerTransactionSource};
+use property_simulation_accounting::{
+    CashFlowCategory, LedgerEntry, LedgerTransaction, LedgerTransactionSource,
+};
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, EffectId, EventId, LedgerTransactionId,
     ModelVersionId, Money, ResourceKey, SliceId, TrialId, YearMonth,
@@ -180,6 +182,61 @@ pub struct MonthlyResult {
     samples: Vec<ActivitySample<ActivitySampleValue>>,
     closing_state: OpeningState,
     proposal: IdentifiedProposal,
+    cash_flow_contributions: Vec<CashFlowContribution>,
+}
+
+/// Net signed cash impact for one committed transaction and cash-flow category.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashFlowContribution {
+    pub trial_id: TrialId,
+    pub branch_id: BranchId,
+    pub period: YearMonth,
+    pub instance_id: ActivityInstanceId,
+    pub slice_id: SliceId,
+    pub model_version: ModelVersionId,
+    pub output_key: String,
+    pub transaction_id: LedgerTransactionId,
+    pub category: CashFlowCategory,
+    /// Cash debits are positive; cash credits are negative.
+    pub amount: Money,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CashFlowContributionTotals {
+    pub operating: Money,
+    pub investing: Money,
+    pub financing: Money,
+}
+
+impl CashFlowContributionTotals {
+    pub fn zero(currency: property_simulation_domain::Currency) -> Self {
+        let zero = Money::from_parts(0, 0, currency).expect("zero is representable");
+        Self {
+            operating: zero,
+            investing: zero,
+            financing: zero,
+        }
+    }
+    /// Sum signed contributions exactly, checking the `Money` range only after cancellation.
+    pub fn sum(
+        amounts: impl IntoIterator<Item = (CashFlowCategory, Money)>,
+        currency: property_simulation_domain::Currency,
+    ) -> Result<Self, SimulationError> {
+        let mut buckets = [Vec::new(), Vec::new(), Vec::new()];
+        for (category, amount) in amounts {
+            buckets[match category {
+                CashFlowCategory::Operating => 0,
+                CashFlowCategory::Investing => 1,
+                CashFlowCategory::Financing => 2,
+            }]
+            .push(amount);
+        }
+        Ok(Self {
+            operating: exact_signed_sum(buckets[0].iter().copied(), currency)?,
+            investing: exact_signed_sum(buckets[1].iter().copied(), currency)?,
+            financing: exact_signed_sum(buckets[2].iter().copied(), currency)?,
+        })
+    }
 }
 impl MonthlyResult {
     // These fields form one validated period result; keeping them in one constructor
@@ -271,6 +328,64 @@ impl MonthlyResult {
                 "monthly result identity or period does not match its contents",
             ));
         }
+        let mut cash_flow_contributions = Vec::new();
+        for transaction in &proposal.transactions {
+            let mut grouped = BTreeMap::<CashFlowCategory, Vec<Money>>::new();
+            for entry in &transaction.entries {
+                if let Some(category) = entry.cash_flow_category() {
+                    let signed = match entry.side() {
+                        property_simulation_accounting::BalanceSide::Debit => entry.amount(),
+                        property_simulation_accounting::BalanceSide::Credit => {
+                            entry.amount().checked_neg()?
+                        }
+                    };
+                    grouped.entry(category).or_default().push(signed);
+                }
+            }
+            for (category, amounts) in grouped {
+                let amount = sum_contribution_amounts(amounts, opening_state.cash.currency())?;
+                let contribution = CashFlowContribution {
+                    trial_id,
+                    branch_id,
+                    period,
+                    instance_id: transaction.instance_id,
+                    slice_id: transaction.slice_id,
+                    model_version: transaction.version,
+                    output_key: transaction.key.clone(),
+                    transaction_id: transaction.id,
+                    category,
+                    amount,
+                };
+                cash_flow_contributions.push(contribution);
+            }
+        }
+        cash_flow_contributions.sort_by_key(|c| (c.transaction_id, c.category));
+        let mut actual_support = BTreeMap::<ActivityInstanceId, Money>::new();
+        for contribution in &cash_flow_contributions {
+            let amount = contribution.amount.abs()?;
+            let total = actual_support
+                .entry(contribution.instance_id)
+                .or_insert(Money::from_parts(0, 0, opening_state.cash.currency())?);
+            *total = total.checked_add(amount)?;
+        }
+        for activity in &activities {
+            let bound = match activity.sample_kind {
+                ActivitySampleKind::Rental => frozen_input.rent,
+                ActivitySampleKind::Repair => frozen_input.repair_cost_limit,
+            }
+            .rounded_for_posting(property_simulation_domain::RoundingPolicy::HalfUp)?;
+            if actual_support
+                .get(&activity.id)
+                .copied()
+                .unwrap_or(Money::from_parts(0, 0, opening_state.cash.currency())?)
+                .checked_cmp(bound)?
+                == std::cmp::Ordering::Greater
+            {
+                return Err(SimulationError::InvalidProposal(
+                    "activity cash-flow contributions exceed their validated support",
+                ));
+            }
+        }
         Ok(Self {
             trial_id,
             branch_id,
@@ -281,6 +396,7 @@ impl MonthlyResult {
             samples,
             closing_state,
             proposal,
+            cash_flow_contributions,
         })
     }
     pub const fn trial_id(&self) -> TrialId {
@@ -310,4 +426,160 @@ impl MonthlyResult {
     pub fn proposal(&self) -> &IdentifiedProposal {
         &self.proposal
     }
+    pub fn cash_flow_contributions(&self) -> &[CashFlowContribution] {
+        &self.cash_flow_contributions
+    }
+    pub fn cash_flow_totals(&self) -> Result<CashFlowContributionTotals, SimulationError> {
+        CashFlowContributionTotals::sum(
+            self.cash_flow_contributions
+                .iter()
+                .map(|c| (c.category, c.amount)),
+            self.closing_state.cash.currency(),
+        )
+    }
+}
+
+/// Sum signed fixed-point values without overflowing intermediate partial sums.
+/// Conversion back to `Money` is checked only after exact cancellation is complete.
+pub(crate) fn exact_signed_sum(
+    values: impl IntoIterator<Item = Money>,
+    currency: property_simulation_domain::Currency,
+) -> Result<Money, SimulationError> {
+    let values = values.into_iter().collect::<Vec<_>>();
+    let scale = values.iter().map(|value| value.scale()).max().unwrap_or(0);
+    let mut total = DecimalAccumulator::zero();
+    total.scale = scale;
+    for value in values {
+        if value.currency() != currency {
+            return Err(property_simulation_domain::DomainError::CurrencyMismatch.into());
+        }
+        let mut digits = value
+            .coefficient()
+            .unsigned_abs()
+            .to_string()
+            .bytes()
+            .rev()
+            .map(|digit| digit - b'0')
+            .collect::<Vec<_>>();
+        digits.splice(
+            0..0,
+            std::iter::repeat_n(0, usize::from(scale - value.scale())),
+        );
+        total.add(value.is_negative(), digits);
+    }
+    let mut digits = total.digits;
+    while total.scale > 0 && digits.len() > 1 && digits.first() == Some(&0) {
+        digits.remove(0);
+        // The accumulator is aligned to `scale`; removing low zeros reduces it.
+        total.scale -= 1;
+    }
+    let magnitude = digits
+        .iter()
+        .rev()
+        .map(|d| char::from(b'0' + *d))
+        .collect::<String>();
+    let magnitude = magnitude
+        .parse::<u128>()
+        .map_err(|_| property_simulation_domain::DomainError::ArithmeticOverflow)?;
+    let coefficient = if total.negative {
+        if magnitude == (i128::MAX as u128) + 1 {
+            i128::MIN
+        } else if magnitude <= i128::MAX as u128 {
+            -(magnitude as i128)
+        } else {
+            return Err(property_simulation_domain::DomainError::ArithmeticOverflow.into());
+        }
+    } else {
+        i128::try_from(magnitude)
+            .map_err(|_| property_simulation_domain::DomainError::ArithmeticOverflow)?
+    };
+    Ok(Money::from_parts(coefficient, total.scale, currency)?)
+}
+
+struct DecimalAccumulator {
+    negative: bool,
+    digits: Vec<u8>,
+    scale: u8,
+}
+impl DecimalAccumulator {
+    fn zero() -> Self {
+        Self {
+            negative: false,
+            digits: vec![0],
+            scale: 0,
+        }
+    }
+    fn add(&mut self, negative: bool, mut value: Vec<u8>) {
+        while value.len() > 1 && value.last() == Some(&0) {
+            value.pop();
+        }
+        if value == [0] {
+            return;
+        }
+        if self.digits == [0] {
+            self.negative = negative;
+            self.digits = value;
+            return;
+        }
+        if self.negative == negative {
+            decimal_add(&mut self.digits, &value);
+            return;
+        }
+        match decimal_compare(&self.digits, &value) {
+            std::cmp::Ordering::Equal => {
+                self.negative = false;
+                self.digits = vec![0];
+            }
+            std::cmp::Ordering::Greater => decimal_subtract(&mut self.digits, &value),
+            std::cmp::Ordering::Less => {
+                decimal_subtract(&mut value, &self.digits);
+                self.digits = value;
+                self.negative = negative;
+            }
+        }
+    }
+}
+fn decimal_compare(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    a.len()
+        .cmp(&b.len())
+        .then_with(|| a.iter().rev().cmp(b.iter().rev()))
+}
+fn decimal_add(a: &mut Vec<u8>, b: &[u8]) {
+    let mut carry = 0;
+    for i in 0..a.len().max(b.len()) {
+        if i == a.len() {
+            a.push(0);
+        }
+        let sum = a[i] + b.get(i).copied().unwrap_or(0) + carry;
+        a[i] = sum % 10;
+        carry = sum / 10;
+    }
+    if carry != 0 {
+        a.push(carry);
+    }
+}
+fn decimal_subtract(a: &mut Vec<u8>, b: &[u8]) {
+    let mut borrow = 0_i8;
+    for (i, digit) in a.iter_mut().enumerate() {
+        let difference = i8::try_from(*digit).unwrap()
+            - i8::try_from(b.get(i).copied().unwrap_or(0)).unwrap()
+            - borrow;
+        if difference < 0 {
+            *digit = u8::try_from(difference + 10).unwrap();
+            borrow = 1;
+        } else {
+            *digit = u8::try_from(difference).unwrap();
+            borrow = 0;
+        }
+    }
+    while a.len() > 1 && a.last() == Some(&0) {
+        a.pop();
+    }
+}
+
+fn sum_contribution_amounts(
+    amounts: Vec<Money>,
+    currency: property_simulation_domain::Currency,
+) -> Result<Money, SimulationError> {
+    exact_signed_sum(amounts, currency)
 }

@@ -1,6 +1,6 @@
 /// Classification attached to a cash-flow component or posting purpose.
 /// It belongs to the transaction purpose, not to an account definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CashFlowCategory {
     Operating,
     Investing,

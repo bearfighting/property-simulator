@@ -2,7 +2,10 @@ use property_simulation_accounting::{AccountCategory, AccountError, Ledger, Ledg
 use property_simulation_domain::RoundingPolicy;
 use property_simulation_models::RepairCostDistribution;
 
-use crate::types::{FrozenInput, IdentifiedProposal, OpeningState};
+use crate::SimulationError;
+use crate::types::{
+    ActivityInstance, ActivitySampleKind, FrozenInput, IdentifiedProposal, OpeningState,
+};
 
 /// A correctable issue found while freezing a period's input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,6 +216,32 @@ pub fn validate_input(
     } else {
         Err(ValidationErrors(issues))
     }
+}
+
+/// Ensure the sum of absolute cash-flow support for all active instances fits in `Money`.
+/// This stronger bound makes every possible ordering and grouping of monthly contributions safe.
+pub(crate) fn validate_cashflow_support(
+    input: &FrozenInput,
+    activities: &[ActivityInstance],
+) -> Result<(), SimulationError> {
+    let currency = input.rent.currency();
+    let rent = input.rent.rounded_for_posting(RoundingPolicy::HalfUp)?;
+    let repair = input
+        .repair_cost_limit
+        .rounded_for_posting(RoundingPolicy::HalfUp)?;
+    let mut absolute_support = property_simulation_domain::Money::from_parts(0, 0, currency)?;
+    for activity in activities {
+        let bound = match activity.sample_kind {
+            ActivitySampleKind::Rental => rent,
+            ActivitySampleKind::Repair => repair,
+        };
+        absolute_support = absolute_support.checked_add(bound).map_err(|_| {
+            SimulationError::InvalidInput(
+                "active activity cash-flow absolute support exceeds the representable Money range",
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// Check all proposed transactions against a candidate ledger without mutating the caller's

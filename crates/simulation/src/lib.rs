@@ -13,7 +13,8 @@ mod validation;
 
 pub use activity::*;
 pub use archive::{
-    ArchiveError, BranchRecord, SavedMonth, SimulationArchive, UserSettings, saved_month,
+    ArchiveError, BranchRecord, RunCashFlowSummary, SavedMonth, SimulationArchive, UserSettings,
+    saved_month,
 };
 pub use composition::{
     SliceResources, account_resource_key, plan_slice_stages, validate_composition,

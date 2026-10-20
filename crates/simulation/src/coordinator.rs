@@ -6,7 +6,9 @@ use crate::composition::validate_composition;
 use crate::error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 use crate::proposals::{OutputIdentity, identify_proposal, merge_proposals};
 use crate::types::{AssetCondition, MonthlyResult, OutputIdFactory, ProposedEffect};
-use crate::validation::{ValidatedInput, validate_proposal_transactions};
+use crate::validation::{
+    ValidatedInput, validate_cashflow_support, validate_proposal_transactions,
+};
 
 /// Coordinates already evaluated Slice outputs into an atomic monthly result.
 /// Returns a new ledger; the caller's opening ledger is never modified.
@@ -54,6 +56,7 @@ pub fn coordinate_month(
         evaluated_samples.push(output.sample.clone());
         identified.push(identify_proposal(output, identity)?);
     }
+    validate_cashflow_support(input.frozen_input(), &activities)?;
     validate_sample_set(&activities, &samples, period)?;
     for sample in &samples {
         if !evaluated_samples
