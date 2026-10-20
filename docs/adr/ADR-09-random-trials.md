@@ -9,10 +9,10 @@
 Random outputs must be auditable while allowing new branches to explore different outcomes.
 
 ## Decision
-Record trial identity, optional seed, active rules/models, and random input provenance. Re-simulation from a snapshot creates a new trial and may resample; exact repeated output is not a product requirement.
+Record trial identity, active rules/models, and completed results. Re-simulation from a saved completed snapshot creates a new trial and may resample; exact repeated output is not a product requirement, and identical settings are not promised either to reproduce or to differ from a prior run. Fixed seeds may be supplied in tests/diagnostics; a system-generated run seed is not a user setting or required recovery state. See [ADR-21](ADR-21-m3-run-randomness-and-persistence.md).
 
 ## Alternatives considered
 - Requiring identical reruns: would constrain ordinary branch semantics and conflate recovery with resimulation.
 
 ## Consequences
-Checkpoint recovery continues the same trial; random algorithm/stream details are fixed separately in M3.
+Unfinished-run checkpoint recovery is not required; continuation from the most recent completed snapshot is a new run. The M3 random source, PRNG, and semantic substream derivation are fixed by [ADR-21](ADR-21-m3-run-randomness-and-persistence.md): startup OS entropy, ChaCha12, and BLAKE3 keyed derivation. These choices do not create a replay guarantee.

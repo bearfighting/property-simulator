@@ -1,7 +1,7 @@
 # Property Simulation Sandbox (PSS)
 
 **Project specification v0.5 — 2026-10-19**
-**Status:** M0 design baseline and M1 Ledger primitives complete; M2 monthly activity and Slice implementation is pending. Ledger/mortgage vectors are indexed in `docs/test-vectors.md`.
+**Status:** M0 design baseline, M1 Ledger primitives, and M2 monthly activity/Slice foundations complete; M3 design decisions are recorded and implementation is next. Ledger/mortgage vectors are indexed in `docs/test-vectors.md`.
 
 The detailed specification is split by topic so each document has one main responsibility. Section numbers are retained from the original specification for reference; use the documents below as the current source of truth.
 

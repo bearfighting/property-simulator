@@ -38,3 +38,4 @@ Copy [`TEMPLATE.md`](TEMPLATE.md) for new records.
 | [18](ADR-18-sufficient-state-transition.md) | Sufficient state and single-period transition | Accepted |
 | [19](ADR-19-validation-only-domain-errors.md) | Validation boundary and fatal runtime failures | Accepted |
 | [20](ADR-20-composable-slices-and-random-sampling.md) | Composable proposals, stable provenance, and decoupled sampling | Accepted |
+| [21](ADR-21-m3-run-randomness-and-persistence.md) | M3 run randomness, persistence, and composition | Accepted |
