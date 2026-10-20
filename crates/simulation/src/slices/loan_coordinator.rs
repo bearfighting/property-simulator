@@ -3,8 +3,9 @@ use super::loan::{
     cash_classified_entry, map_model_error, validate_loan_accounts,
 };
 use crate::{
-    CashFlowContribution, MonthlyResult, OutputIdFactory, SimulationError, SliceOutput,
-    ValidatedInput, activity::ActivitySample, coordinator::coordinate_month_allow_empty,
+    CashFlowContribution, FatalSimulationFailure, FatalSimulationPhase, MonthlyResult,
+    OutputIdFactory, SimulationError, SliceOutput, ValidatedInput, activity::ActivitySample,
+    coordinator::coordinate_month_allow_empty_with_transactions,
 };
 use property_simulation_accounting::{
     BalanceSide, CashFlowCategory, LedgerTransaction, LedgerTransactionSource,
@@ -30,17 +31,10 @@ pub fn coordinate_month_with_loans(
             "monthly coordination requires at least one active output",
         ));
     }
-    let (mut result, mut ledger) = coordinate_month_allow_empty(
-        input,
-        opening_ledger,
-        outputs,
-        samples,
-        trial_id,
-        branch_id,
-        ids,
-    )?;
     let mut seen = std::collections::BTreeSet::new();
     let mut liability_accounts = std::collections::BTreeSet::new();
+    let mut loan_outputs = Vec::with_capacity(loans.len());
+    let mut loan_transactions = Vec::new();
     for loan_input in loans {
         if !seen.insert(loan_input.slice.instance_id)
             || !liability_accounts.insert(loan_input.slice.liability_account)
@@ -49,21 +43,74 @@ pub fn coordinate_month_with_loans(
                 "monthly loan activity IDs and liability accounts must be unique",
             ));
         }
-        let output = coordinate_loan_month(
+        let output = prepare_loan_month(
             &loan_input.slice,
             LoanMonthCommand {
                 period: input.frozen_input().period,
                 loan: loan_input.loan,
                 update: loan_input.update,
-                opening_ledger: &ledger,
+                opening_ledger,
                 trial_id,
                 branch_id,
                 ids,
             },
         )?;
-        ledger = output.ledger.clone();
-        result = result.attach_loan_month(output)?;
+        loan_transactions.extend(output.transactions.iter().cloned());
+        loan_outputs.push(output);
     }
+    let (mut result, ledger) = coordinate_month_allow_empty_with_transactions(
+        input,
+        opening_ledger,
+        outputs,
+        samples,
+        trial_id,
+        branch_id,
+        ids,
+        &loan_transactions,
+    )?;
+    for mut output in loan_outputs {
+        let (side, balance) = ledger.balance(output.liability_account).map_err(|source| {
+            SimulationError::Fatal(FatalSimulationFailure::new(
+                FatalSimulationPhase::ClosingStateDerivation,
+                output.period,
+                Some(trial_id),
+                Some(branch_id),
+                Some(output.instance_id),
+                source.into(),
+            ))
+        })?;
+        let expected = output.closing_loan.map_or_else(
+            || Money::from_parts(0, 0, ledger.currency()),
+            |loan| Ok(loan.opening_balance),
+        )?;
+        if side != BalanceSide::Credit || balance != expected {
+            return Err(SimulationError::Fatal(FatalSimulationFailure::new(
+                FatalSimulationPhase::ClosingStateDerivation,
+                output.period,
+                Some(trial_id),
+                Some(branch_id),
+                Some(output.instance_id),
+                SimulationError::InvalidProposal(
+                    "loan closing balance does not reconcile to its liability after the monthly batch",
+                ),
+            )));
+        }
+        output.ledger = ledger.clone();
+        let instance_id = output.instance_id;
+        result = result.attach_loan_month(output).map_err(|source| {
+            SimulationError::Fatal(FatalSimulationFailure::new(
+                FatalSimulationPhase::MonthlyResultConstruction,
+                input.frozen_input().period,
+                Some(trial_id),
+                Some(branch_id),
+                Some(instance_id),
+                source,
+            ))
+        })?;
+    }
+    // Direct callers may not go through SimulationRun's loan support preflight.
+    // Refuse to return a committed-looking month whose category totals cannot fit Money.
+    result.cash_flow_totals()?;
     Ok((result, ledger))
 }
 
@@ -72,6 +119,21 @@ pub fn coordinate_month_with_loans(
 pub fn coordinate_loan_month(
     slice: &LoanSlice,
     command: LoanMonthCommand<'_>,
+) -> Result<LoanCoordinatedMonth, SimulationError> {
+    coordinate_loan_month_inner(slice, command, true)
+}
+
+fn prepare_loan_month(
+    slice: &LoanSlice,
+    command: LoanMonthCommand<'_>,
+) -> Result<LoanCoordinatedMonth, SimulationError> {
+    coordinate_loan_month_inner(slice, command, false)
+}
+
+fn coordinate_loan_month_inner(
+    slice: &LoanSlice,
+    command: LoanMonthCommand<'_>,
+    commit: bool,
 ) -> Result<LoanCoordinatedMonth, SimulationError> {
     let LoanMonthCommand {
         period,
@@ -100,6 +162,7 @@ pub fn coordinate_loan_month(
             slice_id: slice.slice_id,
             model_version: slice.model_version,
             cash_account: slice.cash_account,
+            liability_account: slice.liability_account,
             period,
             closing_loan: None,
             month: None,
@@ -220,10 +283,46 @@ pub fn coordinate_loan_month(
             updated
         } else {
             let mut ledger = opening_ledger.clone();
-            ledger.post_batch(transactions.clone())?;
-            let (closing_side, closing_balance) = ledger.balance(slice.liability_account)?;
-            if closing_side != BalanceSide::Credit || !closing_balance.is_zero() {
-                return Err(SimulationError::InvalidProposal(
+            if commit {
+                ledger.post_batch(transactions.clone()).map_err(|source| {
+                    SimulationError::Fatal(FatalSimulationFailure::new(
+                        FatalSimulationPhase::LedgerCommit,
+                        period,
+                        Some(trial_id),
+                        Some(branch_id),
+                        Some(slice.instance_id),
+                        source.into(),
+                    ))
+                })?;
+            }
+            if commit {
+                let (closing_side, closing_balance) =
+                    ledger.balance(slice.liability_account).map_err(|source| {
+                        SimulationError::Fatal(FatalSimulationFailure::new(
+                            FatalSimulationPhase::ClosingStateDerivation,
+                            period,
+                            Some(trial_id),
+                            Some(branch_id),
+                            Some(slice.instance_id),
+                            source.into(),
+                        ))
+                    })?;
+                if closing_side != BalanceSide::Credit || !closing_balance.is_zero() {
+                    return Err(SimulationError::Fatal(FatalSimulationFailure::new(
+                        FatalSimulationPhase::ClosingStateDerivation,
+                        period,
+                        Some(trial_id),
+                        Some(branch_id),
+                        Some(slice.instance_id),
+                        SimulationError::InvalidProposal(
+                            "settled loan update does not reconcile to zero liability",
+                        ),
+                    )));
+                }
+            } else if loan.opening_balance.checked_add(update.principal_change)?
+                != Money::from_parts(0, 0, loan.opening_balance.currency())?
+            {
+                return Err(SimulationError::InvalidInput(
                     "settled loan update does not reconcile to zero liability",
                 ));
             }
@@ -232,6 +331,7 @@ pub fn coordinate_loan_month(
                 slice_id: slice.slice_id,
                 model_version: slice.model_version,
                 cash_account: slice.cash_account,
+                liability_account: slice.liability_account,
                 period,
                 closing_loan: None,
                 month: None,
@@ -308,12 +408,42 @@ pub fn coordinate_loan_month(
     opening_ledger.validate_transaction(&transaction)?;
     transactions.push(transaction);
     let mut ledger = opening_ledger.clone();
-    ledger.post_batch(transactions.clone())?;
-    let (closing_side, closing_balance) = ledger.balance(slice.liability_account)?;
-    if closing_side != BalanceSide::Credit || closing_balance != month.closing_balance {
-        return Err(SimulationError::InvalidProposal(
-            "loan closing balance does not match committed liability",
-        ));
+    if commit {
+        ledger.post_batch(transactions.clone()).map_err(|source| {
+            SimulationError::Fatal(FatalSimulationFailure::new(
+                FatalSimulationPhase::LedgerCommit,
+                period,
+                Some(trial_id),
+                Some(branch_id),
+                Some(slice.instance_id),
+                source.into(),
+            ))
+        })?;
+    }
+    if commit {
+        let (closing_side, closing_balance) =
+            ledger.balance(slice.liability_account).map_err(|source| {
+                SimulationError::Fatal(FatalSimulationFailure::new(
+                    FatalSimulationPhase::ClosingStateDerivation,
+                    period,
+                    Some(trial_id),
+                    Some(branch_id),
+                    Some(slice.instance_id),
+                    source.into(),
+                ))
+            })?;
+        if closing_side != BalanceSide::Credit || closing_balance != month.closing_balance {
+            return Err(SimulationError::Fatal(FatalSimulationFailure::new(
+                FatalSimulationPhase::ClosingStateDerivation,
+                period,
+                Some(trial_id),
+                Some(branch_id),
+                Some(slice.instance_id),
+                SimulationError::InvalidProposal(
+                    "loan closing balance does not match committed liability",
+                ),
+            )));
+        }
     }
     cash_flow_contributions.extend([
         CashFlowContribution {
@@ -347,6 +477,7 @@ pub fn coordinate_loan_month(
         slice_id: slice.slice_id,
         model_version: slice.model_version,
         cash_account: slice.cash_account,
+        liability_account: slice.liability_account,
         period,
         closing_loan,
         month: Some(month),

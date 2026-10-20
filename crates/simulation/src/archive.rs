@@ -204,6 +204,13 @@ impl SimulationArchive {
                     .push((contribution.category, contribution.amount));
                 cumulative_amounts.push((contribution.category, contribution.amount));
             }
+            for contribution in result.input_cash_flow_contributions() {
+                month_amounts
+                    .entry(result.period())
+                    .or_default()
+                    .push((contribution.category, contribution.amount));
+                cumulative_amounts.push((contribution.category, contribution.amount));
+            }
         }
         let by_month = month_amounts
             .into_iter()

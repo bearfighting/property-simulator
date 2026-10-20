@@ -892,6 +892,36 @@ fn active_cashflow_support_bound_rejects_unrepresentable_monthly_absolute_sum() 
 }
 
 #[test]
+fn active_cashflow_support_includes_context_bound_contributions() {
+    let frozen = input();
+    let currency = frozen.rent.currency();
+    let maximum = Money::from_parts(i128::MAX, 0, currency).unwrap();
+    let loan = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([61; 16]),
+        slice_id: SliceId::from_bytes([62; 16]),
+        version: ModelVersionId::from_bytes([63; 16]),
+        sample_kind: ActivitySampleKind::Loan,
+    };
+    assert!(
+        crate::validation::validate_cashflow_support_with_additional(
+            &frozen,
+            &[loan],
+            [
+                (
+                    property_simulation_accounting::CashFlowCategory::Operating,
+                    maximum,
+                ),
+                (
+                    property_simulation_accounting::CashFlowCategory::Operating,
+                    Money::new(1.into(), currency),
+                ),
+            ],
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn contribution_aggregation_cancels_before_applying_money_range() {
     use property_simulation_accounting::CashFlowCategory;
     let currency = money("0").currency();

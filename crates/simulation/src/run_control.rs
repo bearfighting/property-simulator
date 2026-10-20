@@ -1,10 +1,10 @@
 use property_simulation_accounting::{BalanceSide, Ledger, LedgerTransaction};
-use property_simulation_domain::{BranchId, Money, TrialId, YearMonth};
+use property_simulation_domain::{BranchId, EffectId, Money, TrialId, YearMonth};
 use property_simulation_models::RepairCostDistribution;
 
 use crate::{
     FrozenInput, LoanContinuation, LoanRunUpdate, MonthlyResult, OpeningState, SimulationError,
-    ValidatedInput, validate_input, validation::validate_cashflow_support,
+    ValidatedInput, validate_input, validation::validate_cashflow_support_with_additional,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +97,8 @@ pub enum RunControlError {
 
 /// Executes one already frozen month. Implementations compose sampling, Slices and
 /// `coordinate_month`; run control owns the lifecycle and never duplicates those rules.
+/// Non-fatal errors must mean validation/preflight failed before commit. Errors after
+/// an accepted transition or ledger commit must be returned as `SimulationError::Fatal`.
 pub trait SingleMonthExecutor {
     /// Performs deterministic, side-effect-free validation of executor-specific
     /// configuration and activity composition. It must not sample or transition state.
@@ -206,9 +208,91 @@ pub struct SimulationRun {
     status: RunStatus,
 }
 
+fn fatal_run_error(
+    phase: crate::FatalSimulationPhase,
+    period: YearMonth,
+    identity: Option<RunIdentity>,
+    activity_instance_id: Option<property_simulation_domain::ActivityInstanceId>,
+    source: SimulationError,
+) -> RunControlError {
+    RunControlError::Simulation(SimulationError::Fatal(crate::FatalSimulationFailure::new(
+        phase,
+        period,
+        identity.map(|identity| identity.trial_id),
+        identity.map(|identity| identity.branch_id),
+        activity_instance_id,
+        source,
+    )))
+}
+
 fn has_duplicate_activity_ids(activities: &[crate::ActivityInstance]) -> bool {
     let mut ids = std::collections::BTreeSet::new();
     activities.iter().any(|activity| !ids.insert(activity.id))
+}
+
+fn additional_cash_flow_support(
+    loans: &[LoanContinuation],
+    loan_updates: &[LoanRunUpdate],
+    updates: &[RunUpdate],
+    currency: property_simulation_domain::Currency,
+) -> Result<Vec<(property_simulation_accounting::CashFlowCategory, Money)>, SimulationError> {
+    let mut bounds = Vec::new();
+    for continuation in loans {
+        let update = loan_updates
+            .iter()
+            .find(|update| update.instance_id == continuation.instance_id);
+        if let Some(update) = update {
+            let principal_change = update.update.principal_change();
+            if !principal_change.is_zero() {
+                bounds.push((
+                    property_simulation_accounting::CashFlowCategory::Financing,
+                    principal_change.abs()?,
+                ));
+            }
+        }
+        let loan = update
+            .map(|update| update.update.updated_loan())
+            .unwrap_or(continuation.loan);
+        if let Some(loan) = loan {
+            let month = loan.calculate_month().map_err(|_| {
+                SimulationError::InvalidInput("loan cash-flow support cannot be calculated")
+            })?;
+            bounds.extend([
+                (
+                    property_simulation_accounting::CashFlowCategory::Operating,
+                    month.interest,
+                ),
+                (
+                    property_simulation_accounting::CashFlowCategory::Financing,
+                    month.principal,
+                ),
+            ]);
+        }
+    }
+    for update in updates {
+        let RunUpdateValue::StateAdjustment { transaction, .. } = &update.value else {
+            continue;
+        };
+        let mut by_category = std::collections::BTreeMap::<
+            property_simulation_accounting::CashFlowCategory,
+            Vec<Money>,
+        >::new();
+        for entry in transaction.entries() {
+            let Some(category) = entry.cash_flow_category() else {
+                continue;
+            };
+            let amount = match entry.side() {
+                BalanceSide::Debit => entry.amount(),
+                BalanceSide::Credit => entry.amount().checked_neg()?,
+            };
+            by_category.entry(category).or_default().push(amount);
+        }
+        for (category, values) in by_category {
+            let net = crate::types::exact_signed_sum(values, currency)?;
+            bounds.push((category, net.abs()?));
+        }
+    }
+    Ok(bounds)
 }
 
 fn loan_output_matches(
@@ -613,6 +697,7 @@ impl SimulationRun {
         let mut state = self.opening_state.clone();
         let mut activities = self.activities.clone();
         let mut loan_updates = Vec::new();
+        let mut input_effects = Vec::new();
         let mut updated_loan_ids = std::collections::BTreeSet::new();
         for update in updates {
             if update.source.trim().is_empty() || update.effective_month != self.next_month {
@@ -649,6 +734,7 @@ impl SimulationRun {
                     state: updated,
                     transaction,
                 } => {
+                    let previous_state = state.clone();
                     if transaction.period() != self.next_month {
                         return Err(RunControlError::InvalidUpdate(
                             "state adjustment must post in its effective month",
@@ -677,6 +763,14 @@ impl SimulationRun {
                             "state adjustment cash must match its ledger posting",
                         ));
                     }
+                    input_effects.push(crate::RunInputEffect {
+                        id: EffectId::from_bytes(*transaction.id().as_bytes()),
+                        source: update.source.clone(),
+                        period: self.next_month,
+                        previous: previous_state,
+                        updated: updated.clone(),
+                        transaction_id: transaction.id(),
+                    });
                     state = updated.clone();
                 }
             }
@@ -724,7 +818,14 @@ impl SimulationRun {
         };
         let validated = validate_input(&input, &distribution, &candidate_ledger, &state)
             .map_err(RunControlError::Input)?;
-        validate_cashflow_support(&input, &activities)
+        let additional_support = additional_cash_flow_support(
+            &candidate_loans,
+            &loan_updates,
+            updates,
+            candidate_ledger.currency(),
+        )
+        .map_err(RunControlError::InvalidExecutionInput)?;
+        validate_cashflow_support_with_additional(&input, &activities, additional_support)
             .map_err(RunControlError::InvalidExecutionInput)?;
         if let Err(error) = executor.validate_inputs(&validated, &candidate_ledger, &activities) {
             if matches!(error, SimulationError::Fatal(_)) {
@@ -760,20 +861,16 @@ impl SimulationRun {
                 "random streams require a trial identity",
             ));
         }
-        let newly_created_streams = if requires_random_streams && self.random_streams.is_none() {
+        self.randomness_mode = Some(requires_random_streams);
+        if requires_random_streams && self.random_streams.is_none() {
             let streams = executor
                 .create_random_streams(self.execution_identity)
                 .map_err(|_| RunControlError::Randomness("failed to create random streams"))?;
-            Some(streams.ok_or(RunControlError::Randomness(
+            self.random_streams = Some(streams.ok_or(RunControlError::Randomness(
                 "executor requested random streams but did not create them",
-            ))?)
-        } else {
-            None
-        };
-        let random_streams = self
-            .random_streams
-            .as_ref()
-            .or(newly_created_streams.as_ref());
+            ))?);
+        }
+        let random_streams = self.random_streams.as_ref();
         let (result, ledger) = match executor.execute_with_loan_context(
             &validated,
             &candidate_ledger,
@@ -785,10 +882,32 @@ impl SimulationRun {
         ) {
             Ok(completed) => completed,
             Err(error) => {
-                self.status = RunStatus::Failed;
-                return Err(RunControlError::Simulation(error));
+                if matches!(error, SimulationError::Fatal(_)) {
+                    self.status = RunStatus::Failed;
+                    return Err(RunControlError::Simulation(error));
+                }
+                // Sample/proposal validation and transaction preflight errors are
+                // still before the coordinator's atomic commit boundary.
+                return Err(RunControlError::InvalidExecutionInput(error));
             }
         };
+        let returned_identity = RunIdentity {
+            trial_id: result.trial_id(),
+            branch_id: result.branch_id(),
+        };
+        let diagnostic_identity = self.execution_identity.or(Some(returned_identity));
+        let result = result
+            .with_input_updates(updates.to_vec(), input_effects)
+            .map_err(|source| {
+                self.status = RunStatus::Failed;
+                fatal_run_error(
+                    crate::FatalSimulationPhase::MonthlyResultConstruction,
+                    self.next_month,
+                    diagnostic_identity,
+                    None,
+                    source,
+                )
+            })?;
         let period = result.period();
         let opening_transactions: Vec<_> = candidate_ledger.transactions().cloned().collect();
         let returned_transactions: Vec<_> = ledger.transactions().cloned().collect();
@@ -800,13 +919,16 @@ impl SimulationRun {
         } else {
             &[]
         };
-        let reported_transactions: Vec<_> = result
+        let mut reported_transactions: Vec<_> = result
             .proposal()
             .transactions()
             .iter()
             .cloned()
             .map(crate::ProposedTransaction::into_ledger_transaction)
             .collect();
+        reported_transactions.sort_by_key(LedgerTransaction::id);
+        let mut returned_month_transactions_sorted = returned_month_transactions.to_vec();
+        returned_month_transactions_sorted.sort_by_key(LedgerTransaction::id);
         let mut expected_activities = activities.clone();
         expected_activities.sort_by_key(|activity| activity.id);
         let cash_matches = ledger
@@ -856,12 +978,18 @@ impl SimulationRun {
             && returned_month_transactions
                 .iter()
                 .all(|transaction| transaction.period() == self.next_month)
-            && returned_month_transactions == reported_transactions;
+            && returned_month_transactions_sorted == reported_transactions;
         if !output_is_consistent {
             self.status = RunStatus::Failed;
-            return Err(RunControlError::Simulation(SimulationError::InvalidInput(
-                "single-month executor returned an inconsistent result or ledger",
-            )));
+            return Err(fatal_run_error(
+                crate::FatalSimulationPhase::MonthlyResultConstruction,
+                self.next_month,
+                diagnostic_identity,
+                None,
+                SimulationError::InvalidInput(
+                    "single-month executor returned an inconsistent result or ledger",
+                ),
+            ));
         }
         let mut reason = if self.config.end == Some(period) {
             Some(StopReason::EndMonth(period))
@@ -869,32 +997,61 @@ impl SimulationRun {
             None
         } else {
             let accounts = ledger.cash_accounts().collect::<Vec<_>>();
-            let projection = ledger
-                .validate_projection(period, period, &accounts)
-                .map_err(|error| {
+            let projection = match ledger.validate_projection(period, period, &accounts) {
+                Ok(projection) => projection,
+                Err(error) => {
                     self.status = RunStatus::Failed;
-                    RunControlError::Simulation(error.into())
-                })?
-                .project()
-                .map_err(|error| {
+                    return Err(fatal_run_error(
+                        crate::FatalSimulationPhase::ClosingStateDerivation,
+                        period,
+                        diagnostic_identity,
+                        None,
+                        error.into(),
+                    ));
+                }
+            };
+            let projection = match projection.project() {
+                Ok(projection) => projection,
+                Err(error) => {
                     self.status = RunStatus::Failed;
-                    RunControlError::Simulation(error.into())
-                })?;
-            let change = projection
-                .cash_flow_statement
-                .totals
-                .net_change()
-                .map_err(|error| {
+                    return Err(fatal_run_error(
+                        crate::FatalSimulationPhase::ClosingStateDerivation,
+                        period,
+                        diagnostic_identity,
+                        None,
+                        error.into(),
+                    ));
+                }
+            };
+            let change = match projection.cash_flow_statement.totals.net_change() {
+                Ok(change) => change,
+                Err(error) => {
                     self.status = RunStatus::Failed;
-                    RunControlError::Simulation(error.into())
-                })?;
+                    return Err(fatal_run_error(
+                        crate::FatalSimulationPhase::ClosingStateDerivation,
+                        period,
+                        diagnostic_identity,
+                        None,
+                        error.into(),
+                    ));
+                }
+            };
             let mut satisfied = None;
             for (index, condition) in self.config.stop_conditions.iter().enumerate() {
                 let StopCondition::MonthlyNetCashChangeAtMost(threshold) = condition;
-                let within_threshold = change.checked_cmp(*threshold).map_err(|error| {
-                    self.status = RunStatus::Failed;
-                    RunControlError::Simulation(error.into())
-                })? != std::cmp::Ordering::Greater;
+                let within_threshold = match change.checked_cmp(*threshold) {
+                    Ok(ordering) => ordering != std::cmp::Ordering::Greater,
+                    Err(error) => {
+                        self.status = RunStatus::Failed;
+                        return Err(fatal_run_error(
+                            crate::FatalSimulationPhase::ClosingStateDerivation,
+                            period,
+                            diagnostic_identity,
+                            None,
+                            error.into(),
+                        ));
+                    }
+                };
                 if within_threshold {
                     satisfied = Some(StopReason::Condition(index));
                     break;
@@ -924,10 +1081,6 @@ impl SimulationRun {
             result: result.clone(),
             ledger,
         });
-        self.randomness_mode = Some(requires_random_streams);
-        if let Some(streams) = newly_created_streams {
-            self.random_streams = Some(streams);
-        }
         self.identity = Some((result.trial_id(), result.branch_id()));
         if let Some(reason) = reason {
             self.status = RunStatus::Stopped(reason);
@@ -964,7 +1117,7 @@ mod tests {
     use crate::{ActivitySample, ActivitySampleValue, AssetCondition, IdentifiedProposal};
     use property_simulation_accounting::{
         Account, AccountCategory, AccountCode, BalanceSide, CashFlowCategory, ChartOfAccounts,
-        LedgerEntry, OpeningBalances,
+        LedgerEntry, OpeningBalance, OpeningBalances,
     };
     use property_simulation_domain::{
         AccountId, ActivityInstanceId, BranchId, Currency, ModelVersionId, SliceId, TrialId,
@@ -1133,7 +1286,14 @@ mod tests {
             self.calls += 1;
             self.seen_activity_count = Some(activities.len());
             if self.fail {
-                return Err(SimulationError::InvalidInput("test failure"));
+                return Err(SimulationError::Fatal(crate::FatalSimulationFailure {
+                    phase: crate::FatalSimulationPhase::LedgerCommit,
+                    period: input.frozen_input().period,
+                    trial_id: identity.map(|value| value.trial_id),
+                    branch_id: identity.map(|value| value.branch_id),
+                    activity_instance_id: None,
+                    source: Box::new(SimulationError::InvalidInput("test failure")),
+                }));
             }
             let state = input.opening_state().clone();
             let samples = activities
@@ -1406,7 +1566,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(executor.seen_activity_count, Some(1));
-        assert_eq!(run.history(), &[update]);
+        assert_eq!(run.history(), std::slice::from_ref(&update));
     }
 
     #[test]
@@ -1640,7 +1800,7 @@ mod tests {
             effective_month: month(1),
             source: "opening state correction".into(),
             value: RunUpdateValue::StateAdjustment {
-                state: updated_state,
+                state: updated_state.clone(),
                 transaction,
             },
         };
@@ -1653,7 +1813,57 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result.latest_completed_month, Some(month(1)));
-        assert_eq!(run.history(), &[update]);
+        assert_eq!(run.history(), std::slice::from_ref(&update));
+        let completed = run.latest_snapshot().unwrap().result();
+        assert_eq!(completed.input_postings().len(), 1);
+        assert_eq!(completed.input_updates(), std::slice::from_ref(&update));
+        assert_eq!(completed.input_effects().len(), 1);
+        assert_eq!(
+            completed.input_postings()[0].source,
+            "opening state correction"
+        );
+        assert_eq!(
+            completed.input_postings()[0].transaction.id(),
+            property_simulation_domain::LedgerTransactionId::from_bytes([8; 16])
+        );
+        assert_eq!(completed.input_cash_flow_contributions().len(), 1);
+        assert_eq!(completed.input_effects()[0].id.as_bytes(), &[8; 16]);
+        assert_eq!(
+            completed.input_effects()[0].source,
+            "opening state correction"
+        );
+        assert_eq!(completed.input_effects()[0].period, month(1));
+        assert_eq!(
+            completed.input_effects()[0].previous.cash,
+            Money::new(0.into(), currency)
+        );
+        assert_eq!(
+            completed.input_effects()[0].previous.condition,
+            AssetCondition::Available
+        );
+        assert_eq!(completed.input_effects()[0].updated, updated_state);
+        assert_eq!(
+            completed.input_effects()[0].transaction_id.as_bytes(),
+            &[8; 16]
+        );
+        assert_eq!(
+            completed.input_cash_flow_contributions()[0].amount,
+            updated_state.cash
+        );
+        assert_eq!(
+            completed.cash_flow_totals().unwrap().financing,
+            updated_state.cash
+        );
+        let projected = run
+            .ledger()
+            .validate_projection(month(1), month(1), &[id(1)])
+            .unwrap()
+            .project()
+            .unwrap();
+        assert_eq!(
+            projected.cash_flow_statement.totals.financing,
+            updated_state.cash
+        );
         assert_eq!(
             run.ledger().balance(id(1)).unwrap().1,
             Money::new(5.into(), currency)
@@ -1797,6 +2007,312 @@ mod tests {
     }
 
     #[test]
+    fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
+        struct SampleBoundaryExecutor {
+            reject_once: bool,
+            fallback: Executor,
+            activity: crate::ActivityInstance,
+            key_factory: property_simulation_randomness::RunKeyFactory,
+            stream_allocations: u8,
+        }
+        impl SingleMonthExecutor for SampleBoundaryExecutor {
+            fn validate_inputs(
+                &self,
+                input: &ValidatedInput,
+                ledger: &Ledger,
+                activities: &[crate::ActivityInstance],
+            ) -> Result<(), SimulationError> {
+                self.fallback.validate_inputs(input, ledger, activities)
+            }
+
+            fn requires_random_streams(&self) -> bool {
+                true
+            }
+
+            fn create_random_streams(
+                &mut self,
+                identity: Option<RunIdentity>,
+            ) -> Result<Option<property_simulation_randomness::RandomStreams>, &'static str>
+            {
+                self.stream_allocations += 1;
+                self.key_factory
+                    .run_streams(identity.ok_or("missing identity")?.trial_id)
+                    .map(Some)
+                    .map_err(|_| "run-key allocation failed")
+            }
+
+            fn execute(
+                &mut self,
+                input: &ValidatedInput,
+                ledger: &Ledger,
+                activities: &[crate::ActivityInstance],
+                identity: Option<RunIdentity>,
+            ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+                if self.reject_once {
+                    self.reject_once = false;
+                    let invalid = ActivitySample::new(
+                        &self.activity,
+                        input.frozen_input().period,
+                        crate::RepairSample::Repair {
+                            cost: Money::new(
+                                1.into(),
+                                input.frozen_input().repair_cost_limit.currency(),
+                            ),
+                        },
+                    );
+                    let slice = crate::RepairSlice {
+                        instance: self.activity.clone(),
+                    };
+                    return Err(crate::propose_slice(&slice, input, &invalid).unwrap_err());
+                }
+                self.fallback.execute(input, ledger, activities, identity)
+            }
+        }
+
+        let (ledger, input, state) = make_fixture_ledger();
+        let activity = crate::ActivityInstance {
+            id: ActivityInstanceId::from_bytes([7; 16]),
+            slice_id: SliceId::from_bytes([8; 16]),
+            version: ModelVersionId::from_bytes([9; 16]),
+            sample_kind: crate::ActivitySampleKind::Repair,
+        };
+        let mut run = SimulationRun::new_with_activities(
+            RunConfig {
+                start: month(1),
+                end: None,
+                stop_conditions: vec![],
+            },
+            state,
+            input,
+            ledger,
+            vec![activity.clone()],
+        )
+        .unwrap();
+        run.set_execution_identity(
+            TrialId::from_bytes([31; 16]),
+            BranchId::from_bytes([32; 16]),
+        );
+        let mut executor = SampleBoundaryExecutor {
+            reject_once: true,
+            fallback: Executor::default(),
+            activity,
+            key_factory: property_simulation_randomness::RunKeyFactory::new(
+                property_simulation_randomness::RootKey::from_seed([33; 32]),
+            ),
+            stream_allocations: 0,
+        };
+        assert!(matches!(
+            run.call(RunCommand::Continue, &[], &mut executor),
+            Err(RunControlError::InvalidExecutionInput(
+                SimulationError::InvalidInput("repair sample outside support")
+            ))
+        ));
+        assert_eq!(
+            run.status(),
+            &RunStatus::Running {
+                next_month: month(1)
+            }
+        );
+        assert!(run.latest_snapshot().is_none());
+        assert!(run.history().is_empty());
+        assert_eq!(executor.stream_allocations, 1);
+
+        assert!(
+            run.call(RunCommand::Continue, &[], &mut executor)
+                .unwrap()
+                .monthly_result
+                .is_some()
+        );
+        assert_eq!(run.latest_snapshot().unwrap().result().period(), month(1));
+        assert_eq!(executor.stream_allocations, 1);
+    }
+
+    #[test]
+    fn unrepresentable_loan_and_input_cashflow_support_rejects_before_executor() {
+        use std::cell::Cell;
+
+        struct CountingExecutor {
+            calls: Cell<usize>,
+        }
+        impl SingleMonthExecutor for CountingExecutor {
+            fn validate_inputs(
+                &self,
+                _input: &ValidatedInput,
+                _ledger: &Ledger,
+                _activities: &[crate::ActivityInstance],
+            ) -> Result<(), SimulationError> {
+                self.calls.set(self.calls.get() + 1);
+                Ok(())
+            }
+
+            fn validate_loan_context(
+                &self,
+                _input: &ValidatedInput,
+                _ledger: &Ledger,
+                loans: &[LoanContinuation],
+                _updates: &[LoanRunUpdate],
+            ) -> Result<(), SimulationError> {
+                self.calls.set(self.calls.get() + 1);
+                assert_eq!(loans.len(), 1);
+                Ok(())
+            }
+
+            fn execute(
+                &mut self,
+                _input: &ValidatedInput,
+                _ledger: &Ledger,
+                _activities: &[crate::ActivityInstance],
+                _identity: Option<RunIdentity>,
+            ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+                self.calls.set(self.calls.get() + 1);
+                panic!("support validation must precede monthly execution")
+            }
+        }
+
+        let currency = Currency::from_code("CAD").unwrap();
+        let cash = id(41);
+        let rent = id(42);
+        let repairs = id(43);
+        let liability = id(44);
+        let equity = id(45);
+        let chart = ChartOfAccounts::new([
+            Account::new_cash_position(cash, AccountCode::new(1000).unwrap(), "Cash").unwrap(),
+            Account::new(
+                rent,
+                AccountCode::new(4000).unwrap(),
+                AccountCategory::Income,
+                false,
+                "Rent",
+            )
+            .unwrap(),
+            Account::new(
+                repairs,
+                AccountCode::new(5000).unwrap(),
+                AccountCategory::Expense,
+                false,
+                "Repairs",
+            )
+            .unwrap(),
+            Account::new(
+                liability,
+                AccountCode::new(2000).unwrap(),
+                AccountCategory::Liability,
+                false,
+                "Loan",
+            )
+            .unwrap(),
+            Account::new(
+                equity,
+                AccountCode::new(3000).unwrap(),
+                AccountCategory::Equity,
+                false,
+                "Opening equity",
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        // This loan payment is individually representable by the loan Decimal model,
+        // while the state adjustment nearly fills Money's wider fixed-point range.
+        // Together their financing contributions cannot be aggregated.
+        let principal = Money::parse("70000000000000000000000000000", currency).unwrap();
+        let opening = OpeningBalances::new(
+            &chart,
+            [
+                OpeningBalance::new(liability, BalanceSide::Credit, principal).unwrap(),
+                OpeningBalance::new(equity, BalanceSide::Debit, principal).unwrap(),
+            ],
+            None,
+        )
+        .unwrap();
+        let ledger = Ledger::new(chart, opening).unwrap();
+        let input = FrozenInput {
+            period: month(1),
+            rent: Money::new(0.into(), currency),
+            rent_account: rent,
+            cash_account: cash,
+            repair_expense_account: repairs,
+            repair_cost_limit: Money::new(0.into(), currency),
+        };
+        let state = OpeningState {
+            cash: Money::new(0.into(), currency),
+            condition: AssetCondition::Available,
+        };
+        let loan_activity = crate::ActivityInstance {
+            id: ActivityInstanceId::from_bytes([46; 16]),
+            slice_id: SliceId::from_bytes([47; 16]),
+            version: ModelVersionId::from_bytes([48; 16]),
+            sample_kind: crate::ActivitySampleKind::Loan,
+        };
+        let continuation = LoanContinuation {
+            instance_id: loan_activity.id,
+            slice_id: loan_activity.slice_id,
+            model_version: loan_activity.version,
+            loan: Some(property_simulation_models::FixedRateLoan {
+                opening_balance: principal,
+                remaining_months: 1,
+                annual_rate: rust_decimal::Decimal::ZERO,
+                scheduled_payment: None,
+            }),
+        };
+        let mut run = SimulationRun::new_with_activities_and_loans(
+            RunConfig {
+                start: month(1),
+                end: None,
+                stop_conditions: vec![],
+            },
+            state.clone(),
+            input,
+            ledger.clone(),
+            vec![loan_activity],
+            vec![continuation],
+        )
+        .unwrap();
+        let adjustment = Money::from_parts(i128::MAX - 1, 2, currency).unwrap();
+        let update = RunUpdate {
+            effective_month: month(1),
+            source: "opening cash correction".into(),
+            value: RunUpdateValue::StateAdjustment {
+                state: OpeningState {
+                    cash: adjustment,
+                    condition: AssetCondition::Available,
+                },
+                transaction: LedgerTransaction::new(
+                    property_simulation_domain::LedgerTransactionId::from_bytes([49; 16]),
+                    month(1),
+                    [
+                        LedgerEntry::new(cash, BalanceSide::Debit, adjustment)
+                            .with_cash_flow_category(CashFlowCategory::Financing),
+                        LedgerEntry::new(equity, BalanceSide::Credit, adjustment),
+                    ],
+                ),
+            },
+        };
+        let mut executor = CountingExecutor {
+            calls: Cell::new(0),
+        };
+
+        assert!(matches!(
+            run.call(RunCommand::Continue, &[update], &mut executor),
+            Err(RunControlError::InvalidExecutionInput(
+                SimulationError::InvalidInput(
+                    "active activity cash-flow absolute support exceeds the representable Money range"
+                )
+            ))
+        ));
+        assert_eq!(executor.calls.get(), 0);
+        assert_eq!(
+            run.status(),
+            &RunStatus::Running {
+                next_month: month(1)
+            }
+        );
+        assert!(run.latest_snapshot().is_none());
+        assert!(run.history().is_empty());
+        assert_eq!(run.ledger(), &ledger);
+        assert_eq!(run.opening_state(), &state);
+    }
+
+    #[test]
     fn fatal_executor_preflight_error_fails_the_run() {
         struct FatalPreflightExecutor;
         impl SingleMonthExecutor for FatalPreflightExecutor {
@@ -1895,7 +2411,13 @@ mod tests {
         let mut executor = InconsistentExecutor;
         assert!(matches!(
             run.call(RunCommand::Continue, &[], &mut executor),
-            Err(RunControlError::Simulation(_))
+            Err(RunControlError::Simulation(SimulationError::Fatal(
+                crate::FatalSimulationFailure {
+                    phase: crate::FatalSimulationPhase::MonthlyResultConstruction,
+                    period,
+                    ..
+                }
+            ))) if period == month(1)
         ));
         assert_eq!(run.status(), &RunStatus::Failed);
         assert!(run.latest_snapshot().is_none());
@@ -1972,8 +2494,24 @@ mod tests {
                     input.frozen_input().period,
                     input.opening_state().clone(),
                     *input.frozen_input(),
-                    vec![],
-                    vec![],
+                    vec![crate::ActivityInstance {
+                        id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
+                        slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
+                        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
+                        sample_kind: crate::ActivitySampleKind::Rental,
+                    }],
+                    vec![ActivitySample::new(
+                        &crate::ActivityInstance {
+                            id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
+                            slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
+                            version: property_simulation_domain::ModelVersionId::from_bytes(
+                                [9; 16],
+                            ),
+                            sample_kind: crate::ActivitySampleKind::Rental,
+                        },
+                        input.frozen_input().period,
+                        crate::ActivitySampleValue::Rental,
+                    )],
                     OpeningState {
                         cash: amount.checked_neg()?,
                         condition: input.opening_state().condition,
@@ -2006,11 +2544,31 @@ mod tests {
             }
         }
 
-        let mut run = fixture(None, vec![]);
-        assert!(matches!(
-            run.call(RunCommand::Continue, &[], &mut MismatchedPostingExecutor),
-            Err(RunControlError::Simulation(_))
-        ));
+        let activity = crate::ActivityInstance {
+            id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
+            slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
+            version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
+            sample_kind: crate::ActivitySampleKind::Rental,
+        };
+        let (ledger, mut input, state) = make_fixture_ledger();
+        input.rent = Money::new(1.into(), input.rent.currency());
+        let mut run = SimulationRun::new_with_activities(
+            RunConfig {
+                start: month(1),
+                end: None,
+                stop_conditions: vec![],
+            },
+            state,
+            input,
+            ledger,
+            vec![activity],
+        )
+        .unwrap();
+        let outcome = run.call(RunCommand::Continue, &[], &mut MismatchedPostingExecutor);
+        assert!(
+            matches!(outcome, Err(RunControlError::Simulation(_))),
+            "{outcome:?}"
+        );
         assert_eq!(run.status(), &RunStatus::Failed);
         assert!(run.latest_snapshot().is_none());
     }

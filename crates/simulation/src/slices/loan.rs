@@ -45,6 +45,7 @@ pub struct LoanCoordinatedMonth {
     pub slice_id: SliceId,
     pub model_version: ModelVersionId,
     pub cash_account: AccountId,
+    pub liability_account: AccountId,
     pub period: YearMonth,
     pub closing_loan: Option<FixedRateLoan>,
     pub month: Option<LoanMonth>,

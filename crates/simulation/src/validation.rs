@@ -224,12 +224,41 @@ pub(crate) fn validate_cashflow_support(
     input: &FrozenInput,
     activities: &[ActivityInstance],
 ) -> Result<(), SimulationError> {
+    validate_cashflow_support_with_additional(input, activities, std::iter::empty())
+}
+
+/// Add support for outputs whose bounds depend on typed month-start context, such as
+/// loan continuations and explicit input postings. Each amount is an absolute
+/// category contribution bound after within-transaction/category netting.
+pub(crate) fn validate_cashflow_support_with_additional(
+    input: &FrozenInput,
+    activities: &[ActivityInstance],
+    additional: impl IntoIterator<
+        Item = (
+            property_simulation_accounting::CashFlowCategory,
+            property_simulation_domain::Money,
+        ),
+    >,
+) -> Result<(), SimulationError> {
     let currency = input.rent.currency();
     let rent = input.rent.rounded_for_posting(RoundingPolicy::HalfUp)?;
     let repair = input
         .repair_cost_limit
         .rounded_for_posting(RoundingPolicy::HalfUp)?;
-    let mut absolute_support = property_simulation_domain::Money::from_parts(0, 0, currency)?;
+    let mut absolute_support = std::collections::BTreeMap::from([
+        (
+            property_simulation_accounting::CashFlowCategory::Operating,
+            property_simulation_domain::Money::from_parts(0, 0, currency)?,
+        ),
+        (
+            property_simulation_accounting::CashFlowCategory::Investing,
+            property_simulation_domain::Money::from_parts(0, 0, currency)?,
+        ),
+        (
+            property_simulation_accounting::CashFlowCategory::Financing,
+            property_simulation_domain::Money::from_parts(0, 0, currency)?,
+        ),
+    ]);
     for activity in activities {
         let bound = match activity.sample_kind {
             ActivitySampleKind::Rental => rent,
@@ -238,7 +267,25 @@ pub(crate) fn validate_cashflow_support(
                 property_simulation_domain::Money::from_parts(0, 0, currency)?
             }
         };
-        absolute_support = absolute_support.checked_add(bound).map_err(|_| {
+        let total = absolute_support
+            .get_mut(&property_simulation_accounting::CashFlowCategory::Operating)
+            .expect("all cash-flow categories are initialized");
+        *total = total.checked_add(bound).map_err(|_| {
+            SimulationError::InvalidInput(
+                "active activity cash-flow absolute support exceeds the representable Money range",
+            )
+        })?;
+    }
+    for (category, bound) in additional {
+        if bound.currency() != currency || bound.is_negative() {
+            return Err(SimulationError::InvalidInput(
+                "additional cash-flow support must be non-negative and use the run currency",
+            ));
+        }
+        let total = absolute_support
+            .get_mut(&category)
+            .expect("all cash-flow categories are initialized");
+        *total = total.checked_add(bound).map_err(|_| {
             SimulationError::InvalidInput(
                 "active activity cash-flow absolute support exceeds the representable Money range",
             )
@@ -261,11 +308,18 @@ pub fn validate_proposal_transactions(
         .map(|transaction| transaction.into_ledger_transaction())
         .collect();
 
+    validate_transaction_batch(ledger, &transactions)
+}
+
+pub(crate) fn validate_transaction_batch(
+    ledger: &Ledger,
+    transactions: &[LedgerTransaction],
+) -> Result<(), ProposalValidationErrors> {
     // Collect transaction-local errors without cloning the ledger per transaction. A valid
     // batch may contain individually invalid intermediate account balances, so the batch result
     // remains authoritative.
     let mut issues = Vec::new();
-    for transaction in &transactions {
+    for transaction in transactions {
         if let Err(error) = ledger.validate_transaction(transaction) {
             issues.push(ProposalValidationIssue {
                 transaction_key: transaction.source().map(|source| source.output_key.clone()),
@@ -275,7 +329,7 @@ pub fn validate_proposal_transactions(
     }
 
     let mut candidate = ledger.clone();
-    match candidate.post_batch(transactions) {
+    match candidate.post_batch(transactions.iter().cloned()) {
         Ok(()) => Ok(()),
         Err(error) => {
             if !issues.iter().any(|issue| issue.error == error) {

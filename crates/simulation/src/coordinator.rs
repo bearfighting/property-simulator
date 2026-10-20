@@ -8,6 +8,7 @@ use crate::proposals::{OutputIdentity, identify_proposal, merge_proposals};
 use crate::types::{AssetCondition, MonthlyResult, OutputIdFactory, ProposedEffect};
 use crate::validation::{
     ValidatedInput, validate_cashflow_support, validate_proposal_transactions,
+    validate_transaction_batch,
 };
 
 /// Coordinates already evaluated Slice outputs into an atomic monthly result.
@@ -30,10 +31,12 @@ pub fn coordinate_month(
         branch_id,
         ids,
         false,
+        &[],
     )
 }
 
-pub(crate) fn coordinate_month_allow_empty(
+#[allow(clippy::too_many_arguments)] // Mirrors the single-month boundary and adds its unified batch.
+pub(crate) fn coordinate_month_allow_empty_with_transactions(
     input: &ValidatedInput,
     opening_ledger: &Ledger,
     outputs: Vec<SliceOutput>,
@@ -41,6 +44,7 @@ pub(crate) fn coordinate_month_allow_empty(
     trial_id: TrialId,
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
+    additional_transactions: &[property_simulation_accounting::LedgerTransaction],
 ) -> Result<(MonthlyResult, Ledger), SimulationError> {
     coordinate_month_inner(
         input,
@@ -51,6 +55,7 @@ pub(crate) fn coordinate_month_allow_empty(
         branch_id,
         ids,
         true,
+        additional_transactions,
     )
 }
 
@@ -64,6 +69,7 @@ fn coordinate_month_inner(
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
     allow_empty: bool,
+    additional_transactions: &[property_simulation_accounting::LedgerTransaction],
 ) -> Result<(MonthlyResult, Ledger), SimulationError> {
     if !input.matches_opening_ledger(opening_ledger) {
         return Err(SimulationError::InvalidInput(
@@ -126,16 +132,21 @@ fn coordinate_month_inner(
     validate_composition(&declarations, &identified)?;
     let proposal = merge_proposals(identified)?;
     let condition = reduce_condition(input.opening_state().condition, proposal.effects())?;
-    validate_proposal_transactions(opening_ledger, &proposal)
-        .map_err(SimulationError::InvalidTransactions)?;
-
-    let mut ledger = opening_ledger.clone();
-    let transactions = proposal
+    let mut transactions = proposal
         .transactions()
         .iter()
         .cloned()
         .map(|transaction| transaction.into_ledger_transaction())
         .collect::<Vec<_>>();
+    transactions.extend_from_slice(additional_transactions);
+    if additional_transactions.is_empty() {
+        validate_proposal_transactions(opening_ledger, &proposal)
+            .map_err(SimulationError::InvalidTransactions)?;
+    } else {
+        validate_transaction_batch(opening_ledger, &transactions)
+            .map_err(SimulationError::InvalidTransactions)?;
+    }
+    let mut ledger = opening_ledger.clone();
     ledger.post_batch(transactions).map_err(|source| {
         SimulationError::Fatal(FatalSimulationFailure::new(
             FatalSimulationPhase::LedgerCommit,

@@ -185,9 +185,43 @@ pub struct MonthlyResult {
     closing_state: OpeningState,
     proposal: IdentifiedProposal,
     cash_flow_contributions: Vec<CashFlowContribution>,
+    input_postings: Vec<RunInputPosting>,
+    input_cash_flow_contributions: Vec<InputCashFlowContribution>,
+    input_updates: Vec<crate::RunUpdate>,
+    input_effects: Vec<RunInputEffect>,
     loan_continuations: Vec<LoanContinuation>,
     loan_events: Vec<LoanEvent>,
     loan_effects: Vec<LoanStateEffect>,
+}
+
+/// A balanced month-start transaction supplied with a run update. These postings
+/// are recorded separately from Slice outputs because they have no Slice identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInputPosting {
+    pub source: String,
+    pub transaction: LedgerTransaction,
+}
+
+/// State change caused by an economically accounted month-start adjustment.
+/// Its identity is deterministically derived from the caller-supplied transaction ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInputEffect {
+    pub id: EffectId,
+    pub source: String,
+    pub period: YearMonth,
+    pub previous: OpeningState,
+    pub updated: OpeningState,
+    pub transaction_id: LedgerTransactionId,
+}
+
+/// Cash-flow impact of a month-start input posting, attributed to its update source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputCashFlowContribution {
+    pub source: String,
+    pub period: YearMonth,
+    pub transaction_id: property_simulation_domain::LedgerTransactionId,
+    pub category: CashFlowCategory,
+    pub amount: Money,
 }
 
 /// Net signed cash impact for one committed transaction and cash-flow category.
@@ -404,6 +438,10 @@ impl MonthlyResult {
             closing_state,
             proposal,
             cash_flow_contributions,
+            input_postings: Vec::new(),
+            input_cash_flow_contributions: Vec::new(),
+            input_updates: Vec::new(),
+            input_effects: Vec::new(),
             loan_continuations: Vec::new(),
             loan_events: Vec::new(),
             loan_effects: Vec::new(),
@@ -438,6 +476,102 @@ impl MonthlyResult {
     }
     pub fn cash_flow_contributions(&self) -> &[CashFlowContribution] {
         &self.cash_flow_contributions
+    }
+    pub fn input_postings(&self) -> &[RunInputPosting] {
+        &self.input_postings
+    }
+    pub fn input_cash_flow_contributions(&self) -> &[InputCashFlowContribution] {
+        &self.input_cash_flow_contributions
+    }
+    pub fn input_updates(&self) -> &[crate::RunUpdate] {
+        &self.input_updates
+    }
+    pub fn input_effects(&self) -> &[RunInputEffect] {
+        &self.input_effects
+    }
+
+    pub(crate) fn with_input_updates(
+        mut self,
+        updates: Vec<crate::RunUpdate>,
+        effects: Vec<RunInputEffect>,
+    ) -> Result<Self, SimulationError> {
+        if updates
+            .iter()
+            .any(|update| update.source.trim().is_empty() || update.effective_month != self.period)
+        {
+            return Err(SimulationError::InvalidProposal(
+                "completed input updates must have a source and matching period",
+            ));
+        }
+        let postings = updates
+            .iter()
+            .filter_map(|update| match &update.value {
+                crate::RunUpdateValue::StateAdjustment { transaction, .. } => {
+                    Some(RunInputPosting {
+                        source: update.source.clone(),
+                        transaction: transaction.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut contributions = Vec::new();
+        for posting in &postings {
+            if posting.source.trim().is_empty()
+                || posting.transaction.period() != self.period
+                || !seen.insert(posting.transaction.id())
+            {
+                return Err(SimulationError::InvalidProposal(
+                    "run input postings must have a unique ID, source, and matching period",
+                ));
+            }
+            let mut grouped = BTreeMap::<CashFlowCategory, Vec<Money>>::new();
+            for entry in posting.transaction.entries() {
+                if let Some(category) = entry.cash_flow_category() {
+                    let signed = match entry.side() {
+                        property_simulation_accounting::BalanceSide::Debit => entry.amount(),
+                        property_simulation_accounting::BalanceSide::Credit => {
+                            entry.amount().checked_neg()?
+                        }
+                    };
+                    grouped.entry(category).or_default().push(signed);
+                }
+            }
+            for (category, amounts) in grouped {
+                contributions.push(InputCashFlowContribution {
+                    source: posting.source.clone(),
+                    period: self.period,
+                    transaction_id: posting.transaction.id(),
+                    category,
+                    amount: exact_signed_sum(amounts, self.opening_state.cash.currency())?,
+                });
+            }
+        }
+        let mut effect_ids = std::collections::BTreeSet::new();
+        if effects.iter().any(|effect| {
+            effect.period != self.period
+                || effect.source.trim().is_empty()
+                || !effect_ids.insert(effect.id)
+                || self
+                    .proposal
+                    .effects
+                    .iter()
+                    .any(|existing| existing.id == effect.id)
+                || !postings.iter().any(|posting| {
+                    posting.source == effect.source
+                        && posting.transaction.id() == effect.transaction_id
+                })
+        }) {
+            return Err(SimulationError::InvalidProposal(
+                "run input Effects must be unique and linked to a matching posting",
+            ));
+        }
+        self.input_postings = postings;
+        self.input_cash_flow_contributions = contributions;
+        self.input_updates = updates;
+        self.input_effects = effects;
+        Ok(self)
     }
     pub fn loan_continuations(&self) -> &[LoanContinuation] {
         &self.loan_continuations
@@ -596,7 +730,15 @@ impl MonthlyResult {
         CashFlowContributionTotals::sum(
             self.cash_flow_contributions
                 .iter()
-                .map(|c| (c.category, c.amount)),
+                .map(|c| (c.category, c.amount))
+                // Month-start adjustments are part of the month's Ledger cash flow,
+                // even though they deliberately have no Slice/activity attribution.
+                // Keep their provenance separate while including them in the total.
+                .chain(
+                    self.input_cash_flow_contributions
+                        .iter()
+                        .map(|c| (c.category, c.amount)),
+                ),
             self.closing_state.cash.currency(),
         )
     }
