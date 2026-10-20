@@ -253,6 +253,290 @@ fn sample<T>(instance: &ActivityInstance, value: T) -> ActivitySample<T> {
 }
 
 #[test]
+fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
+    use crate::{RentalSlice, RepairSlice, coordinate_month, propose_slice};
+    let mut frozen = input();
+    frozen.rent = money("80");
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let rental = rental_activity(11);
+    let repair = activity(12);
+    let rental_output = propose_slice(
+        &RentalSlice {
+            instance: rental.clone(),
+        },
+        &validated,
+        &sample(&rental, ()),
+    )
+    .unwrap();
+    let repair_output = propose_slice(
+        &RepairSlice {
+            instance: repair.clone(),
+        },
+        &validated,
+        &sample(&repair, RepairSample::Repair { cost: money("10") }),
+    )
+    .unwrap();
+    let samples = vec![
+        ActivitySample::new(&rental, frozen.period, ActivitySampleValue::Rental),
+        ActivitySample::new(
+            &repair,
+            frozen.period,
+            ActivitySampleValue::Repair(RepairSample::Repair { cost: money("10") }),
+        ),
+    ];
+    let mismatched_samples = vec![
+        samples[0].clone(),
+        ActivitySample::new(
+            &repair,
+            frozen.period,
+            ActivitySampleValue::Repair(RepairSample::NoRepair),
+        ),
+    ];
+    assert!(
+        coordinate_month(
+            &validated,
+            &ledger,
+            vec![repair_output.clone(), rental_output.clone()],
+            mismatched_samples,
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            &TestIds,
+        )
+        .is_err()
+    );
+    assert_eq!(ledger.transactions().count(), 0);
+    let mut changed_frozen = frozen;
+    changed_frozen.rent = money("90");
+    let changed_input = validate_input(
+        &changed_frozen,
+        &RepairCostDistribution {
+            maximum: changed_frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    assert!(
+        coordinate_month(
+            &changed_input,
+            &ledger,
+            vec![repair_output.clone(), rental_output.clone()],
+            samples.clone(),
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            &TestIds,
+        )
+        .is_err()
+    );
+    assert_eq!(ledger.transactions().count(), 0);
+    let forward_outputs = vec![repair_output.clone(), rental_output.clone()];
+    let (result, closing_ledger) = coordinate_month(
+        &validated,
+        &ledger,
+        forward_outputs.clone(),
+        samples.clone(),
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        &TestIds,
+    )
+    .unwrap();
+    assert_eq!(result.closing_state().cash, money("170"));
+    assert_eq!(result.closing_state().condition, AssetCondition::Available);
+    assert_eq!(
+        closing_ledger.balance(frozen.cash_account).unwrap().1,
+        money("170")
+    );
+    assert_eq!(closing_ledger.transactions().count(), 2);
+    assert_eq!(ledger.balance(frozen.cash_account).unwrap().1, money("100"));
+    let (permuted_result, permuted_ledger) = coordinate_month(
+        &validated,
+        &ledger,
+        forward_outputs.into_iter().rev().collect(),
+        samples.into_iter().rev().collect(),
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        &TestIds,
+    )
+    .unwrap();
+    assert_eq!(permuted_result, result);
+    assert_eq!(permuted_ledger, closing_ledger);
+}
+
+#[test]
+fn coordinator_rejects_a_ledger_other_than_the_validated_opening_ledger() {
+    use crate::coordinate_month;
+    use property_simulation_accounting::{
+        BalanceSide, CashFlowCategory, LedgerEntry, LedgerTransaction,
+    };
+
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let frozen = input();
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let mut other_ledger = ledger.clone();
+    other_ledger
+        .post(LedgerTransaction::new(
+            LedgerTransactionId::from_bytes([20; 16]),
+            frozen.period,
+            [
+                LedgerEntry::new(
+                    frozen.repair_expense_account,
+                    BalanceSide::Debit,
+                    money("1"),
+                ),
+                LedgerEntry::new(frozen.cash_account, BalanceSide::Credit, money("1"))
+                    .with_cash_flow_category(CashFlowCategory::Operating),
+            ],
+        ))
+        .unwrap();
+
+    assert!(matches!(
+        coordinate_month(
+            &validated,
+            &other_ledger,
+            vec![],
+            vec![],
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            &TestIds
+        ),
+        Err(SimulationError::InvalidInput(
+            "opening ledger differs from the ledger used to validate monthly input"
+        ))
+    ));
+    assert_eq!(other_ledger.transactions().count(), 1);
+    assert_eq!(ledger.transactions().count(), 0);
+}
+
+#[test]
+fn coordinator_rejects_unknown_effect_and_invalid_journal_without_partial_commit() {
+    use crate::{
+        EffectProposal, RepairSlice, SliceProposal, TransactionProposal, coordinate_month,
+    };
+    use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
+    use property_simulation_domain::ResourceKey;
+
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let instance = activity(21);
+    let slice = RepairSlice {
+        instance: instance.clone(),
+    };
+    let mut resources = slice.resources(&frozen);
+    let unknown_target = ResourceKey::new("property.unknown").unwrap();
+    resources.writes.insert(unknown_target.clone());
+    let sample = ActivitySample::new(
+        &instance,
+        frozen.period,
+        ActivitySampleValue::Repair(RepairSample::NoRepair),
+    );
+    let output = |proposal| crate::SliceOutput {
+        proposal,
+        instance: instance.clone(),
+        period: frozen.period,
+        opening_state: state.clone(),
+        frozen_input: frozen,
+        resources: resources.clone(),
+        sample: sample.clone(),
+    };
+
+    let unknown_effect = SliceProposal {
+        effects: vec![EffectProposal {
+            period: frozen.period,
+            target: unknown_target,
+            key: "unknown".into(),
+            source_event_key: None,
+            condition: AssetCondition::Available,
+        }],
+        ..Default::default()
+    };
+    assert!(matches!(
+        coordinate_month(
+            &validated,
+            &ledger,
+            vec![output(unknown_effect)],
+            vec![sample.clone()],
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            &TestIds,
+        ),
+        Err(SimulationError::InvalidProposal(
+            "unsupported Effect target"
+        ))
+    ));
+    assert_eq!(ledger.transactions().count(), 0);
+
+    let invalid_journal = SliceProposal {
+        transactions: vec![TransactionProposal {
+            key: "unbalanced".into(),
+            period: frozen.period,
+            entries: vec![
+                LedgerEntry::new(
+                    frozen.repair_expense_account,
+                    BalanceSide::Debit,
+                    money("2"),
+                ),
+                LedgerEntry::new(frozen.cash_account, BalanceSide::Credit, money("1"))
+                    .with_cash_flow_category(CashFlowCategory::Operating),
+            ],
+            source_event_key: None,
+        }],
+        ..Default::default()
+    };
+    assert!(matches!(
+        coordinate_month(
+            &validated,
+            &ledger,
+            vec![output(invalid_journal)],
+            vec![sample],
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            &TestIds,
+        ),
+        Err(SimulationError::Accounting(_))
+    ));
+    assert_eq!(ledger.transactions().count(), 0);
+    assert_eq!(ledger.balance(frozen.cash_account).unwrap().1, money("100"));
+}
+
+#[test]
 fn input_validation_checks_repair_distribution_support_before_sampling() {
     let state = OpeningState {
         cash: money("0"),

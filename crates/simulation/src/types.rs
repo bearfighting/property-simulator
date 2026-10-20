@@ -185,7 +185,7 @@ impl MonthlyResult {
     // These fields form one validated period result; keeping them in one constructor
     // makes it impossible to omit the identity or any of the transition inputs.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         trial_id: TrialId,
         branch_id: BranchId,
         period: YearMonth,
@@ -199,6 +199,10 @@ impl MonthlyResult {
         // A result is itself a commit boundary: validate uniqueness and canonical
         // ordering even if the caller did not explicitly merge the proposal.
         let proposal = merge_proposals([proposal])?;
+        let mut activities = activities;
+        activities.sort_by_key(|activity| activity.id);
+        let mut samples = samples;
+        samples.sort_by_key(|sample| sample.instance_id);
         let mut activity_by_id = BTreeMap::new();
         for activity in &activities {
             if activity_by_id.insert(activity.id, activity).is_some() {
@@ -224,6 +228,15 @@ impl MonthlyResult {
                 })
         };
         if frozen_input.period != period
+            || opening_state.cash.currency() != frozen_input.rent.currency()
+            || closing_state.cash.currency() != opening_state.cash.currency()
+            || samples.len() != activities.len()
+            || samples
+                .iter()
+                .map(|sample| sample.instance_id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != samples.len()
             || samples.iter().any(|sample| sample.period != period)
             || samples
                 .iter()

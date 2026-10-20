@@ -37,6 +37,8 @@ pub trait SimulationSlice {
     /// Declare all resources and same-period prerequisites for this active
     /// instance, including accounts affected by the frozen period inputs.
     fn resources(&self, input: &FrozenInput) -> SliceResources;
+    /// Preserve the exact typed value used for this evaluation in the result record.
+    fn sample_value(&self, sample: &Self::Sample) -> ActivitySampleValue;
     /// Validate the typed sample at the input boundary, before transition logic runs.
     fn validate_sample(
         &self,
@@ -62,6 +64,10 @@ pub struct SliceOutput {
     pub(crate) proposal: SliceProposal,
     pub(crate) instance: ActivityInstance,
     pub(crate) period: YearMonth,
+    pub(crate) opening_state: OpeningState,
+    pub(crate) frozen_input: FrozenInput,
+    pub(crate) resources: SliceResources,
+    pub(crate) sample: ActivitySample<ActivitySampleValue>,
 }
 impl Deref for SliceOutput {
     type Target = SliceProposal;
@@ -87,6 +93,15 @@ pub fn propose_slice<S: SimulationSlice>(
         ));
     }
     slice.validate_sample(input, &sample.value)?;
+    let resources = slice.resources(frozen_input);
+    if resources.instance_id != slice.instance().id
+        || resources.slice_id != slice.instance().slice_id
+        || resources.version != slice.instance().version
+    {
+        return Err(SimulationError::InvalidProposal(
+            "resource declaration provenance does not match Slice",
+        ));
+    }
     let proposal = slice.propose_validated(
         state,
         frozen_input,
@@ -98,6 +113,14 @@ pub fn propose_slice<S: SimulationSlice>(
         proposal,
         instance: slice.instance().clone(),
         period: frozen_input.period,
+        opening_state: state.clone(),
+        frozen_input: *frozen_input,
+        resources,
+        sample: ActivitySample::new(
+            slice.instance(),
+            frozen_input.period,
+            slice.sample_value(&sample.value),
+        ),
     })
 }
 

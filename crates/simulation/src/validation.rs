@@ -32,6 +32,7 @@ pub struct ValidatedInput {
     opening_state: OpeningState,
     frozen_input: FrozenInput,
     repair_distribution: RepairCostDistribution,
+    opening_ledger: Ledger,
 }
 
 impl ValidatedInput {
@@ -43,6 +44,9 @@ impl ValidatedInput {
     }
     pub const fn repair_distribution(&self) -> &RepairCostDistribution {
         &self.repair_distribution
+    }
+    pub(crate) fn matches_opening_ledger(&self, ledger: &Ledger) -> bool {
+        self.opening_ledger == *ledger
     }
 }
 
@@ -196,6 +200,7 @@ pub fn validate_input(
             opening_state: state.clone(),
             frozen_input: *input,
             repair_distribution: *repair_distribution,
+            opening_ledger: ledger.clone(),
         })
     } else {
         Err(ValidationErrors(issues))

@@ -38,6 +38,9 @@ impl SimulationSlice for RepairSlice {
             dependencies: BTreeSet::new(),
         }
     }
+    fn sample_value(&self, sample: &Self::Sample) -> crate::activity::ActivitySampleValue {
+        crate::activity::ActivitySampleValue::Repair(*sample)
+    }
     fn validate_sample(
         &self,
         input: &ValidatedInput,
@@ -79,8 +82,7 @@ impl SimulationSlice for RepairSlice {
                     input.repair_expense_account,
                     BalanceSide::Debit,
                     posted_cost,
-                )
-                .with_cash_flow_category(CashFlowCategory::Operating),
+                ),
                 LedgerEntry::new(input.cash_account, BalanceSide::Credit, posted_cost)
                     .with_cash_flow_category(CashFlowCategory::Operating),
             ],

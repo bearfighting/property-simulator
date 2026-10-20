@@ -33,6 +33,9 @@ impl SimulationSlice for RentalSlice {
             dependencies: BTreeSet::new(),
         }
     }
+    fn sample_value(&self, _sample: &Self::Sample) -> crate::activity::ActivitySampleValue {
+        crate::activity::ActivitySampleValue::Rental
+    }
     fn propose_validated(
         &self,
         _state: &OpeningState,
