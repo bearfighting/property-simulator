@@ -131,7 +131,8 @@ pub fn propose_slice<S: SimulationSlice>(
             slice.instance(),
             frozen_input.period,
             slice.sample_value(&sample.value),
-        ),
+        )
+        .with_purpose(sample.purpose.clone()),
     })
 }
 
@@ -142,7 +143,18 @@ pub struct ActivitySample<T> {
     pub slice_id: SliceId,
     pub version: ModelVersionId,
     pub period: YearMonth,
+    /// Semantic random purpose, absent for caller supplied deterministic samples.
+    pub purpose: Option<String>,
     pub value: T,
+}
+
+pub const REPAIR_SAMPLE_PURPOSE: &str = "repair.sample";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairSamplingError {
+    InvalidDistribution,
+    Randomness(property_simulation_randomness::RandomnessError),
+    Sampler(SamplingError<std::convert::Infallible>),
 }
 
 /// Composition boundary for the repair model: validates distribution/Slice
@@ -164,6 +176,39 @@ where
     let value = sampler.sample(distribution, random)?;
     Ok(ActivitySample::new(instance, period, value))
 }
+
+/// Draw a repair sample from its stable semantic substream and attach its purpose.
+pub fn sample_repair_from_streams<S>(
+    streams: &property_simulation_randomness::RandomStreams,
+    trial_id: property_simulation_domain::TrialId,
+    instance: &ActivityInstance,
+    period: YearMonth,
+    distribution: &RepairDistribution,
+    sampler: &mut S,
+) -> Result<ActivitySample<RepairSample>, RepairSamplingError>
+where
+    S: Sampler<RepairDistribution>,
+{
+    if instance.sample_kind != ActivitySampleKind::Repair || !distribution.validate() {
+        return Err(RepairSamplingError::InvalidDistribution);
+    }
+    let mut random = streams
+        .stream(&property_simulation_randomness::SemanticIdentity {
+            trial_id,
+            category: property_simulation_randomness::RandomCategory::Property,
+            slice_id: instance.slice_id,
+            activity_id: instance.id,
+            period,
+            model_version: instance.version,
+            purpose: REPAIR_SAMPLE_PURPOSE.into(),
+        })
+        .map_err(RepairSamplingError::Randomness)?;
+    let value = sampler
+        .sample(distribution, &mut random)
+        .map_err(RepairSamplingError::Sampler)?;
+    Ok(ActivitySample::new(instance, period, value)
+        .with_purpose(Some(REPAIR_SAMPLE_PURPOSE.into())))
+}
 impl<T> ActivitySample<T> {
     pub fn new(instance: &ActivityInstance, period: YearMonth, value: T) -> Self {
         Self {
@@ -171,8 +216,14 @@ impl<T> ActivitySample<T> {
             slice_id: instance.slice_id,
             version: instance.version,
             period,
+            purpose: None,
             value,
         }
+    }
+
+    pub fn with_purpose(mut self, purpose: Option<String>) -> Self {
+        self.purpose = purpose;
+        self
     }
 
     pub fn validate_for(
@@ -187,6 +238,16 @@ impl<T> ActivitySample<T> {
         {
             return Err(SimulationError::InvalidInput(
                 "sample provenance does not match activity instance or period",
+            ));
+        }
+        if instance.sample_kind == ActivitySampleKind::Repair
+            && self
+                .purpose
+                .as_deref()
+                .is_some_and(|purpose| purpose != REPAIR_SAMPLE_PURPOSE)
+        {
+            return Err(SimulationError::InvalidInput(
+                "repair sample purpose does not match the repair sampling contract",
             ));
         }
         Ok(())

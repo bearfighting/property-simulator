@@ -4,6 +4,19 @@
 
 With diagnostic root key `[8; 32]`, two calls for the same trial allocate different run keys because the process sequence advances; separate factories with the same root and sequence but a different trial derive different run keys. An initial `SimulationRun` can be constructed with an explicit trial/branch identity; an anonymous run that requests randomness fails before sampling. A `SimulationRun` allocates one run key and reuses it across month calls; period identities still derive independent substreams. A stream collection rejects a semantic identity for a different trial. Under one run key, identical semantic identity yields the same sequence within that run. Changing any one of category, Slice ID, activity instance ID, year/month, model version, or purpose yields an independently derived stream. Consuming extra words from another purpose stream does not change this sequence. Reordering calls to derive month/instance/Slice streams has no effect. OS entropy read success fills all 32 bytes; an entropy error rejects factory creation. Purpose is UTF-8 with an explicit `u64` byte length, and the stream-key schema has explicit version 1. These are isolation vectors, not cross-version output guarantees or uniqueness constraints.
 
+## M3.5 repair random end-to-end vector
+
+The repair composition boundary derives a `Property` semantic stream from trial ID,
+Slice ID, activity instance ID, period, and model version with purpose `repair.sample`.
+With diagnostic root key `[8; 32]` and the same semantic identity, the typed repair
+sample is repeatable within the same run streams. The resulting `ActivitySample`
+retains that purpose through `propose_slice` and `MonthlyResult`; explicit caller
+samples retain `purpose = None`. `RepairSlice` receives only the typed sample and
+still validates its cost against the frozen repair support before proposing any
+effect or posting. The committed repair transaction, per-instance cash-flow
+contribution, and Ledger direct cash-flow projection agree. Repeated values are
+diagnostic behavior for this fixed key, not a cross-version replay guarantee.
+
 These hand-calculated vectors are the shared initial verification baseline for Ledger and mortgage calculations. Amounts are CAD unless stated; all values are exact dollars. Posted values use cents and positive half-up rounding. `Dr` and `Cr` mean debit and credit. A transaction balances when debits equal credits. ADRs reference IDs here to avoid duplicated arithmetic.
 
 ## M2 monthly activity vectors

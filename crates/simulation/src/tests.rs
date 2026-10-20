@@ -131,6 +131,23 @@ fn repair_sampling_composition_binds_activity_and_period_provenance() {
     assert_eq!(sample.version, instance.version);
     assert_eq!(sample.period, YearMonth::new(2025, 1).unwrap());
     assert_eq!(sample.value, RepairSample::NoRepair);
+    let wrong_purpose = sample.clone().with_purpose(Some("repair.cost".into()));
+    assert!(
+        propose_slice(
+            &crate::RepairSlice {
+                instance: instance.clone()
+            },
+            &validated_input(
+                &OpeningState {
+                    cash: money("0"),
+                    condition: AssetCondition::NeedsRepair
+                },
+                &input(),
+            ),
+            &wrong_purpose,
+        )
+        .is_err()
+    );
 
     let mut incompatible = rental_activity(4);
     incompatible.slice_id = instance.slice_id;
@@ -146,6 +163,177 @@ fn repair_sampling_composition_binds_activity_and_period_provenance() {
         Err(SamplingError::InvalidDistribution)
     );
 }
+
+#[test]
+fn repair_sampling_fixed_seed_smoke_check_matches_distribution_support() {
+    use property_simulation_randomness::{RootKey, RunKeyFactory};
+    let instance = activity(45);
+    let period = input().period;
+    let distribution = RepairDistribution {
+        occurrence_numerator: 1,
+        occurrence_denominator: 2,
+        cost: RepairCostDistribution {
+            maximum: money("1.00"),
+        },
+    };
+    let mut occurrences = 0;
+    let mut total_cents = 0_i128;
+    const TRIALS: i128 = 512;
+    for seed in 0_u16..TRIALS as u16 {
+        let mut root = [0; 32];
+        root[..2].copy_from_slice(&seed.to_le_bytes());
+        let trial = TrialId::from_bytes([seed as u8; 16]);
+        let streams = RunKeyFactory::new(RootKey::from_seed(root))
+            .run_streams(trial)
+            .unwrap();
+        let sample = sample_repair_from_streams(
+            &streams,
+            trial,
+            &instance,
+            period,
+            &distribution,
+            &mut RepairSampler,
+        )
+        .unwrap();
+        if let RepairSample::Repair { cost } = sample.value {
+            occurrences += 1;
+            assert!(cost.checked_cmp(money("0")).unwrap().is_ge());
+            assert!(cost.checked_cmp(money("1.00")).unwrap().is_le());
+            total_cents += cost.coefficient();
+        }
+    }
+    assert!(
+        (220..=292).contains(&occurrences),
+        "occurrences={occurrences}"
+    );
+    let mean_cents = total_cents / i128::from(occurrences);
+    assert!((40..=60).contains(&mean_cents), "mean cents={mean_cents}");
+}
+
+#[test]
+fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
+    use crate::{RepairSlice, coordinate_month, propose_slice, sample_repair_from_streams};
+    use property_simulation_randomness::{RootKey, RunKeyFactory};
+
+    let instance = activity(44);
+    let period = input().period;
+    let trial = TrialId::from_bytes([61; 16]);
+    let streams = RunKeyFactory::new(RootKey::from_seed([8; 32]))
+        .run_streams(trial)
+        .unwrap();
+    let distribution = RepairDistribution {
+        occurrence_numerator: 1,
+        occurrence_denominator: 1,
+        cost: RepairCostDistribution {
+            maximum: money("50"),
+        },
+    };
+    let sampled = sample_repair_from_streams(
+        &streams,
+        trial,
+        &instance,
+        period,
+        &distribution,
+        &mut RepairSampler,
+    )
+    .unwrap();
+    assert_eq!(sampled.purpose.as_deref(), Some("repair.sample"));
+    assert_eq!(
+        sampled,
+        sample_repair_from_streams(
+            &streams,
+            trial,
+            &instance,
+            period,
+            &distribution,
+            &mut RepairSampler
+        )
+        .unwrap()
+    );
+
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validated_input(&state, &input());
+    let output = propose_slice(
+        &RepairSlice {
+            instance: instance.clone(),
+        },
+        &validated,
+        &sampled,
+    )
+    .unwrap();
+    let (result, posted) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![output],
+        vec![
+            ActivitySample::new(
+                &instance,
+                period,
+                ActivitySampleValue::Repair(sampled.value),
+            )
+            .with_purpose(sampled.purpose.clone()),
+        ],
+        trial,
+        BranchId::from_bytes([62; 16]),
+        &TestIds,
+    )
+    .unwrap();
+    assert_eq!(
+        result.samples()[0].purpose.as_deref(),
+        Some("repair.sample")
+    );
+    assert_eq!(result.cash_flow_contributions().len(), 1);
+    assert_eq!(
+        result.cash_flow_totals().unwrap().operating,
+        result.closing_state().cash.checked_sub(state.cash).unwrap()
+    );
+    assert_eq!(posted.transactions().count(), 1);
+    let projection = posted
+        .project(period, period, &[input().cash_account])
+        .unwrap();
+    assert_eq!(
+        projection.cash_flow_statement.totals.operating,
+        result.cash_flow_totals().unwrap().operating
+    );
+}
+
+#[test]
+fn semantic_repair_sampling_preserves_trial_identity_errors() {
+    use crate::{RepairSamplingError, sample_repair_from_streams};
+    use property_simulation_randomness::{RandomnessError, RootKey, RunKeyFactory};
+
+    let configured_trial = TrialId::from_bytes([70; 16]);
+    let requested_trial = TrialId::from_bytes([71; 16]);
+    let streams = RunKeyFactory::new(RootKey::from_seed([8; 32]))
+        .run_streams(configured_trial)
+        .unwrap();
+    let distribution = RepairDistribution {
+        occurrence_numerator: 0,
+        occurrence_denominator: 1,
+        cost: RepairCostDistribution {
+            maximum: money("1.00"),
+        },
+    };
+
+    assert_eq!(
+        sample_repair_from_streams(
+            &streams,
+            requested_trial,
+            &activity(46),
+            input().period,
+            &distribution,
+            &mut RepairSampler,
+        ),
+        Err(RepairSamplingError::Randomness(
+            RandomnessError::TrialIdentityMismatch
+        )),
+    );
+}
+
 fn activity(id: u8) -> ActivityInstance {
     activity_with_kind(id, ActivitySampleKind::Repair)
 }
@@ -1512,6 +1700,7 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
         slice_id: activity(1).slice_id,
         version: activity(1).version,
         period,
+        purpose: None,
         value: ActivitySampleValue::Repair(RepairSample::NoRepair),
     };
     let result = MonthlyResult::new(
