@@ -241,7 +241,7 @@ fn coordinate_loan_month_inner(
         loan
     };
     let month = loan.calculate_month().map_err(map_model_error)?;
-    let output = slice.propose_month(period, loan, month)?;
+    let output = slice.propose_month(period, loan, month, &crate::tests::TestLoanCalculation)?;
     let transaction_id = ids.transaction_id(period, slice.instance_id, "loan_payment");
     let payment_event_id = ids.event_id(period, slice.instance_id, "loan_payment");
     let transaction = LedgerTransaction::new(

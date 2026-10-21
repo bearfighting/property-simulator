@@ -8,6 +8,10 @@ use property_simulation_models::{FixedRateLoan, LoanModelError};
 /// to the loan model implementation.
 pub trait LoanCalculation {
     fn validate(&self, loan: FixedRateLoan) -> Result<(), LoanModelError>;
+    fn calculate_month(
+        &self,
+        loan: FixedRateLoan,
+    ) -> Result<property_simulation_models::LoanMonth, LoanModelError>;
     fn derive_payment(
         &self,
         loan: FixedRateLoan,
@@ -55,6 +59,9 @@ pub fn apply_loan_terms_update(
     calculation
         .derive_payment(current)
         .map_err(map_model_error)?;
+    calculation
+        .calculate_month(current)
+        .map_err(map_model_error)?;
     if opening_balance.currency() != current.opening_balance.currency()
         || opening_balance.is_negative()
     {
@@ -81,6 +88,9 @@ pub fn apply_loan_terms_update(
         calculation
             .derive_payment(active)
             .map_err(map_model_error)?;
+        calculation
+            .calculate_month(active)
+            .map_err(map_model_error)?;
         Some(active)
     };
     let principal_change = opening_balance.checked_sub(current.opening_balance)?;
@@ -93,6 +103,32 @@ pub fn apply_loan_terms_update(
         if transaction.period() != effective_period {
             return Err(SimulationError::InvalidInput(
                 "principal update transaction must use the effective month",
+            ));
+        }
+        let expected_amount = principal_change.abs()?;
+        let entries = transaction.entries();
+        let financing_entry = entries.iter().find(|entry| {
+            entry.cash_flow_category()
+                == Some(property_simulation_accounting::CashFlowCategory::Financing)
+        });
+        let expected_cash_side = if principal_change.is_negative() {
+            property_simulation_accounting::BalanceSide::Credit
+        } else {
+            property_simulation_accounting::BalanceSide::Debit
+        };
+        if entries.len() != 2
+            || entries.iter().any(|entry| {
+                entry.amount() != expected_amount
+                    || entry.amount().currency() != current.opening_balance.currency()
+            })
+            || entries[0].side() == entries[1].side()
+            || financing_entry.is_none_or(|entry| entry.side() != expected_cash_side)
+            || entries.iter().any(|entry| {
+                entry.side() != expected_cash_side && entry.cash_flow_category().is_some()
+            })
+        {
+            return Err(SimulationError::InvalidInput(
+                "principal update transaction must post the exact principal change as financing",
             ));
         }
     }

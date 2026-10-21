@@ -1,4 +1,6 @@
-use super::{LoanMonthOutput, LoanSlice, LoanStateEffectProposal};
+use super::{
+    LoanCalculation, LoanMonthOutput, LoanSlice, LoanStateEffectProposal, map_model_error,
+};
 use crate::{EventProposal, SimulationError, SliceProposal, TransactionProposal};
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 use property_simulation_domain::YearMonth;
@@ -12,7 +14,50 @@ impl LoanSlice {
         period: YearMonth,
         loan: FixedRateLoan,
         result: LoanMonth,
+        calculation: &impl LoanCalculation,
     ) -> Result<LoanMonthOutput, SimulationError> {
+        if calculation.calculate_month(loan).map_err(map_model_error)? != result {
+            return Err(SimulationError::InvalidInput(
+                "loan month output does not match the supplied loan calculation",
+            ));
+        }
+        let currency = loan.opening_balance.currency();
+        let amounts = [
+            result.interest,
+            result.payment,
+            result.principal,
+            result.closing_balance,
+            result.scheduled_payment,
+        ];
+        if amounts.iter().any(|amount| amount.currency() != currency)
+            || amounts
+                .iter()
+                .any(|amount| amount.rounded_for_posting() != Ok(*amount))
+            || result.interest.is_negative()
+            || result.payment.is_negative()
+            || result.payment.is_zero()
+            || result.principal.is_negative()
+            || result.closing_balance.is_negative()
+            || result.scheduled_payment.is_negative()
+            || result.scheduled_payment.is_zero()
+            || result.payment != result.interest.checked_add(result.principal)?
+            || result.closing_balance != loan.opening_balance.checked_sub(result.principal)?
+            || result
+                .payment
+                .checked_cmp(loan.opening_balance.checked_add(result.interest)?)?
+                == std::cmp::Ordering::Greater
+            || result.remaining_months
+                != if result.closing_balance.is_zero() {
+                    0
+                } else {
+                    loan.remaining_months.saturating_sub(1)
+                }
+            || (result.closing_balance.is_zero() != (result.remaining_months == 0))
+        {
+            return Err(SimulationError::InvalidInput(
+                "loan month output is inconsistent with its opening loan state",
+            ));
+        }
         let event_key = "loan_payment".to_owned();
         let proposal = SliceProposal {
             events: vec![EventProposal {

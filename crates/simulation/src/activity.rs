@@ -8,8 +8,7 @@ use crate::types::{
 use crate::validation::ValidatedInput;
 use property_simulation_domain::{ActivityInstanceId, SliceId, YearMonth};
 use property_simulation_models::{
-    Distribution, RandomSource, RepairDistribution, Sampler, SamplingError,
-    UtilityUsageDistribution,
+    RandomSource, RepairDistribution, Sampler, SamplingError, UtilityUsageDistribution,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +162,14 @@ pub enum UtilitySamplingError<E> {
     Sampler(SamplingError<E>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairSamplingError<E> {
+    InvalidDistribution,
+    ActivitySetNotPreflighted,
+    PeriodMismatch,
+    Sampler(SamplingError<E>),
+}
+
 /// Sample utility usage from caller-supplied randomness.
 /// The supplied input must have preflighted the complete active activity set
 /// for this month before any random sampler is called.
@@ -201,22 +208,35 @@ where
 /// Composition boundary for the repair model: validates distribution/Slice
 /// compatibility, samples from the injected source, and binds provenance.
 pub fn sample_repair<R, S>(
+    validated: &ValidatedInput,
+    repair_validation: &dyn crate::validation::RepairCostValidation,
     instance: &ActivityInstance,
     period: YearMonth,
     distribution: &RepairDistribution,
     sampler: &mut S,
     random: &mut R,
-) -> Result<ActivitySample<RepairSample>, SamplingError<R::Error>>
+) -> Result<ActivitySample<RepairSample>, RepairSamplingError<R::Error>>
 where
     R: RandomSource,
     S: Sampler<RepairDistribution>,
 {
     if instance.configuration.sample_kind() != ActivitySampleKind::Repair
-        || !distribution.validate()
+        || repair_validation
+            .validate_distribution(distribution)
+            .is_err()
+        || distribution.cost.maximum != validated.repair_distribution().maximum
     {
-        return Err(SamplingError::InvalidDistribution);
+        return Err(RepairSamplingError::InvalidDistribution);
     }
-    let value = sampler.sample(distribution, random)?;
+    if !validated.has_preflighted_activity(instance) {
+        return Err(RepairSamplingError::ActivitySetNotPreflighted);
+    }
+    if validated.frozen_input().period != period {
+        return Err(RepairSamplingError::PeriodMismatch);
+    }
+    let value = sampler
+        .sample(distribution, random)
+        .map_err(RepairSamplingError::Sampler)?;
     Ok(ActivitySample::new(instance, period, value)
         .with_purpose(Some(REPAIR_SAMPLE_PURPOSE.into())))
 }
@@ -250,20 +270,14 @@ impl<T> ActivitySample<T> {
             ));
         }
         if instance.configuration.sample_kind() == ActivitySampleKind::Repair
-            && self
-                .purpose
-                .as_deref()
-                .is_some_and(|purpose| purpose != REPAIR_SAMPLE_PURPOSE)
+            && self.purpose.as_deref() != Some(REPAIR_SAMPLE_PURPOSE)
         {
             return Err(SimulationError::InvalidInput(
                 "repair sample purpose does not match the repair sampling contract",
             ));
         }
         if instance.configuration.sample_kind() == ActivitySampleKind::Utility
-            && self
-                .purpose
-                .as_deref()
-                .is_some_and(|purpose| purpose != UTILITY_SAMPLE_PURPOSE)
+            && self.purpose.as_deref() != Some(UTILITY_SAMPLE_PURPOSE)
         {
             return Err(SimulationError::InvalidInput(
                 "utility sample purpose does not match the utility sampling contract",

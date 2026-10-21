@@ -1,7 +1,7 @@
 use property_simulation_accounting::{AccountCategory, AccountError};
 #[cfg(test)]
 use property_simulation_accounting::{Ledger, LedgerTransaction};
-use property_simulation_models::RepairCostDistribution;
+use property_simulation_models::{RepairCostDistribution, RepairDistribution};
 
 use crate::SimulationError;
 #[cfg(test)]
@@ -43,6 +43,11 @@ pub trait LedgerRead {
 /// Repair model rules needed by simulation input and sample validation.
 /// Implementations are supplied by the caller that connects the model crate.
 pub trait RepairCostValidation {
+    fn validate_distribution(
+        &self,
+        distribution: &RepairDistribution,
+    ) -> Result<(), property_simulation_domain::DomainError>;
+
     fn validate_support(
         &self,
         distribution: &RepairCostDistribution,
@@ -317,10 +322,10 @@ pub fn validate_input(
             field: "repair_expense_account",
             message: "repair account does not exist",
         }),
-        Some(account) if account.category != AccountCategory::Expense => {
+        Some(account) if account.category != AccountCategory::Expense || account.contra => {
             issues.push(ValidationIssue {
                 field: "repair_expense_account",
-                message: "repair account must be an expense account",
+                message: "repair account must be a non-contra expense account",
             });
         }
         Some(_) => {}

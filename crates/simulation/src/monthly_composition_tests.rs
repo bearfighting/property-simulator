@@ -188,6 +188,8 @@ impl SingleMonthExecutor for CompositionExecutor {
             })
             .map_err(|_| SimulationError::InvalidInput("repair random stream failed"))?;
         let repair_sample = sample_repair(
+            input,
+            &crate::REPAIR_COST_RULES,
             self.repair.instance(),
             period,
             &self.distribution,
@@ -863,12 +865,16 @@ fn operating_slices_and_multiple_loans_share_one_monthly_batch() {
         executor.repair.instance(),
         period,
         RepairSample::Repair { cost: money("5") },
-    );
+    )
+    .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()));
     let repair_b_sample =
-        ActivitySample::new(&repair_b, period, RepairSample::Repair { cost: money("5") });
+        ActivitySample::new(&repair_b, period, RepairSample::Repair { cost: money("5") })
+            .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()));
     let tax_sample = ActivitySample::new(&tax, period, ());
-    let utility_a_sample = ActivitySample::new(&utility_a, period, 2_u64);
-    let utility_b_sample = ActivitySample::new(&utility_b, period, 3_u64);
+    let utility_a_sample = ActivitySample::new(&utility_a, period, 2_u64)
+        .with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into()));
+    let utility_b_sample = ActivitySample::new(&utility_b, period, 3_u64)
+        .with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into()));
     let outputs = vec![
         propose_slice(&executor.rental, &validated, &rental_sample).unwrap(),
         propose_slice(&executor.repair, &validated, &repair_sample).unwrap(),
@@ -1207,7 +1213,8 @@ fn mixed_slice_batch_checks_only_the_month_end_cash_balance() {
     let repair_output = propose_slice(
         &repair,
         &input,
-        &ActivitySample::new(&repair.instance, period, repair_sample),
+        &ActivitySample::new(&repair.instance, period, repair_sample)
+            .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into())),
     )
     .unwrap();
     let loan_slice = LoanSlice {

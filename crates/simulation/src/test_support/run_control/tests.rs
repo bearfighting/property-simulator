@@ -189,7 +189,16 @@ impl SingleMonthExecutor for Executor {
                     crate::ActivitySampleKind::PropertyTax => ActivitySampleValue::PropertyTax,
                     crate::ActivitySampleKind::Utility => ActivitySampleValue::Utility(0),
                 };
-                ActivitySample::new(activity, input.frozen_input().period, value)
+                let sample = ActivitySample::new(activity, input.frozen_input().period, value);
+                match activity.configuration.sample_kind() {
+                    crate::ActivitySampleKind::Repair => {
+                        sample.with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()))
+                    }
+                    crate::ActivitySampleKind::Utility => {
+                        sample.with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into()))
+                    }
+                    _ => sample,
+                }
             })
             .collect();
         let result = MonthlyResult::new(
@@ -929,7 +938,8 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
                             input.frozen_input().repair_cost_limit.currency(),
                         ),
                     },
-                );
+                )
+                .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()));
                 let slice = crate::RepairSlice {
                     repair_validation: &crate::REPAIR_COST_RULES,
                     instance: self.activity.clone(),

@@ -7,7 +7,9 @@ use crate::{OutputIdFactory, coordinate_loan_month, coordinate_month_with_loans}
 use property_simulation_accounting::{
     Account, AccountCategory, AccountCode, ChartOfAccounts, OpeningBalance, OpeningBalances,
 };
-use property_simulation_accounting::{BalanceSide, CashFlowCategory, Ledger, LedgerTransaction};
+use property_simulation_accounting::{
+    BalanceSide, CashFlowCategory, Ledger, LedgerEntry, LedgerTransaction,
+};
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, SliceId, TrialId, YearMonth,
 };
@@ -284,7 +286,9 @@ fn proposes_separate_operating_interest_and_financing_principal() {
     };
     let period = YearMonth::new(2026, 1).unwrap();
     let month = loan.calculate_month().unwrap();
-    let output = slice.propose_month(period, loan, month).unwrap();
+    let output = slice
+        .propose_month(period, loan, month, &crate::tests::TestLoanCalculation)
+        .unwrap();
     let entries = &output.proposal.transactions[0].entries;
     assert_eq!(entries.len(), 4);
     assert_eq!(entries[0].amount(), Money::parse("100", currency).unwrap());
@@ -309,6 +313,202 @@ fn proposes_separate_operating_interest_and_financing_principal() {
         output.result.payment
     );
     assert_eq!(output.period, period);
+}
+
+#[test]
+fn loan_input_validation_checks_account_roles_and_ledger_currency() {
+    let (slice, ledger) = fixture("10000");
+    validate_loan_input(
+        &slice,
+        Some(loan("10000", 12)),
+        &ledger,
+        &crate::tests::TestLoanCalculation,
+    )
+    .unwrap();
+
+    let invalid_roles = LoanSlice {
+        interest_expense_account: slice.liability_account,
+        ..slice.clone()
+    };
+    assert!(
+        validate_loan_input(
+            &invalid_roles,
+            Some(loan("10000", 12)),
+            &ledger,
+            &crate::tests::TestLoanCalculation,
+        )
+        .is_err()
+    );
+
+    let usd_loan = FixedRateLoan {
+        opening_balance: Money::parse("10000", Currency::from_code("USD").unwrap()).unwrap(),
+        ..loan("10000", 12)
+    };
+    assert!(
+        validate_loan_input(
+            &slice,
+            Some(usd_loan),
+            &ledger,
+            &crate::tests::TestLoanCalculation,
+        )
+        .is_err()
+    );
+
+    assert!(
+        validate_loan_input(
+            &slice,
+            Some(loan("9000", 12)),
+            &ledger,
+            &crate::tests::TestLoanCalculation,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn loan_input_validation_rejects_a_schedule_that_cannot_calculate_its_first_month() {
+    struct FailingMonthCalculation;
+    impl LoanCalculation for FailingMonthCalculation {
+        fn validate(
+            &self,
+            _loan: FixedRateLoan,
+        ) -> Result<(), property_simulation_models::LoanModelError> {
+            Ok(())
+        }
+        fn derive_payment(
+            &self,
+            loan: FixedRateLoan,
+        ) -> Result<Money, property_simulation_models::LoanModelError> {
+            Ok(Money::parse("900", loan.opening_balance.currency()).unwrap())
+        }
+        fn calculate_month(
+            &self,
+            _loan: FixedRateLoan,
+        ) -> Result<property_simulation_models::LoanMonth, property_simulation_models::LoanModelError>
+        {
+            Err(property_simulation_models::LoanModelError::Arithmetic)
+        }
+    }
+
+    let (slice, ledger) = fixture("10000");
+    assert!(
+        validate_loan_input(
+            &slice,
+            Some(loan("10000", 12)),
+            &ledger,
+            &FailingMonthCalculation,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn rejects_a_loan_month_whose_postings_do_not_reconcile_to_the_opening_loan() {
+    let currency = Currency::from_code("CAD").unwrap();
+    let id = |n| AccountId::from_bytes([n; 16]);
+    let slice = LoanSlice {
+        instance_id: ActivityInstanceId::from_bytes([1; 16]),
+        slice_id: SliceId::from_bytes([2; 16]),
+        liability_account: id(4),
+        interest_expense_account: id(5),
+        cash_account: id(6),
+    };
+    let loan = loan("10000", 12);
+    let mut invalid = loan.calculate_month().unwrap();
+    invalid.principal = Money::parse("1", currency).unwrap();
+    assert!(
+        slice
+            .propose_month(
+                YearMonth::new(2026, 1).unwrap(),
+                loan,
+                invalid,
+                &crate::tests::TestLoanCalculation,
+            )
+            .is_err()
+    );
+
+    invalid.interest = Money::parse("100", currency).unwrap();
+    invalid.payment = Money::parse("100", currency).unwrap();
+    invalid.principal = Money::parse("0", currency).unwrap();
+    invalid.scheduled_payment = Money::parse("100", currency).unwrap();
+    invalid.closing_balance = loan.opening_balance;
+    invalid.remaining_months = loan.remaining_months - 1;
+    assert!(
+        slice
+            .propose_month(
+                YearMonth::new(2026, 1).unwrap(),
+                loan,
+                invalid,
+                &crate::tests::TestLoanCalculation,
+            )
+            .is_err()
+    );
+
+    invalid.interest = Money::parse("0", currency).unwrap();
+    invalid.payment = Money::parse("0", currency).unwrap();
+    invalid.principal = Money::parse("0", currency).unwrap();
+    invalid.scheduled_payment = Money::parse("0", currency).unwrap();
+    invalid.closing_balance = loan.opening_balance;
+    assert!(
+        slice
+            .propose_month(
+                YearMonth::new(2026, 1).unwrap(),
+                loan,
+                invalid,
+                &crate::tests::TestLoanCalculation,
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn rejects_loan_calculation_amounts_that_cannot_be_posted_at_currency_precision() {
+    struct FractionalCalculation;
+    impl LoanCalculation for FractionalCalculation {
+        fn validate(
+            &self,
+            _loan: FixedRateLoan,
+        ) -> Result<(), property_simulation_models::LoanModelError> {
+            Ok(())
+        }
+        fn derive_payment(
+            &self,
+            loan: FixedRateLoan,
+        ) -> Result<Money, property_simulation_models::LoanModelError> {
+            Ok(Money::parse("1.001", loan.opening_balance.currency()).unwrap())
+        }
+        fn calculate_month(
+            &self,
+            loan: FixedRateLoan,
+        ) -> Result<property_simulation_models::LoanMonth, property_simulation_models::LoanModelError>
+        {
+            let currency = loan.opening_balance.currency();
+            Ok(property_simulation_models::LoanMonth {
+                interest: Money::parse("0.001", currency).unwrap(),
+                payment: Money::parse("1.001", currency).unwrap(),
+                principal: Money::parse("1", currency).unwrap(),
+                closing_balance: loan
+                    .opening_balance
+                    .checked_sub(Money::parse("1", currency).unwrap())
+                    .unwrap(),
+                remaining_months: loan.remaining_months - 1,
+                scheduled_payment: Money::parse("1.001", currency).unwrap(),
+            })
+        }
+    }
+
+    let (slice, _) = fixture("10000");
+    let loan = loan("10000", 12);
+    assert!(
+        slice
+            .propose_month(
+                YearMonth::new(2026, 1).unwrap(),
+                loan,
+                FractionalCalculation.calculate_month(loan).unwrap(),
+                &FractionalCalculation,
+            )
+            .is_err()
+    );
 }
 
 #[test]
@@ -530,7 +730,7 @@ fn mismatched_caller_principal_transaction_is_rejected_before_any_commit() {
     let (slice, ledger) = fixture("10000");
     let period = YearMonth::new(2026, 1).unwrap();
     let current = loan("10000", 12);
-    let update = prepare_loan_terms_update(
+    let result = apply_loan_terms_update(
         current,
         period,
         Money::parse("11000", Currency::from_code("CAD").unwrap()).unwrap(),
@@ -542,20 +742,102 @@ fn mismatched_caller_principal_transaction_is_rejected_before_any_commit() {
             current.opening_balance,
             Money::parse("10999", Currency::from_code("CAD").unwrap()).unwrap(),
         )),
-    )
-    .unwrap();
-    assert!(
-        coordinate_loan_month(
-            &slice,
-            command(period, Some(current), Some(update), &ledger)
-        )
-        .is_err()
+        &crate::tests::TestLoanCalculation,
     );
+    assert!(result.is_err());
     assert_eq!(
         ledger.balance(slice.liability_account).unwrap().1,
         current.opening_balance
     );
     assert_eq!(ledger.transactions().count(), 0);
+}
+
+#[test]
+fn principal_increase_rejects_a_reversed_financing_posting_at_input_validation() {
+    let (slice, _) = fixture("10000");
+    let current = loan("10000", 12);
+    let amount = Money::parse("1000", Currency::from_code("CAD").unwrap()).unwrap();
+    let reversed = LedgerTransaction::new(
+        LedgerTransactionId::from_bytes([13; 16]),
+        YearMonth::new(2026, 1).unwrap(),
+        [
+            LedgerEntry::new(slice.cash_account, BalanceSide::Credit, amount)
+                .with_cash_flow_category(CashFlowCategory::Financing),
+            LedgerEntry::new(slice.liability_account, BalanceSide::Debit, amount),
+        ],
+    );
+    assert!(
+        apply_loan_terms_update(
+            current,
+            YearMonth::new(2026, 1).unwrap(),
+            Money::parse("11000", Currency::from_code("CAD").unwrap()).unwrap(),
+            13,
+            current.annual_rate,
+            Some(reversed),
+            &crate::tests::TestLoanCalculation,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn terms_update_boundary_checks_configured_account_references() {
+    let (slice, ledger) = fixture("10000");
+    let current = loan("10000", 12);
+    let period = YearMonth::new(2026, 1).unwrap();
+    let updated_balance = Money::parse("11000", Currency::from_code("CAD").unwrap()).unwrap();
+    let valid = prepare_loan_terms_update(
+        current,
+        period,
+        updated_balance,
+        13,
+        current.annual_rate,
+        Some(balance_transaction(
+            &slice,
+            period,
+            current.opening_balance,
+            updated_balance,
+        )),
+    )
+    .unwrap();
+    validate_loan_terms_update(
+        &slice,
+        &valid,
+        period,
+        &ledger,
+        &crate::tests::TestLoanCalculation,
+    )
+    .unwrap();
+
+    let amount = Money::parse("1000", Currency::from_code("CAD").unwrap()).unwrap();
+    let wrong_account_tx = LedgerTransaction::new(
+        LedgerTransactionId::from_bytes([14; 16]),
+        period,
+        [
+            LedgerEntry::new(slice.cash_account, BalanceSide::Debit, amount)
+                .with_cash_flow_category(CashFlowCategory::Financing),
+            LedgerEntry::new(slice.interest_expense_account, BalanceSide::Credit, amount),
+        ],
+    );
+    let invalid = prepare_loan_terms_update(
+        current,
+        period,
+        updated_balance,
+        13,
+        current.annual_rate,
+        Some(wrong_account_tx),
+    )
+    .unwrap();
+    assert!(
+        validate_loan_terms_update(
+            &slice,
+            &invalid,
+            period,
+            &ledger,
+            &crate::tests::TestLoanCalculation,
+        )
+        .is_err()
+    );
 }
 
 #[test]

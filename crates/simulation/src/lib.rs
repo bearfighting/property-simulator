@@ -45,7 +45,8 @@ pub use slices::LoanMonthCommand;
 pub use slices::{
     LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanRunUpdate,
     LoanSlice, LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, PropertyTaxSlice,
-    RentalSlice, RepairSlice, UtilitySlice, apply_loan_terms_update,
+    RentalSlice, RepairSlice, UtilitySlice, apply_loan_terms_update, validate_loan_input,
+    validate_loan_terms_update,
 };
 #[cfg(test)]
 pub use slices::{coordinate_loan_month, coordinate_month_with_loans};

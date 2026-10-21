@@ -48,6 +48,14 @@ impl crate::LoanCalculation for TestLoanCalculation {
         loan.validate()
     }
 
+    fn calculate_month(
+        &self,
+        loan: property_simulation_models::FixedRateLoan,
+    ) -> Result<property_simulation_models::LoanMonth, property_simulation_models::LoanModelError>
+    {
+        loan.calculate_month()
+    }
+
     fn derive_payment(
         &self,
         loan: property_simulation_models::FixedRateLoan,
@@ -143,16 +151,27 @@ impl property_simulation_models::Sampler<RepairDistribution> for PermissiveRepai
 #[test]
 fn repair_sampling_composition_binds_activity_and_period_provenance() {
     let instance = activity(4);
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let mut validated = validated_input(&state, &input());
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
     let distribution = RepairDistribution {
         occurrence_numerator: 0,
         occurrence_denominator: 1,
         cost: RepairCostDistribution {
-            maximum: money("1.23"),
+            maximum: money("50"),
         },
     };
     let mut sampler = RepairSampler;
     let mut random = FixedWords(vec![]);
     let sample = sample_repair(
+        &validated,
+        &crate::REPAIR_COST_RULES,
         &instance,
         YearMonth::new(2025, 1).unwrap(),
         &distribution,
@@ -171,13 +190,7 @@ fn repair_sampling_composition_binds_activity_and_period_provenance() {
                 repair_validation: &crate::REPAIR_COST_RULES,
                 instance: instance.clone()
             },
-            &validated_input(
-                &OpeningState {
-                    cash: money("0"),
-                    condition: AssetCondition::NeedsRepair
-                },
-                &input(),
-            ),
+            &validated,
             &wrong_purpose,
         )
         .is_err()
@@ -188,19 +201,32 @@ fn repair_sampling_composition_binds_activity_and_period_provenance() {
     let mut random = FixedWords(vec![]);
     assert_eq!(
         sample_repair(
+            &validated,
+            &crate::REPAIR_COST_RULES,
             &incompatible,
             sample.period,
             &distribution,
             &mut sampler,
             &mut random
         ),
-        Err(SamplingError::InvalidDistribution)
+        Err(RepairSamplingError::InvalidDistribution)
     );
 }
 
 #[test]
 fn repair_sampling_rejects_invalid_distribution_before_custom_sampler() {
     let instance = activity(4);
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let mut frozen = input();
+    frozen.repair_cost_limit = money("1");
+    let mut validated = validated_input(&state, &frozen);
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
     let distribution = RepairDistribution {
         occurrence_numerator: 1,
         occurrence_denominator: 0,
@@ -213,13 +239,84 @@ fn repair_sampling_rejects_invalid_distribution_before_custom_sampler() {
 
     assert_eq!(
         sample_repair(
+            &validated,
+            &crate::REPAIR_COST_RULES,
             &instance,
             YearMonth::new(2025, 1).unwrap(),
             &distribution,
             &mut sampler,
             &mut random,
         ),
-        Err(SamplingError::InvalidDistribution)
+        Err(RepairSamplingError::InvalidDistribution)
+    );
+}
+
+#[test]
+fn repair_sampling_requires_matching_preflighted_input_before_calling_sampler() {
+    let instance = activity(4);
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validated_input(&state, &input());
+    let distribution = RepairDistribution {
+        occurrence_numerator: 0,
+        occurrence_denominator: 1,
+        cost: RepairCostDistribution {
+            maximum: money("50"),
+        },
+    };
+    let mut sampler = PermissiveRepairSampler;
+    let mut random = FixedWords(vec![]);
+
+    assert_eq!(
+        sample_repair(
+            &validated,
+            &crate::REPAIR_COST_RULES,
+            &instance,
+            input().period,
+            &distribution,
+            &mut sampler,
+            &mut random,
+        ),
+        Err(RepairSamplingError::ActivitySetNotPreflighted)
+    );
+
+    let mut preflighted = validated;
+    preflighted
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
+    assert_eq!(
+        sample_repair(
+            &preflighted,
+            &crate::REPAIR_COST_RULES,
+            &instance,
+            YearMonth::new(2025, 2).unwrap(),
+            &distribution,
+            &mut sampler,
+            &mut random,
+        ),
+        Err(RepairSamplingError::PeriodMismatch)
+    );
+
+    let wrong_support = RepairDistribution {
+        cost: RepairCostDistribution {
+            maximum: money("49"),
+        },
+        ..distribution
+    };
+    assert_eq!(
+        sample_repair(
+            &preflighted,
+            &crate::REPAIR_COST_RULES,
+            &instance,
+            input().period,
+            &wrong_support,
+            &mut sampler,
+            &mut random,
+        ),
+        Err(RepairSamplingError::InvalidDistribution)
     );
 }
 
@@ -228,6 +325,17 @@ fn repair_sampling_fixed_seed_smoke_check_matches_distribution_support() {
     use property_simulation_randomness::{RootKey, RunKeyFactory};
     let instance = activity(45);
     let period = input().period;
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let mut frozen = input();
+    frozen.repair_cost_limit = money("1.00");
+    let mut validated = validated_input(&state, &frozen);
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
     let distribution = RepairDistribution {
         occurrence_numerator: 1,
         occurrence_denominator: 2,
@@ -252,6 +360,8 @@ fn repair_sampling_fixed_seed_smoke_check_matches_distribution_support() {
             REPAIR_SAMPLE_PURPOSE,
         );
         let sample = sample_repair(
+            &validated,
+            &crate::REPAIR_COST_RULES,
             &instance,
             period,
             &distribution,
@@ -281,6 +391,15 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
 
     let instance = activity(44);
     let period = input().period;
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let mut validated = validated_input(&state, &input());
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
     let trial = TrialId::from_bytes([61; 16]);
     let streams = RunKeyFactory::new(RootKey::from_seed([8; 32])).run_streams(trial);
     let distribution = RepairDistribution {
@@ -299,6 +418,8 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
         REPAIR_SAMPLE_PURPOSE,
     );
     let sampled = sample_repair(
+        &validated,
+        &crate::REPAIR_COST_RULES,
         &instance,
         period,
         &distribution,
@@ -317,6 +438,8 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
             REPAIR_SAMPLE_PURPOSE,
         );
         sample_repair(
+            &validated,
+            &crate::REPAIR_COST_RULES,
             &instance,
             period,
             &distribution,
@@ -326,12 +449,6 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
         .unwrap()
     });
 
-    let state = OpeningState {
-        cash: money("100"),
-        condition: AssetCondition::NeedsRepair,
-    };
-    let ledger = ledger_for_cash(state.cash);
-    let validated = validated_input(&state, &input());
     let output = propose_slice(
         &RepairSlice {
             repair_validation: &crate::REPAIR_COST_RULES,
@@ -509,7 +626,16 @@ fn ledger_for_cash(cash: Money) -> property_simulation_accounting::Ledger {
     Ledger::new(chart, opening).unwrap()
 }
 fn sample<T>(instance: &ActivityInstance, value: T) -> ActivitySample<T> {
-    ActivitySample::new(instance, input().period, value)
+    let sample = ActivitySample::new(instance, input().period, value);
+    match instance.configuration.sample_kind() {
+        ActivitySampleKind::Repair => {
+            sample.with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()))
+        }
+        ActivitySampleKind::Utility => {
+            sample.with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into()))
+        }
+        _ => sample,
+    }
 }
 
 #[test]
@@ -863,7 +989,8 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
             &repair,
             frozen.period,
             RepairSample::Repair { cost: money("10") },
-        ),
+        )
+        .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into())),
     )
     .unwrap();
 
@@ -1147,7 +1274,8 @@ fn utility_zero_and_rounded_zero_have_no_economic_outputs() {
         .unwrap();
     for (instance, usage) in instances.into_iter().zip([0, 3]) {
         let slice = UtilitySlice { instance };
-        let sample = ActivitySample::new(&slice.instance, frozen.period, usage);
+        let sample = ActivitySample::new(&slice.instance, frozen.period, usage)
+            .with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into()));
         let output = propose_slice(&slice, &validated, &sample).unwrap();
         assert!(output.events.is_empty());
         assert!(output.transactions.is_empty());
@@ -1186,6 +1314,14 @@ fn utility_sample_and_configuration_boundaries_are_validated() {
     validated
         .validate_activities_before_sampling(std::slice::from_ref(&slice.instance), &ledger, [])
         .unwrap();
+    assert!(
+        propose_slice(
+            &slice,
+            &validated,
+            &ActivitySample::new(&slice.instance, frozen.period, 1)
+        )
+        .is_err()
+    );
     assert!(
         propose_slice(
             &slice,
@@ -1846,7 +1982,8 @@ fn slice_transition_errors_are_fatal_with_activity_and_month_diagnostics() {
     )
     .unwrap();
     let slice = BrokenSlice(activity(29));
-    let sample = ActivitySample::new(&slice.0, frozen.period, RepairSample::NoRepair);
+    let sample = ActivitySample::new(&slice.0, frozen.period, RepairSample::NoRepair)
+        .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()));
     let error = propose_slice(&slice, &validated, &sample).unwrap_err();
     let SimulationError::Fatal(failure) = error else {
         panic!("expected fatal failure")
@@ -2140,6 +2277,51 @@ fn input_validation_rejects_wrong_account_roles() {
 }
 
 #[test]
+fn input_validation_rejects_a_contra_repair_expense_account() {
+    use property_simulation_accounting::{
+        Account, AccountCategory, AccountCode, Ledger, OpeningBalances,
+    };
+
+    let mut chart = chart();
+    let contra_expense = AccountId::from_bytes([7; 16]);
+    chart
+        .insert(
+            Account::new(
+                contra_expense,
+                AccountCode::new(5001).unwrap(),
+                AccountCategory::Expense,
+                true,
+                "Contra repairs",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let opening = OpeningBalances::new(&chart, [], Some(money("0"))).unwrap();
+    let ledger = Ledger::new(chart, opening).unwrap();
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let mut frozen = input();
+    frozen.repair_expense_account = contra_expense;
+    let errors = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &crate::REPAIR_COST_RULES,
+        &ledger,
+        &state,
+    )
+    .unwrap_err();
+
+    assert!(errors.0.iter().any(|issue| {
+        issue.field == "repair_expense_account"
+            && issue.message == "repair account must be a non-contra expense account"
+    }));
+}
+
+#[test]
 fn proposal_transaction_validation_uses_ledger_rules_without_mutating_ledger() {
     use property_simulation_accounting::{
         BalanceSide, CashFlowCategory, Ledger, LedgerEntry, OpeningBalances,
@@ -2244,7 +2426,8 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
             RepairSample::Repair {
                 cost: money("1.00"),
             },
-        ),
+        )
+        .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into())),
     )
     .unwrap();
     assert_eq!(
