@@ -1,8 +1,20 @@
 use std::collections::BTreeMap;
 
-use property_simulation_domain::{AccountId, Currency, Money, YearMonth};
+use property_simulation_domain::{AccountId, Currency, LedgerTransactionId, Money, YearMonth};
 
-use crate::{AccountCategory, AccountError, BalanceSide, CashFlowCategory, Ledger};
+use crate::{
+    AccountCategory, AccountError, BalanceSide, CashFlowCategory, Ledger, LedgerTransactionSource,
+};
+
+/// A signed cash-flow amount derived from one posted transaction and category.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashFlowContribution {
+    pub period: YearMonth,
+    pub transaction_id: LedgerTransactionId,
+    pub category: CashFlowCategory,
+    pub amount: Money,
+    pub source: Option<LedgerTransactionSource>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountBalance {
@@ -79,6 +91,57 @@ impl ValidatedProjection<'_> {
 }
 
 impl Ledger {
+    /// Projects posted cash entries into stable per-transaction, per-category details.
+    /// The range includes both endpoints; opening balances are never cash-flow activity.
+    pub fn cash_flow_contributions(
+        &self,
+        start: YearMonth,
+        end: YearMonth,
+    ) -> Result<Vec<CashFlowContribution>, AccountError> {
+        if start > end {
+            return Err(AccountError::InvalidProjectionRange);
+        }
+        let cash_accounts = self
+            .cash_accounts()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut contributions = Vec::new();
+        for tx in self
+            .transactions()
+            .filter(|tx| tx.period() >= start && tx.period() <= end)
+        {
+            let mut amounts = BTreeMap::<CashFlowCategory, Vec<Money>>::new();
+            for entry in tx
+                .entries()
+                .iter()
+                .filter(|entry| cash_accounts.contains(&entry.account_id()))
+            {
+                let amount = match entry.side() {
+                    BalanceSide::Debit => entry.amount(),
+                    BalanceSide::Credit => entry.amount().checked_neg()?,
+                };
+                amounts
+                    .entry(
+                        entry
+                            .cash_flow_category()
+                            .expect("cash categories validated on posting"),
+                    )
+                    .or_default()
+                    .push(amount);
+            }
+            for (category, values) in amounts {
+                contributions.push(CashFlowContribution {
+                    period: tx.period(),
+                    transaction_id: tx.id(),
+                    category,
+                    amount: sum_signed(values, self.currency())?,
+                    source: tx.source().cloned(),
+                });
+            }
+        }
+        contributions.sort_by_key(|item| (item.period, item.transaction_id, item.category));
+        Ok(contributions)
+    }
+
     /// Convenience API: validates inputs, then computes the inclusive projection.
     pub fn project(
         &self,
@@ -521,7 +584,7 @@ mod tests {
         Account, AccountCode, ChartOfAccounts, LedgerEntry, LedgerTransaction, OpeningBalance,
         OpeningBalances,
     };
-    use property_simulation_domain::{Currency, LedgerTransactionId};
+    use property_simulation_domain::{ActivityInstanceId, Currency, LedgerTransactionId, SliceId};
     use rust_decimal::Decimal;
 
     fn id(n: u8) -> AccountId {
@@ -701,6 +764,38 @@ mod tests {
             Err(AccountError::CashFlowAccountsRequired)
         ));
         let projection = validated.project().unwrap();
+        let details = ledger.cash_flow_contributions(month, month).unwrap();
+        assert_eq!(details.len(), 5);
+        assert_eq!(details[0].transaction_id, txid(1));
+        assert_eq!(details[0].category, CashFlowCategory::Operating);
+        assert_eq!(details[0].amount, m(-500, c));
+        assert_eq!(details[1].category, CashFlowCategory::Financing);
+        assert_eq!(details[1].amount, m(-1_000, c));
+        assert_eq!(details[0].source, None);
+        let by_category = details.iter().fold(
+            BTreeMap::<CashFlowCategory, Vec<Money>>::new(),
+            |mut sums, item| {
+                sums.entry(item.category).or_default().push(item.amount);
+                sums
+            },
+        );
+        assert_eq!(
+            sum_signed(by_category[&CashFlowCategory::Operating].clone(), c).unwrap(),
+            m(400, c)
+        );
+        assert_eq!(
+            sum_signed(by_category[&CashFlowCategory::Financing].clone(), c).unwrap(),
+            m(-1_000, c)
+        );
+        assert!(
+            ledger
+                .cash_flow_contributions(
+                    month.checked_add_months(1).unwrap(),
+                    month.checked_add_months(2).unwrap()
+                )
+                .unwrap()
+                .is_empty()
+        );
         let bs = projection.balance_sheet;
         assert_eq!(bs.assets, m(319_400, c));
         assert_eq!(bs.liabilities, m(199_000, c));
@@ -716,6 +811,157 @@ mod tests {
         assert_eq!(cf.totals.financing, m(-1_000, c));
         assert_eq!(cf.totals.net_change().unwrap(), m(-600, c));
         assert_eq!(projection.income_statement.net_income, m(400, c));
+    }
+
+    #[test]
+    fn transaction_cash_flow_details_keep_source_net_categories_and_sort_stably() {
+        let c = Currency::from_code("CAD").unwrap();
+        let jan = YearMonth::new(2025, 1).unwrap();
+        let feb = YearMonth::new(2025, 2).unwrap();
+        let chart = ChartOfAccounts::new([
+            account(1, 1000, AccountCategory::Asset, "Cash one"),
+            account(2, 1001, AccountCategory::Asset, "Cash two"),
+            account(3, 3000, AccountCategory::Equity, "Opening equity"),
+            account(4, 4000, AccountCategory::Income, "Rent"),
+            account(5, 5000, AccountCategory::Expense, "Repairs"),
+        ])
+        .unwrap();
+        let opening = OpeningBalances::new(
+            &chart,
+            [
+                OpeningBalance::new(id(1), BalanceSide::Debit, m(100, c)).unwrap(),
+                OpeningBalance::new(id(2), BalanceSide::Debit, m(100, c)).unwrap(),
+                OpeningBalance::new(id(3), BalanceSide::Credit, m(200, c)).unwrap(),
+            ],
+            None,
+        )
+        .unwrap();
+        let mut ledger = Ledger::new(chart, opening).unwrap();
+        let source = LedgerTransactionSource {
+            instance_id: ActivityInstanceId::from_bytes([11; 16]),
+            slice_id: SliceId::from_bytes([12; 16]),
+            output_key: "rent-receipt".to_owned(),
+            source_event_id: None,
+        };
+        let rent = LedgerTransaction::new(
+            txid(20),
+            jan,
+            [
+                entry(
+                    1,
+                    BalanceSide::Debit,
+                    m(80, c),
+                    Some(CashFlowCategory::Operating),
+                ),
+                entry(
+                    2,
+                    BalanceSide::Debit,
+                    m(20, c),
+                    Some(CashFlowCategory::Operating),
+                ),
+                entry(4, BalanceSide::Credit, m(100, c), None),
+            ],
+        )
+        .with_source(source.clone());
+        let zero_investing = LedgerTransaction::new(
+            txid(30),
+            jan,
+            [
+                entry(
+                    1,
+                    BalanceSide::Debit,
+                    m(5, c),
+                    Some(CashFlowCategory::Investing),
+                ),
+                entry(
+                    2,
+                    BalanceSide::Credit,
+                    m(5, c),
+                    Some(CashFlowCategory::Investing),
+                ),
+            ],
+        );
+        let financing = LedgerTransaction::new(
+            txid(40),
+            jan,
+            [
+                entry(
+                    2,
+                    BalanceSide::Debit,
+                    m(10, c),
+                    Some(CashFlowCategory::Financing),
+                ),
+                entry(3, BalanceSide::Credit, m(10, c), None),
+            ],
+        );
+        let repair = LedgerTransaction::new(
+            txid(10),
+            feb,
+            [
+                entry(5, BalanceSide::Debit, m(30, c), None),
+                entry(
+                    1,
+                    BalanceSide::Credit,
+                    m(10, c),
+                    Some(CashFlowCategory::Operating),
+                ),
+                entry(
+                    2,
+                    BalanceSide::Credit,
+                    m(20, c),
+                    Some(CashFlowCategory::Operating),
+                ),
+            ],
+        );
+        // Deliberately post out of chronological and ID order.
+        ledger
+            .post_batch([repair, financing, zero_investing, rent])
+            .unwrap();
+
+        let details = ledger.cash_flow_contributions(jan, feb).unwrap();
+        assert_eq!(
+            details
+                .iter()
+                .map(|item| (item.period, item.transaction_id, item.category))
+                .collect::<Vec<_>>(),
+            [
+                (jan, txid(20), CashFlowCategory::Operating),
+                (jan, txid(30), CashFlowCategory::Investing),
+                (jan, txid(40), CashFlowCategory::Financing),
+                (feb, txid(10), CashFlowCategory::Operating),
+            ]
+        );
+        assert_eq!(details[0].amount, m(100, c));
+        assert_eq!(details[0].source.as_ref(), Some(&source));
+        assert_eq!(details[1].amount, m(0, c));
+        assert_eq!(details[1].source, None);
+        assert_eq!(details[2].amount, m(10, c));
+        assert_eq!(details[3].amount, m(-30, c));
+        assert_eq!(details[3].source, None);
+
+        let projection = ledger.project(jan, feb, &[id(1), id(2)]).unwrap();
+        let totals = projection.cash_flow_statement.totals;
+        for (category, expected) in [
+            (CashFlowCategory::Operating, totals.operating),
+            (CashFlowCategory::Investing, totals.investing),
+            (CashFlowCategory::Financing, totals.financing),
+        ] {
+            assert_eq!(
+                sum_signed(
+                    details
+                        .iter()
+                        .filter(|item| item.category == category)
+                        .map(|item| item.amount),
+                    c,
+                )
+                .unwrap(),
+                expected
+            );
+        }
+        assert!(matches!(
+            ledger.cash_flow_contributions(feb, jan),
+            Err(AccountError::InvalidProjectionRange)
+        ));
     }
 
     #[test]

@@ -235,6 +235,10 @@ Effect 和凭证可通过本 Slice 实例内的稳定事件键引用同一提案
 
 ### 10.4 月度结算
 
+#### 10.4 Ledger cash-flow projections
+
+Accounting exposes both an aggregate `CashFlowStatement` by cash account/category and a transaction detail projection. The detail query takes an inclusive month range and emits one signed amount per posted transaction and cash-flow category after netting that transaction's cash postings in the category. Debit cash postings are positive and credit cash postings negative. Each detail retains its transaction ID and optional `LedgerTransactionSource`; missing source metadata does not exclude a posting. Results sort by period, transaction ID, then category. Opening balances are facts at the start boundary and never produce detail rows. The aggregate statement remains a projection of the same Ledger postings, not a separate total or cash-flow record.
+
 **M6 结果目标：** 单次月度计算返回：
 
 - Opening balances；

@@ -24,7 +24,7 @@ pub use error::AccountError;
 pub use ledger::Ledger;
 pub use opening_balance::{OpeningBalance, OpeningBalances, OpeningTotals};
 pub use projection::{
-    AccountBalance, BalanceSheet, CashFlowStatement, CashFlowTotals, FinancialProjection,
-    IncomeStatement, ValidatedProjection,
+    AccountBalance, BalanceSheet, CashFlowContribution, CashFlowStatement, CashFlowTotals,
+    FinancialProjection, IncomeStatement, ValidatedProjection,
 };
 pub use transaction::{LedgerEntry, LedgerTransaction, LedgerTransactionSource};
