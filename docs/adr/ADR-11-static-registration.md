@@ -15,4 +15,4 @@ Use static Rust registration and concrete types initially. Do not add a dynamic 
 - Dynamic plugins or a DSL: add abstraction and validation complexity without an initial use case.
 
 ## Consequences
-New slices extend typed interfaces and coordinator composition; later changes remain possible at explicit boundaries.
+New Slices extend the typed calculation interfaces. Their monthly composition belongs to the M6 integration layer, not to an individual Core module; later changes remain possible at explicit boundaries.

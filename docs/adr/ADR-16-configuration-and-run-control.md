@@ -2,14 +2,14 @@
 
 - **Status:** Superseded by [ADR-27](ADR-27-current-month-runtime-and-database-owned-history.md) and [ADR-28](ADR-28-pre-m5-crate-call-boundary-review.md)
 - **Date:** 2026-10-19
-- **Related:** [roadmap M3.0](../implementation-roadmap.md#m30--运行接口契约), [domain model](../domain-model.md), [ADR-01](ADR-01-monthly-run-control.md), [ADR-04](ADR-04-scenario-and-overrides.md), [ADR-15](ADR-15-random-streams-and-branches.md), [ADR-21](ADR-21-m3-run-randomness-and-persistence.md)
-- **Test vectors:** M3 lifecycle/configuration tests cover these semantics.
+- **Related:** [roadmap milestones](../implementation-roadmap.md#207-分阶段里程碑与验收), [domain model](../domain-model.md), [ADR-01](ADR-01-monthly-run-control.md), [ADR-04](ADR-04-scenario-and-overrides.md), [ADR-15](ADR-15-random-streams-and-branches.md), [ADR-21](ADR-21-m3-run-randomness-and-persistence.md)
+- **Test vectors:** M3 lifecycle/configuration vectors cover the historical run-control semantics in test support only.
 
 ## Context
 Initial facts, run bounds, and changing monthly assumptions have different lifetimes and provenance.
 
 ## Current boundary
-The M3 run-control behavior below is historical and remains only in test support. The production core has no `SimulationRun`, update-command loop, stop-condition evaluator, snapshot, or archive API. It currently exposes independent input/Slice calculations. M5 will define the monthly input/output calculation; CLI/GUI control and application orchestration are later work.
+The M3 run-control behavior below is historical and remains only in test support. The production core has no `SimulationRun`, update-command loop, stop-condition evaluator, snapshot, or archive API. It currently exposes independent input/Slice calculations. M5 completes the independent Core modules; M6 defines the stateless monthly input/output calculation. Application orchestration and CLI/GUI are later work (ADR-29).
 
 ## Decision
 

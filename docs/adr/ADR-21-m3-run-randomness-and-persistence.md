@@ -1,6 +1,6 @@
-# ADR-21: M3 run randomness, persistence, and composition
+# ADR-21: Caller-provided random inputs and sampling boundaries
 
-- **Status:** Accepted
+- **Status:** Sampling contract retained; historical M3 run, persistence, and composition workflow superseded by [ADR-27](ADR-27-current-month-runtime-and-database-owned-history.md) and [ADR-29](ADR-29-layered-calculation-and-application-boundaries.md)
 - **Date:** 2026-10-19
 - **Related:** [domain model](../domain-model.md), [roadmap](../implementation-roadmap.md), [ADR-15](ADR-15-random-streams-and-branches.md), [ADR-16](ADR-16-configuration-and-run-control.md), [ADR-20](ADR-20-composable-slices-and-random-sampling.md), [ADR-26](ADR-26-scenario-scoped-runtime-and-concurrency.md)
 - **Test vectors:** Historical M3 fixtures cover keyed substream isolation, proposal composition, run stopping, and snapshot/settings behavior; current production sampling accepts caller-provided sources.
@@ -13,7 +13,7 @@ The earlier M3 implementation combined stream allocation, run lifecycle, result 
 
 - Core calculation modules keep no run/session state. The caller passes a random source to sampling functions; the core does not allocate, retain, serialize, or restore streams.
 - Do not promise recovery of unfinished work, exact replay from identical settings, or different results from identical settings. Persistence and history handling are outside this decision and are deferred until the application/storage design.
-- A caller may provide a 32-byte root key obtained from the operating system; entropy failure has no clock-based fallback. Derive the run key as a pure function of the root key and explicit `trial_id` with BLAKE3 keyed hashing. Do not persist the root key, run keys, or generator state. The randomness crate does not allocate hidden run sequence numbers.
+- A caller may provide a 32-byte root key obtained from the operating system; entropy failure has no clock-based fallback. The current randomness adapter derives a key as a pure function of the root key and explicit `trial_id` with BLAKE3 keyed hashing. Here `trial_id` is only a sampling-stream identity; it does not require a persisted trial, run entity, or branch workflow. Do not persist the root key, derived keys, or generator state. The randomness crate does not allocate hidden run sequence numbers.
 - Use `ChaCha12Rng` as the PRNG. Derive a 32-byte key for each semantic substream with BLAKE3 keyed hashing. The keyed message uses an unambiguous canonical encoding of the tuple: trial ID, random category, Slice ID, activity/entity ID, `YearMonth`, and sample purpose/key. Each distinct sample must have a distinct purpose/key; a sampler may consume multiple values from its own substream. Substreams therefore do not depend on Slice execution order or draws consumed by unrelated Slices.
 - Treat random inputs for different time nodes as independent. The model may still make an outcome depend on opening state or other explicit inputs; independence applies to the random draws, not necessarily to the modeled outcomes. Values may repeat by chance and uniqueness is not enforced.
 - These choices define the implementation, not a replay contract. The product does not promise that a given seed and semantic identity will yield the same draw across runs or application versions. Fixed seeds may be injected in tests and diagnostics.
@@ -32,7 +32,7 @@ The earlier M3 implementation combined stream allocation, run lifecycle, result 
 
 ## Consequences
 
-M3 does not implement unfinished-run checkpoint recovery or RNG-state persistence. Failure handling, snapshot continuation, and persistence are outside the current calculation interface and remain for a future caller/application design. Generated outcomes and retained user settings belong to application storage, not a core-owned scenario history. Random key material remains ephemeral. A change to the PRNG or stream derivation is an application change; it does not create a separately versioned random-stream contract or stored-state migration.
+M3 does not implement unfinished-run checkpoint recovery or RNG-state persistence. Failure handling, snapshot continuation, and persistence are outside the current calculation interface and remain for a future caller/application design. Generated outcomes and retained user settings belong to application storage, not a core-owned scenario history. Random key material remains ephemeral. A change to the PRNG or stream derivation changes the application as a whole; it does not create a separately versioned random-stream contract or stored-state migration.
 
 ## Previous M3.4 implementation notes (historical)
 

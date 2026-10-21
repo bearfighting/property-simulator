@@ -3,7 +3,7 @@
 - **Status:** Accepted for state sufficiency; application-flow details updated by [ADR-27](ADR-27-current-month-runtime-and-database-owned-history.md)
 - **Date:** 2026-10-19
 - **Related:** [domain model](../domain-model.md), [architecture](../architecture.md), [ADR-03](ADR-03-arbitrary-opening-state.md), [ADR-15](ADR-15-random-streams-and-branches.md), [ADR-16](ADR-16-configuration-and-run-control.md), [ADR-21](ADR-21-m3-run-randomness-and-persistence.md)
-- **Test vectors:** Continuity tests compare a transition from a complete opening snapshot with the corresponding period in a longer run; history-independence tests vary audit history while keeping transition inputs equal.
+- **Test vectors:** Continuity tests compare a transition from a complete opening-state value with the corresponding result in a sequence of single-period calculations; history-independence tests vary audit history while keeping transition inputs equal.
 
 ## Context
 Calculation rules need enough explicit input to calculate from an opening state without reading hidden event history or knowing a run's final month. This keeps each calculation independent of history storage and application flow.

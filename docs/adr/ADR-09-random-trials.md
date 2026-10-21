@@ -1,18 +1,18 @@
-# ADR-09: Explicit random trials and resampling
+# ADR-09: Explicit sampling inputs and diagnostics
 
-- **Status:** Accepted
+- **Status:** Partially superseded by [ADR-27](ADR-27-current-month-runtime-and-database-owned-history.md) and [ADR-29](ADR-29-layered-calculation-and-application-boundaries.md)
 - **Date:** 2026-10-19
 - **Related:** [domain model](../domain-model.md), [ADR-15](ADR-15-random-streams-and-branches.md)
 - **Test vectors:** M3 fixed-seed diagnostic fixtures; exact product trajectory is not invariant.
 
 ## Context
-Random outputs must be auditable while allowing new branches to explore different outcomes.
+This ADR originally combined random-sampling traceability with trial, snapshot, and branch behavior. The latter runtime concepts are outside the current design; sampling and replay expectations remain relevant.
 
 ## Decision
-Record trial identity, the active rule/model configuration, and completed results. This records which inputs and behavior produced the run; it does not assign independent versions to rules or models. Re-simulation from a saved completed snapshot creates a new trial and may resample; exact repeated output is not a product requirement, and identical settings are not promised either to reproduce or to differ from a prior run. Fixed seeds may be supplied in tests/diagnostics; a system-generated run seed is not a user setting or required recovery state. See [ADR-21](ADR-21-m3-run-randomness-and-persistence.md).
+Pass required random inputs through explicit caller-provided sampling interfaces, keeping probability distributions separate from sampling and stream allocation as specified in [ADR-21](ADR-21-m3-run-randomness-and-persistence.md). Exact repeated output is not a product invariant. Fixed seeds may be used for tests and diagnostics. Do not require a persisted trial identity or a new-trial workflow for this calculation boundary. The application version is the only software version identifier.
 
 ## Alternatives considered
-- Requiring identical reruns: would constrain ordinary branch semantics and conflate recovery with resimulation.
+- Requiring identical output across independent calls: would turn test diagnostics into a product replay guarantee.
 
 ## Consequences
-Unfinished-run checkpoint recovery is not required; continuation from the most recent completed snapshot is a new run. The M3 random source, PRNG, and semantic substream derivation are fixed by [ADR-21](ADR-21-m3-run-randomness-and-persistence.md): startup OS entropy, ChaCha12, and BLAKE3 keyed derivation. These choices do not create a replay guarantee.
+Trial recording, snapshot continuation, branching, and re-simulation behavior in the original decision are historical and are not current requirements. The M3 random-source and semantic substream details documented by [ADR-21](ADR-21-m3-run-randomness-and-persistence.md) describe the existing sampling adapter and its tests; they do not establish a run-management or replay workflow.

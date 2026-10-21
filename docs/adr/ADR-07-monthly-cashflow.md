@@ -9,7 +9,7 @@
 The initial monthly model has no receivables or payables timing subsystem.
 
 ## Decision
-Record each cash-flow item with source and post modeled accrual and cash settlement in the same monthly close. Preserve detail; derive monthly aggregates from postings.
+Represent each cash-flow item through its source-linked Ledger postings and cash-flow classifications, and post modeled accrual and cash settlement in the same monthly close. Preserve Ledger detail; derive cash-flow amounts and monthly aggregates from those postings. Do not create a separate authored cash-flow record alongside the Ledger.
 
 ## Alternatives considered
 - Separate accrual and settlement periods: would require explicit receivable/payable state not in initial scope.

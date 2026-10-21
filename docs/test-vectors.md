@@ -1,20 +1,32 @@
-# Ledger and mortgage test vectors
+# Ledger, mortgage, and historical composition test vectors
 
-**Historical M3/M4 test-fixture note:** The vectors below describe behavior
-retained in `simulation/src/test_support/` and test modules. They are regression
-coverage for previously implemented combinations, not production run-control,
-snapshot, branch, or persistence API promises. Current production scope and M5
-target are defined by ADR-27 and ADR-28. Some vectors name the former
+**Historical M3/M4 fixture note:** Vectors explicitly about the old M3/M4
+run-control and multi-slice fixtures describe behavior retained in
+`crates/simulation/src/test_support/` and test modules. They are regression coverage,
+not production run-control, snapshot, branch, or persistence API promises.
+Ledger, mortgage, and independent module vectors remain relevant domain or
+module-level coverage. Current M5/M6 boundaries are defined by ADR-27 through
+ADR-29. Some vectors name the former
 `CashFlowContribution` implementation. Those values are expected cash-flow
 projections from Ledger postings, grouped by the Ledger source identity. They do
-not require a second independently generated contribution record. The M5 target
-contract is defined in [ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md).
+not require a second independently generated contribution record. M5 uses
+module-level vectors; full monthly composition vectors belong to M6 under
+[ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md) and
+[ADR-29](adr/ADR-29-layered-calculation-and-application-boundaries.md).
 
 ## M3.4 semantic random-stream vectors
 
+These vectors verify the existing randomness adapter's deterministic stream
+isolation for tests and diagnostics. The `trial_id` used in those identities is
+not a persisted application run or branch requirement.
+
 With diagnostic root key `[8; 32]`, calls using the same root and trial derive the same run key; a different trial derives a different key. The current tests construct semantic streams directly from explicit identity; run-control integration is test-only. A stream collection rejects a semantic identity for a different trial. Under one run key, identical semantic identity yields the same sequence. Changing category, Slice ID, activity instance ID, year/month, or purpose yields an independently derived stream. Consuming another purpose stream does not affect it. OS entropy success fills all 32 bytes; entropy failure is returned. Purpose is UTF-8 with an explicit `u64` byte length. These are implementation-isolation vectors, not replay guarantees or production run-management behavior.
 
-## M3.5 repair random end-to-end vector
+## M3.5 historical repair random end-to-end vector
+
+This vector records the former integrated test path through `MonthlyResult` and
+Ledger posting. It documents test coverage, not a current production result type
+or a separate cash-flow contribution record.
 
 The test caller derives a `Property` semantic stream from trial ID,
 Slice ID, activity instance ID, and period with purpose `repair.sample`.
@@ -48,7 +60,7 @@ production core exposes that integrated workflow.
 | Branch from a completed snapshot | A new trial and branch begin in the month after the selected snapshot, restore its closing state, Ledger, inputs, activities and loan continuations, and may accept explicit updates. Saving child months leaves parent snapshots/results unchanged. Child cash-flow summaries include child months only; the month sequence is contiguous within each branch. |
 
 The shared assertions are implemented in test-support lifecycle, failure,
-stop and composition tests; `src/monthly_composition_tests.rs` joins a two-period run, semantic
+stop and composition tests; `crates/simulation/src/monthly_composition_tests.rs` joins a two-period run, semantic
 repair sampling, rent/repair Slices, two loan accounts, Ledger projections, a
 month-start rent update and a child branch; and lower-level tests cover the
 loan-update and independent-stream boundaries. This matrix intentionally does
@@ -56,11 +68,14 @@ not claim an unfinished-run checkpoint or persistent rollback guarantee.
 
 ## M4.2 operating activity vectors
 
-These vectors define the first deterministic and stochastic operating activities
-before their transition implementations. Amounts are CAD. Expense debits and
-cash credits are balanced operating transactions; cash-flow contributions are
-negative outflows. Zero economic-output cases are the empty-proposal identity;
-the deterministic tax input marker is retained separately for provenance. Utility
+These vectors record the accepted deterministic and stochastic activity rules.
+Amounts are CAD. Expense debits and cash credits are balanced operating
+transactions; cash-flow projections are negative outflows. Zero economic-output
+cases are the empty-proposal identity; the deterministic tax input marker is
+retained separately for provenance. Rows that require a shared coordinator,
+committed Ledger batch, or complete monthly result describe historical test-only
+composition; the activity calculation rows remain module-level expectations.
+Utility
 usage is an integer count in the activity instance's configured unit; rate
 multiplication uses checked fixed-point arithmetic and rounds once at posting.
 
@@ -72,13 +87,13 @@ multiplication uses checked fixed-point arithmetic and rounds once at posting.
 | Zero due amount | Amount $0.00 on a due month | The deterministic `PropertyTax` marker is retained; no event, Effect, transaction, or cash-flow contribution is emitted, so economic outputs equal the empty identity. |
 | Rounded-zero payment | Amount $0.004 on a due month | The deterministic `PropertyTax` marker is retained. Posting rounds to $0.00; no zero-value transaction, event, Effect, or contribution is emitted. |
 | Invalid operating account role | Property-tax or utilities expense account is marked contra; alternatively, configured cash account is not a non-contra cash-position asset | Reject the activity configuration before transition; do not post a transaction or emit economic outputs. |
-| Utility positive usage | The current application defines the distribution law; maximum 100 units, sample 12 units, rate $2.50/unit | The monthly result retains the sample. Charge $30.00; Dr utilities expense $30.00; Cr cash $30.00; one event with key `utility.usage_charged` and one transaction with output key `usage-charge`; the transaction's `source_event_key` is `utility.usage_charged` for that same instance and period, and the -$30.00 operating contribution references the transaction ID |
+| Utility positive usage | The utility model accepts a sample of 12 units within the configured maximum of 100; rate $2.50/unit | Calculate a $30.00 charge; Dr utilities expense $30.00; Cr cash $30.00; one event with key `utility.usage_charged` and one transaction with output key `usage-charge`; the transaction's `source_event_key` is `utility.usage_charged` for that same instance and period. The Ledger-derived operating cash-flow projection is -$30.00 and references the transaction ID. Whether M6 includes the sampled value in its returned result belongs to the M6 result contract. |
 | Utility uniform sampler | Maximum usage 7; uniform inclusive integer sampler receives diagnostic words 0 and 7 | Samples 0 and 7 respectively; output always lies in `0..=7`, and a maximum of 0 always yields 0. Semantic production sampling fixes category `occupancy/operations` and purpose `utility.usage`. |
 | Utility zero usage | Maximum 100 units, sample 0, rate $2.50/unit | The sampled value is retained; no event, Effect, transaction, or contribution is emitted, so economic outputs equal the empty-proposal identity. |
 | Utility minor-unit rounding | Sample 3 units, rate $0.125/unit | Exact charge $0.375 rounds once to $0.38 half-up; expense and cash postings are each $0.38 and the transaction balances. |
 | Utility rounded-zero charge | Sample 3 units, rate $0.001/unit | Exact charge $0.003 rounds to $0.00; the sample is retained but no zero-value transaction, event, Effect, or contribution is emitted. |
 | Utility support uses posted rounding | Maximum usage 100 units, rate $0.00004/unit | Validate that the exact maximum product $0.004 fits `Money`; its rounded maximum posted charge and operating cash-flow support contribution are both $0.00. Aggregate support uses the rounded posted bound, not the exact pre-rounding product. |
-| Utility support boundary | Maximum 100 units; samples 0 and 100 | Both samples are accepted; the resulting charges are respectively zero (empty economic proposal) and `100 × rate`. A sample above 100 or with mismatched carried period/Slice/activity/model/purpose is rejected before commit. The utility sampling boundary always uses `occupancy/operations` and `utility.usage`; a wrong trial is rejected by `RandomStreams`, while another category derives an independent stream under ADR-21 rather than being generically rejected. |
+| Utility support boundary | Maximum 100 units; samples 0 and 100 | Both samples are accepted; the resulting charges are respectively zero (empty economic proposal) and `100 × rate`. A sample above 100 or with mismatched carried period/Slice/activity/model/purpose is rejected before commit. The utility sampling boundary always uses `occupancy/operations` and `utility.usage`; the historical test-only `RandomStreams` adapter rejects a mismatched trial identity, while another category derives an independent stream under ADR-21 rather than being generically rejected. |
 | Utility unrepresentable support | Maximum usage and rate whose exact product is outside the supported `Money` range, or whose maximum operating support makes the whole-period category bound unrepresentable when combined with other active contributors | Reject the activity/run input before sampling. If calculation overflows despite accepted prevalidation, fail the transition as fatal under ADR-19. |
 | Utility pre-sampling boundary | A utility sample is requested from `ValidatedInput` before the complete active activity set has been validated | Reject sampling/evaluation. After `validate_activities_before_sampling` validates every active activity and the combined category support, samples for the same frozen month and exact activity instances are accepted. |
 | Exact utility product reduction | Rate is `Money::from_parts(i128::MAX, 1, CAD)`, maximum usage is 10 | Exact product is representable as `Money::from_parts(i128::MAX, 0, CAD)`; do not reject due only to an overflowing unreduced intermediate coefficient. |
@@ -97,7 +112,11 @@ These hand-calculated vectors are the shared initial verification baseline for L
 
 ## M2 monthly activity vectors
 
-### M3.3 cash-flow contribution vector
+### M3.3 historical cash-flow contribution vector
+
+The `CashFlowContribution` wording below reflects the former composition fixture;
+the current contract is the equivalent cash-flow projection derived from Ledger
+postings and source metadata.
 
 For a month with rent of CAD 80.00 and repair cash cost of CAD 10.00, the result retains two operating contributions: rental transaction +80.00 and repair transaction -10.00. Each item carries its posted transaction ID and source identity (trial, branch, activity instance, Slice, output key); monthly operating total is +70.00 and matches the Ledger direct cash-flow projection. A non-cash transaction has no contribution. Within one transaction, cash entries are netted per category; categories remain distinct.
 
@@ -233,7 +252,7 @@ activity and loan input order; compare the successful monthly outputs, Ledger, a
 contributions. Compare each random sample under its semantic identity;
 equal numeric samples across different instances are allowed.
 
-## M4.7 failure and retry vectors
+## M4.7 historical failure-boundary vectors
 
 | Boundary | Expected result |
 |---|---|
@@ -242,11 +261,13 @@ equal numeric samples across different instances are allowed.
 | Duplicate output identity or conflicting state writes | Proposal merge rejects duplicate IDs and different values written to the same target before commit. These are merge-layer unit vectors; they do not claim a separate full-coordinator fixture. |
 | Fatal error during accepted-input calculation | Stop the simulation and produce no successful result or snapshot for that month. No failed-run recovery, continuation, resource preservation, or replay is required. |
 
-These are layered simulation boundaries. Under ADR-19, correctable user input is
-rejected before calculation and can be resubmitted after correction. Unexpected
-runtime/invariant failures stop the simulation and produce no successful result for
-the failed month. Under ADR-21 and ADR-27, a user-requested new run from a completed
-snapshot receives a new trial stream; this is not recovery or replay.
+These rows record historical M4 test coverage. They do not define a production run
+controller or recovery workflow. Current error and sampling boundaries are defined
+by [ADR-19](adr/ADR-19-validation-only-domain-errors.md), [ADR-21](adr/ADR-21-m3-run-randomness-and-persistence.md),
+[ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md), and
+[ADR-29](adr/ADR-29-layered-calculation-and-application-boundaries.md). Correctable
+input is rejected before calculation; a fatal calculation error returns no
+successful result for that call and stops the simulation.
 
 ### Structural input errors
 

@@ -17,4 +17,4 @@ Events record what happened; decisions record chosen responses; effects describe
 ## Consequences
 One event may link multiple effects and postings; projections derive from committed records.
 
-Within a Slice instance proposal, an Effect or transaction may reference an event by its stable output key. The coordinator resolves the key to the event ID and retains the optional source-event link on the identified output; posted transactions retain the same link. A missing key is an invalid proposal. Each Effect also names its target resource so coordination can distinguish writes to different entities.
+Within a Slice instance proposal, an Effect or transaction may reference an event by its stable output key. The M6 monthly integration boundary resolves the key to the event ID and retains the optional source-event link on the identified output; posted transactions retain the same link. A missing key is an invalid proposal. Each Effect also names its target resource so composition can distinguish writes to different entities.
