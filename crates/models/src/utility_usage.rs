@@ -62,4 +62,15 @@ mod tests {
             Ok(0)
         );
     }
+
+    #[test]
+    fn sampler_propagates_random_source_errors() {
+        let mut sampler = UtilityUsageSampler;
+        let mut random = Words(vec![]);
+
+        assert_eq!(
+            sampler.sample(&UtilityUsageDistribution { maximum: 9 }, &mut random),
+            Err(SamplingError::RandomSource("no random words"))
+        );
+    }
 }

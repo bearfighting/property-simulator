@@ -258,4 +258,16 @@ mod tests {
             Err(SamplingError::RandomSource("empty"))
         );
     }
+
+    #[test]
+    fn repair_sampler_rejects_invalid_distribution_before_consuming_randomness() {
+        let mut sampler = RepairSampler;
+        let mut random = Words(vec![0]);
+
+        assert_eq!(
+            sampler.sample(&distribution(1, 0, "1"), &mut random),
+            Err(SamplingError::InvalidDistribution)
+        );
+        assert_eq!(random.0, vec![0]);
+    }
 }

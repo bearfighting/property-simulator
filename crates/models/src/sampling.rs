@@ -39,3 +39,46 @@ pub(crate) fn uniform_inclusive<R: RandomSource>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Words(Vec<u64>);
+
+    impl RandomSource for Words {
+        type Error = &'static str;
+
+        fn next_u64(&mut self) -> Result<u64, Self::Error> {
+            if self.0.is_empty() {
+                Err("no random words")
+            } else {
+                Ok(self.0.remove(0))
+            }
+        }
+    }
+
+    #[test]
+    fn uniform_sampler_rejects_the_biased_tail_and_retries() {
+        let mut words = Words(vec![u64::MAX, 11]);
+
+        assert_eq!(uniform_inclusive(&mut words, 5), Ok(5));
+        assert!(words.0.is_empty());
+    }
+
+    #[test]
+    fn uniform_sampler_covers_the_full_u64_domain() {
+        let mut words = Words(vec![u64::MAX]);
+
+        assert_eq!(uniform_inclusive(&mut words, u64::MAX), Ok(u64::MAX));
+        assert!(words.0.is_empty());
+    }
+
+    #[test]
+    fn uniform_sampler_propagates_random_source_errors() {
+        assert_eq!(
+            uniform_inclusive(&mut Words(vec![]), 9),
+            Err(SamplingError::RandomSource("no random words"))
+        );
+    }
+}
