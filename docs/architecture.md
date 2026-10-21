@@ -37,6 +37,7 @@
 | [ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md) | 月度计算边界与 Ledger 派生现金流 | M6 处理单月输入/输出；Application/Data Access 管理持久化 |
 | [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md) | M5 前 crate 调用边界检查 | 已完成依赖/调用盘点和生产边界整改；不预设 controller/work unit |
 | [ADR-29](adr/ADR-29-layered-calculation-and-application-boundaries.md) | Core、单月整合、应用与数据访问边界 | M5 完成底层模块；M6 完成单月整合；应用层唯一协调数据访问和计算 |
+| [ADR-30](adr/ADR-30-monthly-integration-inputs-and-atomic-settlement.md) | M6 调用方注入 Slice 适配器与 Ledger 原子结算 | 异构 Slice 通过窄适配器调用；候选账簿结算成功后仅返回本月凭证增量及派生投影 |
 
 
 ## 6. Slice 架构与契约
@@ -47,7 +48,7 @@
 
 输入验证器负责拒绝并报告用户可修正的结构问题，并产生满足不变量的冻结输入。该边界之后，状态转移、余额重算和投影不得因缺失引用、分类或投影前置条件而失败。金额采用有限 `i128` 表示；运行时 checked overflow 是显式失败，不能包装成经济结果，也不能静默夹值。未预见的不变量破坏、实现缺陷或基础设施故障由计算函数返回错误；错误调用不生成成功结果，调用方负责将 fatal 错误作为本次模拟失败处理。当前 Core 不定义失败运行恢复/重试或外部持久化一致性保证。
 
-当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数；不拥有月度运行、完整结果装配、账簿提交、快照归档或分支。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `crates/simulation/src/test_support/`，由测试编译。它们记录早期组合行为，不是生产调用边界。M5 完成底层独立模块；M6 才提供无 IO 的单月计算整合。M6 不等同于 controller、运行控制或应用层调度。
+当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数，并在 M6.1 定义 `MonthlyInput`/`MonthlyResult` 数据契约；loan continuation 以独立类型输入，因为贷款尚未实现 `SimulationSlice`。结果内部校验凭证与提案、现金流与分录的一致性，但尚未提供完整结果装配、账簿提交或 Ledger 投影计算。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `crates/simulation/src/test_support/`，由测试编译，其结果类型为测试专用 `TestMonthlyResult`。它们记录早期组合行为，不是生产调用边界。M6.2–M6.4 完成无 IO 的单月调用与结算。M6 不等同于 controller、运行控制或应用层调度。
 
 ### 6.2 当前 Rust 实现
 
@@ -104,7 +105,7 @@ Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明�
 | `simulation::validate_loan_input`、`validate_loan_terms_update`、`LoanSlice::propose_month`、`apply_loan_terms_update` | 贷款 Slice、可选期初贷款、账簿只读接口及注入的 `LoanCalculation`；条款更新和有效期；月计算结果及其输入贷款和计算接口；或当前贷款、更新字段、可选本金交易及计算接口 | 贷款账户/币种/负债余额与模型输入验证；按 Slice 账户校验条款更新交易；对照注入计算验证月结果并生成状态效果和 Ledger 提案；或更新后的贷款条款提案；错误为 `SimulationError` | `propose_month` 不自行实现利息计算、不写 Ledger；贷款规则实现和后续组合/过账由调用方负责。 |
 | `randomness`（调用方适配层）：`RootKey`、`RunKeyFactory`、`RandomStreams` | OS 熵或显式 seed、`TrialId` 与 `SemanticIdentity` | 随机流或 `RandomnessError`；`RandomStream` 实现 models 的 `RandomSource` | 为上层采样调用提供随机源；生产 `simulation` 不依赖此 crate，当前 `simulation` 仅在测试依赖它。它不是 M5 Core 的运行控制或恢复机制。 |
 
-`simulation` 的测试构建还会重导出 `coordinate_month`、`SimulationRun`/run control、`SimulationArchive`、贷款批次协调器、`LoanRunUpdate`、`MonthlyResult` 以及交易预检辅助 API。以上全部经 `#[cfg(test)]` 限定，只供既有测试使用；不是生产入口，也不属于 M5.1 所盘点的可调用生产 API。`simulation::lib.rs` 当前生产导出中另有独立计算所需的公共数据类型（例如 `LoanContinuation` 和提案/活动值类型），其自身不构成月度整合入口。
+`simulation` 的测试构建还会重导出 `coordinate_month`、`SimulationRun`/run control、`SimulationArchive`、贷款批次协调器、`LoanRunUpdate`、测试专用 `TestMonthlyResult` 以及交易预检辅助 API。以上全部经 `#[cfg(test)]` 限定，只供既有测试使用；不是生产入口，也不属于 M5.1 所盘点的可调用生产 API。`simulation::lib.rs` 当前生产导出中另有独立计算所需的公共数据类型（例如 `LoanContinuation` 和提案/活动值类型），其自身不构成月度整合入口。
 
 M5.1 只完成了职责盘点和文档映射。未使用 ID 导出是否移除、以及公开类型是否需要进一步收窄，留给后续 API 审查明确处理；当前不改生产 API、计算行为或 crate 依赖。
 

@@ -62,7 +62,7 @@ impl SimulationRun {
         Ok(self.response(Some(result)))
     }
 
-    fn response(&self, monthly_result: Option<MonthlyResult>) -> RunCallResult {
+    fn response(&self, monthly_result: Option<TestMonthlyResult>) -> RunCallResult {
         let stop_reason = match self.status {
             RunStatus::Stopped(reason) => Some(reason),
             _ => None,

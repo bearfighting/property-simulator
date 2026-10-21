@@ -1,5 +1,5 @@
 use super::*;
-use property_simulation_accounting::ChartOfAccounts;
+use property_simulation_accounting::{BalanceSide, CashFlowCategory, ChartOfAccounts, LedgerEntry};
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, Currency, EffectId, EventId, LedgerTransactionId,
     Money, SliceId, TrialId, YearMonth,
@@ -123,6 +123,221 @@ fn identity() -> &'static TestIds {
 }
 fn money(s: &str) -> Money {
     Money::parse(s, Currency::from_code("CAD").unwrap()).unwrap()
+}
+
+#[test]
+fn production_monthly_result_validates_month_currency_and_activity_identities() {
+    let period = input().period;
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let result = |period, activities, samples| {
+        crate::MonthlyResult::from_settled_parts(
+            period,
+            opening.clone(),
+            frozen,
+            activities,
+            samples,
+            opening.clone(),
+            IdentifiedProposal::default(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    };
+    assert!(result(period, Vec::new(), Vec::new()).is_ok());
+    assert!(
+        result(
+            period.checked_add_months(1).unwrap(),
+            Vec::new(),
+            Vec::new()
+        )
+        .is_err()
+    );
+    let mut wrong_frozen_currency = frozen;
+    wrong_frozen_currency.repair_cost_limit =
+        Money::parse("1", Currency::from_code("USD").unwrap()).unwrap();
+    assert!(
+        crate::MonthlyResult::from_settled_parts(
+            period,
+            opening.clone(),
+            wrong_frozen_currency,
+            Vec::new(),
+            Vec::new(),
+            opening.clone(),
+            IdentifiedProposal::default(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .is_err()
+    );
+
+    let rental = rental_activity(51);
+    let sample = ActivitySample::new(&rental, period, ActivitySampleValue::Rental);
+    assert!(result(period, vec![rental.clone()], vec![sample.clone()]).is_ok());
+    assert!(
+        result(
+            period,
+            vec![rental.clone(), rental.clone()],
+            vec![sample.clone(), sample.clone()]
+        )
+        .is_err()
+    );
+    let mut wrong_source = sample.clone();
+    wrong_source.instance_id = ActivityInstanceId::from_bytes([99; 16]);
+    assert!(result(period, vec![rental], vec![wrong_source]).is_err());
+}
+
+#[test]
+fn production_monthly_result_keeps_both_loan_states() {
+    let period = input().period;
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let activity = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([52; 16]),
+        slice_id: SliceId::from_bytes([53; 16]),
+        configuration: ActivityConfiguration::Loan,
+    };
+    let continuation = LoanContinuation {
+        instance_id: activity.id,
+        slice_id: activity.slice_id,
+        loan: None,
+    };
+    let result = crate::MonthlyResult::from_settled_parts(
+        period,
+        opening.clone(),
+        input(),
+        vec![activity],
+        Vec::new(),
+        opening,
+        IdentifiedProposal::default(),
+        Vec::new(),
+        Vec::new(),
+        vec![continuation.clone()],
+        vec![continuation],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        result.opening_loan_continuations(),
+        result.closing_loan_continuations()
+    );
+}
+
+#[test]
+fn production_monthly_result_rejects_duplicate_proposal_ids_and_reconciles_cash_flow() {
+    let period = input().period;
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let rental = rental_activity(54);
+    let sample = ActivitySample::new(&rental, period, ActivitySampleValue::Rental);
+    let duplicate_events = identify_proposal_for(
+        SliceProposal {
+            events: vec![
+                EventProposal {
+                    period,
+                    key: "duplicate".into(),
+                },
+                EventProposal {
+                    period,
+                    key: "duplicate".into(),
+                },
+            ],
+            ..Default::default()
+        },
+        identity(),
+        &rental,
+        period,
+    )
+    .unwrap();
+    assert!(
+        crate::MonthlyResult::from_settled_parts(
+            period,
+            opening.clone(),
+            input(),
+            vec![rental.clone()],
+            vec![sample.clone()],
+            opening.clone(),
+            duplicate_events,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .is_err()
+    );
+
+    let entries = vec![
+        LedgerEntry::new(
+            input().repair_expense_account,
+            BalanceSide::Debit,
+            money("10"),
+        ),
+        LedgerEntry::new(input().cash_account, BalanceSide::Credit, money("10"))
+            .with_cash_flow_category(CashFlowCategory::Operating),
+    ];
+    let proposal = identify_proposal_for(
+        SliceProposal {
+            transactions: vec![TransactionProposal {
+                key: "expense".into(),
+                period,
+                entries,
+                source_event_key: None,
+            }],
+            ..Default::default()
+        },
+        identity(),
+        &rental,
+        period,
+    )
+    .unwrap();
+    let transaction = proposal.transactions()[0].clone().into_ledger_transaction();
+    let build = |amount| {
+        crate::MonthlyResult::from_settled_parts(
+            period,
+            opening.clone(),
+            input(),
+            vec![rental.clone()],
+            vec![sample.clone()],
+            OpeningState {
+                cash: money("90"),
+                condition: AssetCondition::Available,
+            },
+            proposal.clone(),
+            vec![transaction.clone()],
+            vec![MonthlyCashFlowContribution {
+                period,
+                instance_id: rental.id,
+                slice_id: rental.slice_id,
+                output_key: "expense".into(),
+                transaction_id: transaction.id(),
+                category: CashFlowCategory::Operating,
+                amount,
+            }],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    };
+    assert!(build(money("-10")).is_ok());
+    assert!(build(money("-9")).is_err());
 }
 
 struct FixedWords(Vec<u64>);
@@ -2974,7 +3189,7 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
         purpose: None,
         value: ActivitySampleValue::Repair(RepairSample::NoRepair),
     };
-    let result = MonthlyResult::new(
+    let result = TestMonthlyResult::new(
         TrialId::from_bytes([6; 16]),
         BranchId::from_bytes([7; 16]),
         period,
@@ -3004,7 +3219,7 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
         ActivitySampleValue::Repair(RepairSample::NoRepair),
     );
     assert!(
-        MonthlyResult::new(
+        TestMonthlyResult::new(
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             period,
@@ -3030,7 +3245,7 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
         ActivitySampleValue::Repair(RepairSample::NoRepair),
     );
     assert!(
-        MonthlyResult::new(
+        TestMonthlyResult::new(
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             period,
@@ -3052,7 +3267,7 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
     let wrong_branch_proposal =
         identify_proposal_for(SliceProposal::default(), identity(), &activity(1), period).unwrap();
     assert!(
-        MonthlyResult::new(
+        TestMonthlyResult::new(
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             period,
@@ -3075,7 +3290,7 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
     let mut wrong_period = sample;
     wrong_period.period = period.checked_add_months(1).unwrap();
     assert!(
-        MonthlyResult::new(
+        TestMonthlyResult::new(
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             period,
@@ -3115,7 +3330,7 @@ fn monthly_result_rejects_duplicate_ids_without_prior_merge() {
     let proposal =
         identify_proposal_for(duplicate_events, identity(), &activity(1), period).unwrap();
     assert_eq!(
-        MonthlyResult::new(
+        TestMonthlyResult::new(
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             period,

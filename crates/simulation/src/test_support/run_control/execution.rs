@@ -6,7 +6,7 @@ impl SimulationRun {
         &mut self,
         prepared: &PreparedMonth,
         executor: &mut dyn SingleMonthExecutor,
-    ) -> Result<(MonthlyResult, Ledger), RunControlError> {
+    ) -> Result<(TestMonthlyResult, Ledger), RunControlError> {
         if let Err(error) = executor.validate_inputs(
             &prepared.validated,
             &prepared.candidate_ledger,

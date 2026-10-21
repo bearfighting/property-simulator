@@ -1,8 +1,8 @@
 use super::super::loan::{LoanMonthCommand, LoanMonthInput};
 use super::month::prepare_loan_month;
 use crate::{
-    FatalSimulationFailure, FatalSimulationPhase, MonthlyResult, OutputIdFactory, SimulationError,
-    SliceOutput, ValidatedInput, coordinator::coordinate_month_allow_empty_with_transactions,
+    FatalSimulationFailure, FatalSimulationPhase, OutputIdFactory, SimulationError, SliceOutput,
+    TestMonthlyResult, ValidatedInput, coordinator::coordinate_month_allow_empty_with_transactions,
 };
 use property_simulation_accounting::BalanceSide;
 use property_simulation_domain::Money;
@@ -19,7 +19,7 @@ pub fn coordinate_month_with_loans(
     branch_id: property_simulation_domain::BranchId,
     ids: &dyn OutputIdFactory,
     mut loans: Vec<LoanMonthInput>,
-) -> Result<(MonthlyResult, property_simulation_accounting::Ledger), SimulationError> {
+) -> Result<(TestMonthlyResult, property_simulation_accounting::Ledger), SimulationError> {
     loans.sort_by_key(|loan| loan.slice.instance_id);
     let mut seen = std::collections::BTreeSet::new();
     let mut liability_accounts = std::collections::BTreeSet::new();

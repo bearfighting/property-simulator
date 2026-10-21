@@ -6,11 +6,11 @@ use property_simulation_accounting::{BalanceSide, LedgerTransaction};
 impl SimulationRun {
     pub(super) fn validate_month_output(
         &mut self,
-        result: MonthlyResult,
+        result: TestMonthlyResult,
         ledger: &Ledger,
         prepared: &PreparedMonth,
         updates: &[RunUpdate],
-    ) -> Result<(MonthlyResult, Option<RunIdentity>), RunControlError> {
+    ) -> Result<(TestMonthlyResult, Option<RunIdentity>), RunControlError> {
         let returned_identity = RunIdentity {
             trial_id: result.trial_id(),
             branch_id: result.branch_id(),

@@ -1,11 +1,10 @@
 #[cfg(test)]
 use std::collections::BTreeMap;
 
-#[cfg(test)]
-use property_simulation_accounting::CashFlowCategory;
 use property_simulation_accounting::LedgerEntry;
 #[cfg(test)]
-use property_simulation_accounting::{LedgerTransaction, LedgerTransactionSource};
+use property_simulation_accounting::LedgerTransactionSource;
+use property_simulation_accounting::{CashFlowCategory, Ledger, LedgerTransaction};
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, EffectId, EventId, LedgerTransactionId, Money, ResourceKey,
     SliceId, YearMonth,
@@ -14,14 +13,456 @@ use property_simulation_domain::{
 use property_simulation_domain::{BranchId, TrialId};
 pub use property_simulation_models::RepairSample;
 
-#[cfg(test)]
+use crate::SimulationError;
 use crate::activity::{ActivitySample, ActivitySampleValue};
-#[cfg(test)]
-use crate::error::SimulationError;
-#[cfg(test)]
 use crate::proposals::merge_proposals;
 #[cfg(test)]
-use crate::slices::{LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanStateEffect};
+use crate::slices::LoanCoordinatedMonth;
+use crate::slices::{LoanContinuation, LoanEvent, LoanStateEffect};
+
+/// Explicit values for one synchronous monthly calculation. The opening Ledger is
+/// borrowed so calculation cannot publish partial postings to its caller.
+#[derive(Debug, Clone, Copy)]
+pub struct MonthlyInput<'a> {
+    pub opening_state: &'a OpeningState,
+    pub frozen_input: &'a FrozenInput,
+    pub activities: &'a [ActivityInstance],
+    pub samples: &'a [ActivitySample<ActivitySampleValue>],
+    /// Opening loan state is separate because the loan module does not implement
+    /// `SimulationSlice`.
+    pub loan_continuations: &'a [LoanContinuation],
+    pub opening_ledger: &'a Ledger,
+}
+
+/// A cash-flow projection attributed to the source transaction and activity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonthlyCashFlowContribution {
+    pub period: YearMonth,
+    pub instance_id: ActivityInstanceId,
+    pub slice_id: SliceId,
+    pub output_key: String,
+    pub transaction_id: LedgerTransactionId,
+    pub category: CashFlowCategory,
+    /// Cash debits are positive; cash credits are negative.
+    pub amount: Money,
+}
+
+/// Complete successful output contract for one month. M6.2–M6.4 will construct
+/// this after invoking Slice adapters and settling a candidate Ledger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonthlyResult {
+    period: YearMonth,
+    opening_state: OpeningState,
+    frozen_input: FrozenInput,
+    activities: Vec<ActivityInstance>,
+    samples: Vec<ActivitySample<ActivitySampleValue>>,
+    closing_state: OpeningState,
+    proposal: IdentifiedProposal,
+    ledger_transactions: Vec<LedgerTransaction>,
+    cash_flow_contributions: Vec<MonthlyCashFlowContribution>,
+    opening_loan_continuations: Vec<LoanContinuation>,
+    /// Closing loan state supplied to the next monthly calculation.
+    closing_loan_continuations: Vec<LoanContinuation>,
+    loan_events: Vec<LoanEvent>,
+    loan_effects: Vec<LoanStateEffect>,
+}
+
+impl MonthlyResult {
+    // M6.2 will consume this crate-private factory when the monthly entry point is added.
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_settled_parts(
+        period: YearMonth,
+        opening_state: OpeningState,
+        frozen_input: FrozenInput,
+        mut activities: Vec<ActivityInstance>,
+        mut samples: Vec<ActivitySample<ActivitySampleValue>>,
+        closing_state: OpeningState,
+        proposal: IdentifiedProposal,
+        mut ledger_transactions: Vec<LedgerTransaction>,
+        mut cash_flow_contributions: Vec<MonthlyCashFlowContribution>,
+        mut opening_loan_continuations: Vec<LoanContinuation>,
+        mut closing_loan_continuations: Vec<LoanContinuation>,
+        mut loan_events: Vec<LoanEvent>,
+        mut loan_effects: Vec<LoanStateEffect>,
+    ) -> Result<Self, SimulationError> {
+        use std::collections::BTreeSet;
+        let proposal = merge_proposals([proposal])?;
+        activities.sort_by_key(|activity| activity.id);
+        samples.sort_by_key(|sample| sample.instance_id);
+        ledger_transactions.sort_by_key(LedgerTransaction::id);
+        cash_flow_contributions.sort_by_key(|item| (item.transaction_id, item.category));
+        opening_loan_continuations.sort_by_key(|loan| loan.instance_id);
+        closing_loan_continuations.sort_by_key(|loan| loan.instance_id);
+        loan_events.sort_by_key(|event| event.id);
+        loan_effects.sort_by_key(|effect| effect.id);
+        let activity_ids = activities.iter().map(|a| a.id).collect::<BTreeSet<_>>();
+        let sample_ids = samples
+            .iter()
+            .map(|s| s.instance_id)
+            .collect::<BTreeSet<_>>();
+        let opening_loan_ids = opening_loan_continuations
+            .iter()
+            .map(|v| v.instance_id)
+            .collect::<BTreeSet<_>>();
+        let closing_loan_ids = closing_loan_continuations
+            .iter()
+            .map(|v| v.instance_id)
+            .collect::<BTreeSet<_>>();
+        let source_matches = |instance_id, slice_id| {
+            activities
+                .iter()
+                .any(|a| a.id == instance_id && a.slice_id == slice_id)
+        };
+        let sample_kind_matches = |sample: &ActivitySample<ActivitySampleValue>| {
+            activities
+                .iter()
+                .find(|a| a.id == sample.instance_id)
+                .is_some_and(|activity| {
+                    matches!(
+                        (&sample.value, activity.configuration.sample_kind()),
+                        (ActivitySampleValue::Rental, ActivitySampleKind::Rental)
+                            | (ActivitySampleValue::Repair(_), ActivitySampleKind::Repair)
+                            | (
+                                ActivitySampleValue::PropertyTax,
+                                ActivitySampleKind::PropertyTax
+                            )
+                            | (ActivitySampleValue::Utility(_), ActivitySampleKind::Utility)
+                    )
+                })
+        };
+        let slice_activity_count = activities
+            .iter()
+            .filter(|activity| activity.configuration.sample_kind() != ActivitySampleKind::Loan)
+            .count();
+        let loan_activity_matches = |loan: &LoanContinuation| {
+            activities.iter().any(|activity| {
+                activity.id == loan.instance_id
+                    && activity.slice_id == loan.slice_id
+                    && activity.configuration.sample_kind() == ActivitySampleKind::Loan
+            })
+        };
+        let money_matches = |amount: Money| amount.currency() == opening_state.cash.currency();
+        let loan_currency_matches = |loan: property_simulation_models::FixedRateLoan| {
+            money_matches(loan.opening_balance) && loan.scheduled_payment.is_none_or(money_matches)
+        };
+        let activity_currency_matches = |activity: &ActivityInstance| match &activity.configuration
+        {
+            ActivityConfiguration::PropertyTax(config) => money_matches(config.amount),
+            ActivityConfiguration::Utility(config) => money_matches(config.rate_per_unit),
+            ActivityConfiguration::Rental
+            | ActivityConfiguration::Repair
+            | ActivityConfiguration::Loan => true,
+        };
+        if frozen_input.period != period
+            || opening_state.cash.currency() != frozen_input.rent.currency()
+            || !money_matches(frozen_input.repair_cost_limit)
+            || closing_state.cash.currency() != opening_state.cash.currency()
+            || activity_ids.len() != activities.len()
+            || sample_ids.len() != samples.len()
+            || samples.len() != slice_activity_count
+            || samples
+                .iter()
+                .any(|s| s.period != period || !source_matches(s.instance_id, s.slice_id))
+            || samples.iter().any(|sample| !sample_kind_matches(sample))
+            || samples.iter().any(|sample| match &sample.value {
+                ActivitySampleValue::Repair(RepairSample::Repair { cost }) => !money_matches(*cost),
+                _ => false,
+            })
+            || activities
+                .iter()
+                .any(|activity| !activity_currency_matches(activity))
+            || proposal
+                .events()
+                .iter()
+                .any(|v| v.period != period || !source_matches(v.instance_id, v.slice_id))
+            || proposal
+                .effects()
+                .iter()
+                .any(|v| v.period != period || !source_matches(v.instance_id, v.slice_id))
+            || proposal
+                .transactions()
+                .iter()
+                .any(|v| v.period != period || !source_matches(v.instance_id, v.slice_id))
+            || proposal
+                .period()
+                .is_some_and(|proposal_period| proposal_period != period)
+            || ledger_transactions.iter().any(|v| v.period() != period)
+            || cash_flow_contributions
+                .iter()
+                .any(|v| v.period != period || !source_matches(v.instance_id, v.slice_id))
+            || opening_loan_ids.len() != opening_loan_continuations.len()
+            || closing_loan_ids.len() != closing_loan_continuations.len()
+            || opening_loan_continuations
+                .iter()
+                .any(|loan| !loan_activity_matches(loan))
+            || closing_loan_continuations
+                .iter()
+                .any(|loan| !loan_activity_matches(loan))
+            || opening_loan_continuations.iter().any(|continuation| {
+                continuation
+                    .loan
+                    .is_some_and(|loan| !loan_currency_matches(loan))
+            })
+            || closing_loan_continuations.iter().any(|continuation| {
+                continuation
+                    .loan
+                    .is_some_and(|loan| !loan_currency_matches(loan))
+            })
+            || opening_loan_continuations.len()
+                != activities
+                    .iter()
+                    .filter(|activity| {
+                        activity.configuration.sample_kind() == ActivitySampleKind::Loan
+                    })
+                    .count()
+            || closing_loan_continuations.len()
+                != activities
+                    .iter()
+                    .filter(|activity| {
+                        activity.configuration.sample_kind() == ActivitySampleKind::Loan
+                    })
+                    .count()
+            || loan_events.iter().any(|v| {
+                v.period != period
+                    || v.previous_balance
+                        .is_some_and(|amount| !money_matches(amount))
+                    || v.updated_balance
+                        .is_some_and(|amount| !money_matches(amount))
+                    || !source_matches(v.instance_id, v.slice_id)
+                    || !closing_loan_continuations.iter().any(|loan| {
+                        loan.instance_id == v.instance_id && loan.slice_id == v.slice_id
+                    })
+            })
+            || loan_effects.iter().any(|v| {
+                v.period != period
+                    || v.previous.is_some_and(|loan| !loan_currency_matches(loan))
+                    || v.updated.is_some_and(|loan| !loan_currency_matches(loan))
+                    || !source_matches(v.instance_id, v.slice_id)
+                    || !closing_loan_continuations.iter().any(|loan| {
+                        loan.instance_id == v.instance_id && loan.slice_id == v.slice_id
+                    })
+            })
+            || ledger_transactions.iter().any(|transaction| {
+                transaction
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.amount().currency() != opening_state.cash.currency())
+            })
+        {
+            return Err(SimulationError::InvalidProposal(
+                "monthly result identities, periods, or currencies do not match",
+            ));
+        }
+        let transaction_ids = ledger_transactions
+            .iter()
+            .map(LedgerTransaction::id)
+            .collect::<BTreeSet<_>>();
+        let source_by_transaction = ledger_transactions
+            .iter()
+            .filter_map(|transaction| {
+                transaction
+                    .source()
+                    .map(|source| (transaction.id(), source))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut projection_amounts = std::collections::BTreeMap::new();
+        for transaction in &ledger_transactions {
+            for entry in transaction.entries() {
+                let Some(category) = entry.cash_flow_category() else {
+                    continue;
+                };
+                let signed = match entry.side() {
+                    property_simulation_accounting::BalanceSide::Debit => entry.amount(),
+                    property_simulation_accounting::BalanceSide::Credit => {
+                        entry.amount().checked_neg()?
+                    }
+                };
+                let key = (transaction.id(), category);
+                projection_amounts
+                    .entry(key)
+                    .or_insert_with(Vec::new)
+                    .push(signed);
+            }
+        }
+        let projected_by_transaction = projection_amounts
+            .into_iter()
+            .map(|(key, values)| {
+                Ok((
+                    key,
+                    exact_signed_sum(values, opening_state.cash.currency())?,
+                ))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, SimulationError>>()?;
+        let supplied_projection = cash_flow_contributions
+            .iter()
+            .map(|contribution| {
+                (
+                    (contribution.transaction_id, contribution.category),
+                    contribution,
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let proposal_transactions = proposal
+            .transactions()
+            .iter()
+            .map(|transaction| (transaction.id, transaction))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let event_sources = proposal
+            .events()
+            .iter()
+            .map(|event| (event.id, (event.instance_id, event.slice_id)))
+            .chain(
+                loan_events
+                    .iter()
+                    .map(|event| (event.id, (event.instance_id, event.slice_id))),
+            )
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if transaction_ids.len() != ledger_transactions.len()
+            || source_by_transaction.len() != ledger_transactions.len()
+            || proposal_transactions.len() != proposal.transactions().len()
+            || proposal_transactions.len() != ledger_transactions.len()
+            || ledger_transactions.iter().any(|transaction| {
+                let (Some(source), Some(proposed)) = (
+                    transaction.source(),
+                    proposal_transactions.get(&transaction.id()),
+                ) else {
+                    return true;
+                };
+                proposed.period != transaction.period()
+                    || proposed.entries != transaction.entries()
+                    || proposed.instance_id != source.instance_id
+                    || proposed.slice_id != source.slice_id
+                    || proposed.key != source.output_key
+                    || proposed.source_event_id != source.source_event_id
+                    || source.source_event_id.is_some_and(|event_id| {
+                        event_sources.get(&event_id) != Some(&(source.instance_id, source.slice_id))
+                    })
+            })
+            || proposal.effects().iter().any(|effect| {
+                effect.source_event_id.is_some_and(|event_id| {
+                    event_sources.get(&event_id) != Some(&(effect.instance_id, effect.slice_id))
+                })
+            })
+            || supplied_projection.len() != cash_flow_contributions.len()
+            || supplied_projection.len() != projected_by_transaction.len()
+            || projected_by_transaction.iter().any(|(key, amount)| {
+                supplied_projection.get(key).is_none_or(|contribution| {
+                    contribution.amount != *amount
+                        || contribution.amount.currency() != opening_state.cash.currency()
+                })
+            })
+            || cash_flow_contributions.iter().any(|contribution| {
+                source_by_transaction
+                    .get(&contribution.transaction_id)
+                    .is_none_or(|source| {
+                        source.instance_id != contribution.instance_id
+                            || source.slice_id != contribution.slice_id
+                            || source.output_key != contribution.output_key
+                    })
+            })
+            || loan_events
+                .iter()
+                .map(|event| event.id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != loan_events.len()
+            || loan_effects
+                .iter()
+                .map(|effect| effect.id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != loan_effects.len()
+            || loan_events.iter().any(|event| {
+                proposal
+                    .events()
+                    .iter()
+                    .any(|proposed| proposed.id == event.id)
+            })
+            || loan_effects.iter().any(|effect| {
+                proposal
+                    .effects()
+                    .iter()
+                    .any(|proposed| proposed.id == effect.id)
+            })
+            || loan_effects.iter().any(|effect| {
+                !loan_events.iter().any(|event| {
+                    event.id == effect.source_event_id
+                        && event.instance_id == effect.instance_id
+                        && event.slice_id == effect.slice_id
+                })
+            })
+            || loan_effects.iter().any(|effect| {
+                let opening = opening_loan_continuations
+                    .iter()
+                    .find(|loan| loan.instance_id == effect.instance_id);
+                let closing = closing_loan_continuations
+                    .iter()
+                    .find(|loan| loan.instance_id == effect.instance_id);
+                opening.is_none_or(|loan| loan.loan != effect.previous)
+                    || closing.is_none_or(|loan| loan.loan != effect.updated)
+            })
+        {
+            return Err(SimulationError::InvalidProposal(
+                "monthly result has duplicate transactions or unlinked cash-flow contributions",
+            ));
+        }
+        Ok(Self {
+            period,
+            opening_state,
+            frozen_input,
+            activities,
+            samples,
+            closing_state,
+            proposal,
+            ledger_transactions,
+            cash_flow_contributions,
+            opening_loan_continuations,
+            closing_loan_continuations,
+            loan_events,
+            loan_effects,
+        })
+    }
+    pub const fn period(&self) -> YearMonth {
+        self.period
+    }
+    pub fn opening_state(&self) -> &OpeningState {
+        &self.opening_state
+    }
+    pub const fn frozen_input(&self) -> &FrozenInput {
+        &self.frozen_input
+    }
+    pub fn activities(&self) -> &[ActivityInstance] {
+        &self.activities
+    }
+    pub fn samples(&self) -> &[ActivitySample<ActivitySampleValue>] {
+        &self.samples
+    }
+    pub fn closing_state(&self) -> &OpeningState {
+        &self.closing_state
+    }
+    pub fn proposal(&self) -> &IdentifiedProposal {
+        &self.proposal
+    }
+    pub fn ledger_transactions(&self) -> &[LedgerTransaction] {
+        &self.ledger_transactions
+    }
+    pub fn cash_flow_contributions(&self) -> &[MonthlyCashFlowContribution] {
+        &self.cash_flow_contributions
+    }
+    pub fn opening_loan_continuations(&self) -> &[LoanContinuation] {
+        &self.opening_loan_continuations
+    }
+    pub fn closing_loan_continuations(&self) -> &[LoanContinuation] {
+        &self.closing_loan_continuations
+    }
+    pub fn loan_events(&self) -> &[LoanEvent] {
+        &self.loan_events
+    }
+    pub fn loan_effects(&self) -> &[LoanStateEffect] {
+        &self.loan_effects
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetCondition {
@@ -232,7 +673,7 @@ pub trait OutputIdFactory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg(test)]
-pub struct MonthlyResult {
+pub struct TestMonthlyResult {
     trial_id: TrialId,
     branch_id: BranchId,
     period: YearMonth,
@@ -345,7 +786,7 @@ impl CashFlowContributionTotals {
     }
 }
 #[cfg(test)]
-impl MonthlyResult {
+impl TestMonthlyResult {
     // These fields form one validated period result; keeping them in one constructor
     // makes it impossible to omit the identity or any of the transition inputs.
     #[allow(clippy::too_many_arguments)]
@@ -832,7 +1273,6 @@ impl MonthlyResult {
 
 /// Sum signed fixed-point values without overflowing intermediate partial sums.
 /// Conversion back to `Money` is checked only after exact cancellation is complete.
-#[cfg(test)]
 pub(crate) fn exact_signed_sum(
     values: impl IntoIterator<Item = Money>,
     currency: property_simulation_domain::Currency,
@@ -888,13 +1328,11 @@ pub(crate) fn exact_signed_sum(
     Ok(Money::from_parts(coefficient, total.scale, currency)?)
 }
 
-#[cfg(test)]
 struct DecimalAccumulator {
     negative: bool,
     digits: Vec<u8>,
     scale: u8,
 }
-#[cfg(test)]
 impl DecimalAccumulator {
     fn zero() -> Self {
         Self {
@@ -933,13 +1371,11 @@ impl DecimalAccumulator {
         }
     }
 }
-#[cfg(test)]
 fn decimal_compare(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     a.len()
         .cmp(&b.len())
         .then_with(|| a.iter().rev().cmp(b.iter().rev()))
 }
-#[cfg(test)]
 fn decimal_add(a: &mut Vec<u8>, b: &[u8]) {
     let mut carry = 0;
     for i in 0..a.len().max(b.len()) {
@@ -954,7 +1390,6 @@ fn decimal_add(a: &mut Vec<u8>, b: &[u8]) {
         a.push(carry);
     }
 }
-#[cfg(test)]
 fn decimal_subtract(a: &mut Vec<u8>, b: &[u8]) {
     let mut borrow = 0_i8;
     for (i, digit) in a.iter_mut().enumerate() {

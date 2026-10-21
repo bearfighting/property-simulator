@@ -1,5 +1,5 @@
 use super::{RunControlError, RunIdentity, RunUpdate, RunUpdateValue};
-use crate::{LoanContinuation, LoanRunUpdate, MonthlyResult, SimulationError};
+use crate::{LoanContinuation, LoanRunUpdate, SimulationError, TestMonthlyResult};
 use property_simulation_accounting::BalanceSide;
 use property_simulation_domain::{Money, YearMonth};
 
@@ -97,7 +97,7 @@ pub(super) fn loan_output_matches(
     prior_loans: &[LoanContinuation],
     updates: &[LoanRunUpdate],
     period: YearMonth,
-    result: &MonthlyResult,
+    result: &TestMonthlyResult,
 ) -> bool {
     let expected: std::collections::BTreeMap<_, _> = activities
         .iter()

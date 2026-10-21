@@ -47,3 +47,4 @@ Copy [`TEMPLATE.md`](TEMPLATE.md) for new records.
 | [27](ADR-27-current-month-runtime-and-database-owned-history.md) | Monthly calculation boundary and Ledger-derived cash flow | Accepted |
 | [28](ADR-28-pre-m5-crate-call-boundary-review.md) | Pre-M5 crate call-boundary review | Accepted |
 | [29](ADR-29-layered-calculation-and-application-boundaries.md) | Core, monthly integration, application and data-access boundaries | Accepted |
+| [30](ADR-30-monthly-integration-inputs-and-atomic-settlement.md) | M6 caller-injected Slice adapters and atomic Ledger settlement | Accepted |

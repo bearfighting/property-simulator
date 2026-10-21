@@ -14,11 +14,11 @@ use property_simulation_randomness::{RootKey, RunKeyFactory};
 use property_simulation_simulation::{
     ActivityConfiguration, ActivityInstance, ActivitySample, ActivitySampleKind,
     ActivitySampleValue, AssetCondition, BranchRecord, CashFlowContributionTotals, FrozenInput,
-    LoanContinuation, LoanMonthInput, LoanRunUpdate, LoanSlice, MonthlyResult, OpeningState,
-    OutputIdFactory, PropertyTaxCadence, PropertyTaxConfig, PropertyTaxSlice, RentalSlice,
-    RepairSlice, RunCommand, RunConfig, RunIdentity, RunUpdate, RunUpdateValue, SimulationArchive,
-    SimulationError, SimulationRun, SimulationSlice, SingleMonthExecutor, StopCondition,
-    StopReason, UtilityConfig, UtilitySlice, ValidatedInput, coordinate_month_with_loans,
+    LoanContinuation, LoanMonthInput, LoanRunUpdate, LoanSlice, OpeningState, OutputIdFactory,
+    PropertyTaxCadence, PropertyTaxConfig, PropertyTaxSlice, RentalSlice, RepairSlice, RunCommand,
+    RunConfig, RunIdentity, RunUpdate, RunUpdateValue, SimulationArchive, SimulationError,
+    SimulationRun, SimulationSlice, SingleMonthExecutor, StopCondition, StopReason,
+    TestMonthlyResult, UtilityConfig, UtilitySlice, ValidatedInput, coordinate_month_with_loans,
     propose_slice, sample_repair, sample_utility, saved_month,
 };
 
@@ -155,7 +155,7 @@ impl SingleMonthExecutor for CompositionExecutor {
         _opening_ledger: &Ledger,
         _activities: &[ActivityInstance],
         _identity: Option<RunIdentity>,
-    ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+    ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
         Err(SimulationError::InvalidInput(
             "random streams and loan context are required",
         ))
@@ -170,7 +170,7 @@ impl SingleMonthExecutor for CompositionExecutor {
         updates: &[LoanRunUpdate],
         identity: Option<RunIdentity>,
         streams: Option<&property_simulation_randomness::RandomStreams>,
-    ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+    ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
         if !updates.is_empty() {
             return Err(SimulationError::InvalidInput("unexpected loan update"));
         }
@@ -1289,7 +1289,7 @@ fn mixed_slice_batch_checks_only_the_month_end_cash_balance() {
     assert_eq!(contributions.financing, projected.financing);
 }
 
-fn assert_source_and_ids(result: &MonthlyResult) {
+fn assert_source_and_ids(result: &TestMonthlyResult) {
     let proposal = result.proposal();
     let events: std::collections::BTreeSet<_> =
         proposal.events().iter().map(|item| item.id).collect();
@@ -1318,7 +1318,7 @@ fn assert_source_and_ids(result: &MonthlyResult) {
     }
 }
 
-fn assert_utility_sample_provenance(result: &MonthlyResult) {
+fn assert_utility_sample_provenance(result: &TestMonthlyResult) {
     let utility_samples: Vec<_> = result
         .samples()
         .iter()
@@ -1338,7 +1338,7 @@ fn assert_utility_sample_provenance(result: &MonthlyResult) {
     }
 }
 
-fn assert_cash_flow_matches_snapshot(result: &MonthlyResult, ledger: &Ledger, cash: AccountId) {
+fn assert_cash_flow_matches_snapshot(result: &TestMonthlyResult, ledger: &Ledger, cash: AccountId) {
     let projection = ledger
         .validate_projection(result.period(), result.period(), &[cash])
         .unwrap()

@@ -162,7 +162,7 @@ impl SingleMonthExecutor for Executor {
         ledger: &Ledger,
         activities: &[crate::ActivityInstance],
         identity: Option<RunIdentity>,
-    ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+    ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
         self.identity = identity;
         self.calls += 1;
         self.seen_activity_count = Some(activities.len());
@@ -201,7 +201,7 @@ impl SingleMonthExecutor for Executor {
                 }
             })
             .collect();
-        let result = MonthlyResult::new(
+        let result = TestMonthlyResult::new(
             self.identity
                 .map_or(TrialId::from_bytes([4; 16]), |id| id.trial_id),
             self.identity
@@ -275,7 +275,7 @@ fn random_run_key_is_allocated_once_and_reused_across_months() {
             ledger: &Ledger,
             activities: &[crate::ActivityInstance],
             identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             self.inner.execute(input, ledger, activities, identity)
         }
 
@@ -286,7 +286,7 @@ fn random_run_key_is_allocated_once_and_reused_across_months() {
             activities: &[crate::ActivityInstance],
             identity: Option<RunIdentity>,
             streams: Option<&property_simulation_randomness::RandomStreams>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             let run_identity = identity.unwrap();
             let mut stream = streams
                 .unwrap()
@@ -536,7 +536,7 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
             opening_ledger: &Ledger,
             activities: &[crate::ActivityInstance],
             _identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             let currency = input.opening_state().cash.currency();
             let amount = Money::new(1.into(), currency);
             let mut ledger = opening_ledger.clone();
@@ -594,7 +594,7 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
                 cash: amount.checked_neg()?,
                 condition: input.opening_state().condition,
             };
-            let result = MonthlyResult::new(
+            let result = TestMonthlyResult::new(
                 trial,
                 branch,
                 input.frozen_input().period,
@@ -865,7 +865,7 @@ fn executor_specific_input_rejection_is_retryable_and_does_not_execute() {
             _ledger: &Ledger,
             _activities: &[crate::ActivityInstance],
             _identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             panic!("input validation failure must prevent the monthly transition")
         }
     }
@@ -926,7 +926,7 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
             ledger: &Ledger,
             activities: &[crate::ActivityInstance],
             identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             if self.reject_once {
                 self.reject_once = false;
                 let invalid = ActivitySample::new(
@@ -1054,7 +1054,7 @@ fn unrepresentable_loan_and_input_cashflow_support_rejects_before_executor() {
             _ledger: &Ledger,
             _activities: &[crate::ActivityInstance],
             _identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             self.calls.set(self.calls.get() + 1);
             panic!("support validation must precede monthly execution")
         }
@@ -1227,7 +1227,7 @@ fn fatal_executor_preflight_error_fails_the_run() {
             _ledger: &Ledger,
             _activities: &[crate::ActivityInstance],
             _identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             panic!("fatal preflight errors must prevent the monthly transition")
         }
     }
@@ -1269,10 +1269,10 @@ fn inconsistent_executor_output_fails_without_committing_a_snapshot() {
             ledger: &Ledger,
             _activities: &[crate::ActivityInstance],
             _identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             let mut opening = input.opening_state().clone();
             opening.condition = AssetCondition::NeedsRepair;
-            let result = MonthlyResult::new(
+            let result = TestMonthlyResult::new(
                 TrialId::from_bytes([4; 16]),
                 BranchId::from_bytes([5; 16]),
                 input.frozen_input().period,
@@ -1371,7 +1371,7 @@ fn rejects_ledger_postings_that_disagree_with_monthly_result() {
             opening_ledger: &Ledger,
             _activities: &[crate::ActivityInstance],
             _identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             let amount = Money::new(1.into(), input.opening_state().cash.currency());
             let mut ledger = opening_ledger.clone();
             let transaction_id =
@@ -1385,7 +1385,7 @@ fn rejects_ledger_postings_that_disagree_with_monthly_result() {
                         .with_cash_flow_category(CashFlowCategory::Operating),
                 ],
             ))?;
-            let result = MonthlyResult::new(
+            let result = TestMonthlyResult::new(
                 TrialId::from_bytes([4; 16]),
                 BranchId::from_bytes([5; 16]),
                 input.frozen_input().period,
@@ -1483,10 +1483,10 @@ fn trial_and_branch_identity_cannot_change_mid_run() {
             ledger: &Ledger,
             _activities: &[crate::ActivityInstance],
             _identity: Option<RunIdentity>,
-        ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+        ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             self.calls += 1;
             let state = input.opening_state().clone();
-            let result = MonthlyResult::new(
+            let result = TestMonthlyResult::new(
                 TrialId::from_bytes([self.calls; 16]),
                 BranchId::from_bytes([5; 16]),
                 input.frozen_input().period,
@@ -1670,7 +1670,7 @@ fn archive_cashflow_summary_derives_nonzero_month_activity_and_run_totals() {
         cash: input.rent,
         condition: state.condition,
     };
-    let result = MonthlyResult::new(
+    let result = TestMonthlyResult::new(
         trial,
         branch,
         month(1),

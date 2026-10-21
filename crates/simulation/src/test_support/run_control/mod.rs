@@ -2,7 +2,7 @@ use property_simulation_accounting::{Ledger, LedgerTransaction};
 use property_simulation_domain::{BranchId, Money, TrialId, YearMonth};
 
 use crate::{
-    FrozenInput, LoanContinuation, LoanRunUpdate, MonthlyResult, OpeningState, SimulationError,
+    FrozenInput, LoanContinuation, LoanRunUpdate, OpeningState, SimulationError, TestMonthlyResult,
     ValidatedInput,
 };
 
@@ -62,12 +62,12 @@ pub enum RunStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonthSnapshot {
-    result: MonthlyResult,
+    result: TestMonthlyResult,
     ledger: Ledger,
 }
 
 impl MonthSnapshot {
-    pub fn result(&self) -> &MonthlyResult {
+    pub fn result(&self) -> &TestMonthlyResult {
         &self.result
     }
     pub fn ledger(&self) -> &Ledger {
@@ -77,7 +77,7 @@ impl MonthSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunCallResult {
-    pub monthly_result: Option<MonthlyResult>,
+    pub monthly_result: Option<TestMonthlyResult>,
     pub latest_completed_month: Option<YearMonth>,
     pub status: RunStatus,
     pub stop_reason: Option<StopReason>,
@@ -145,7 +145,7 @@ pub trait SingleMonthExecutor {
         opening_ledger: &Ledger,
         activities: &[crate::ActivityInstance],
         identity: Option<RunIdentity>,
-    ) -> Result<(MonthlyResult, Ledger), SimulationError>;
+    ) -> Result<(TestMonthlyResult, Ledger), SimulationError>;
 
     fn execute_with_random_streams(
         &mut self,
@@ -154,7 +154,7 @@ pub trait SingleMonthExecutor {
         activities: &[crate::ActivityInstance],
         identity: Option<RunIdentity>,
         _random_streams: Option<&property_simulation_randomness::RandomStreams>,
-    ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+    ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
         self.execute(input, opening_ledger, activities, identity)
     }
 
@@ -168,7 +168,7 @@ pub trait SingleMonthExecutor {
         updates: &[LoanRunUpdate],
         identity: Option<RunIdentity>,
         random_streams: Option<&property_simulation_randomness::RandomStreams>,
-    ) -> Result<(MonthlyResult, Ledger), SimulationError> {
+    ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
         if !loans.is_empty() || !updates.is_empty() {
             return Err(SimulationError::InvalidInput(
                 "monthly executor does not support loan state or updates",

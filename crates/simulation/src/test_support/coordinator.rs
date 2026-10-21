@@ -5,7 +5,7 @@ use crate::activity::{ActivitySample, ActivitySampleValue, SliceOutput};
 use crate::composition::validate_composition;
 use crate::error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 use crate::proposals::{identify_proposal, merge_proposals};
-use crate::types::{AssetCondition, MonthlyResult, OutputIdFactory, ProposedEffect};
+use crate::types::{AssetCondition, OutputIdFactory, ProposedEffect, TestMonthlyResult};
 use crate::validation::{
     ValidatedInput, validate_cashflow_support, validate_proposal_transactions,
     validate_transaction_batch,
@@ -20,7 +20,7 @@ pub fn coordinate_month(
     trial_id: TrialId,
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
-) -> Result<(MonthlyResult, Ledger), SimulationError> {
+) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
     coordinate_month_inner(
         input,
         opening_ledger,
@@ -41,7 +41,7 @@ pub(crate) fn coordinate_month_allow_empty_with_transactions(
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
     additional_transactions: &[property_simulation_accounting::LedgerTransaction],
-) -> Result<(MonthlyResult, Ledger), SimulationError> {
+) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
     coordinate_month_inner(
         input,
         opening_ledger,
@@ -62,7 +62,7 @@ fn coordinate_month_inner(
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
     additional_transactions: &[property_simulation_accounting::LedgerTransaction],
-) -> Result<(MonthlyResult, Ledger), SimulationError> {
+) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
     if outputs.iter().any(|output| {
         output.instance.configuration.sample_kind() == crate::types::ActivitySampleKind::Loan
     }) {
@@ -135,7 +135,7 @@ fn coordinate_month_inner(
         cash: closing_cash,
         condition,
     };
-    let result = MonthlyResult::new(
+    let result = TestMonthlyResult::new(
         trial_id,
         branch_id,
         period,
