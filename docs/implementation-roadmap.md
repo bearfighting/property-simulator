@@ -183,8 +183,8 @@ M5 只完成底层领域、账务、模型和独立 Slice 模块的计算职责�
 - [x] **M5.3 — 完成本层类型和约束**：补足模块自身所需的类型化输入、输出、身份、月份、币种、账务和跨字段领域不变量；CLI/GUI 格式限制不替代核心领域校验。贷款输入边界校验账户角色、贷款/账簿币种及贷款余额与独立负债账户对账；条款更新核对本金差额凭证的账户、方向和金额；贷款提案通过注入计算核对完整月结果并检查内部恒等式，随机 Slice 样本必须携带匹配用途，见 [M3.6 loan Slice boundary](test-vectors.md#m36-loan-slice-boundary)。
 - [x] **M5.4 — 现金流投影原语**：accounting 提供按包含端点的月份范围查询逐交易、逐类别的现金流贡献；只汇总现金科目分录，借方为正、贷方为负，保留交易 ID 和可选来源，并按期间/交易 ID/类别稳定排序。现有按现金账户和类别汇总的 `CashFlowStatement` 继续作为聚合投影；期初余额不生成流水，无来源交易仍纳入。详见 [领域模型 Ledger 投影约定](domain-model.md#104-ledger-cash-flow-projections) 与 [L-09](test-vectors.md#ledger-vectors)。
 - [x] **M5.5 — 模块级验收**：复核 domain、accounting、models 与独立 Slice 的现有测试及领域向量；Money/YearMonth、Ledger 平衡与投影、贷款数学/延续、分布支持、Slice 输入及拒绝路径均已有模块级覆盖。补充均匀整数采样拒绝偏差尾部后重抽、完整 `u64` 支持范围、随机源错误传播，以及无效维修分布在消费随机数前被拒绝的测试；不引入 IO 或完整月度运行夹具。`./scripts/check.sh`、`cargo fmt --all --check` 与 `git diff --check` 均通过（2026-10-21）。
-- [x] **M5.6 — 依赖与 API 审查**：2026-10-21 重跑正常依赖图并复核生产导出及跨 crate 调用点；共享值、`LedgerRead`、`LoanCalculation`、`RepairCostValidation`、`RandomSource` 和 `Sampler` 符合边界，未发现底层模块直接调用其他职责模块的具体实现。生产 API 无运行实体、历史/分支管理、持久化或多场景调度；测试组合仍仅在 `cfg(test)` 编译。未需代码/API 修正。复核见 [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md#m56-source-re-verification-2026-10-21)。
-- [ ] **M5.7 — 文档和质量门槛**：同步模块职责、依赖图和向量；运行项目质量脚本与格式检查并记录实际结果。
+- [x] **M5.6 — 依赖与 API 审查**：2026-10-21 重跑正常依赖图并复核生产导出及跨 crate 调用点；共享值、`LedgerRead`、`LoanCalculation`、`RepairCostValidation`、`RandomSource` 和 `Sampler` 符合边界，未发现底层模块直接调用其他职责模块的具体实现。后续设计文档复核发现生产仍导出仅供测试运行更新流程使用的 `LoanRunUpdate`，现已移入 `cfg(test)`；完整月度组合和运行/归档流程仍仅在测试支持编译。依赖/调用复核与后续 API 修正见 [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md#m56-source-re-verification-2026-10-21)。
+- [x] **M5.7 — 文档和质量门槛**：模块职责、依赖图和向量已同步至架构文档、ADR-28 与领域测试向量。2026-10-21 执行 `./scripts/check.sh`：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo check --workspace --all-targets` 与 `cargo test --workspace` 全部通过；全 workspace 5 个 crate 的单元测试通过（152 项），doc tests 通过（0 项）。
 
 **M5 完成条件：** 底层模块可各自独立调用，公开边界和依赖方向清楚；模块间通过显式值/注入接口协作，没有单月整合流程。领域和账务计算向量通过。M5 不产出完整月度结果。
 

@@ -14,7 +14,9 @@ pub use terms::{LoanCalculation, apply_loan_terms_update};
 pub use types::LoanCoordinatedMonth;
 #[cfg(test)]
 pub use types::LoanMonthCommand;
+#[cfg(test)]
+pub use types::LoanRunUpdate;
 pub use types::{
-    LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanRunUpdate, LoanSlice,
-    LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate,
+    LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanSlice, LoanStateEffect,
+    LoanStateEffectProposal, LoanTermsUpdate,
 };

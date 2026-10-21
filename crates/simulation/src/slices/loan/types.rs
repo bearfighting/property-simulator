@@ -134,6 +134,7 @@ impl LoanTermsUpdate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct LoanRunUpdate {
     pub instance_id: ActivityInstanceId,
     pub update: LoanTermsUpdate,

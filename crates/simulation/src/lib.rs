@@ -42,10 +42,12 @@ pub use run_control::{
 pub use slices::LoanCoordinatedMonth;
 #[cfg(test)]
 pub use slices::LoanMonthCommand;
+#[cfg(test)]
+pub use slices::LoanRunUpdate;
 pub use slices::{
-    LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanRunUpdate,
-    LoanSlice, LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, PropertyTaxSlice,
-    RentalSlice, RepairSlice, UtilitySlice, apply_loan_terms_update, validate_loan_input,
+    LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanSlice,
+    LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, PropertyTaxSlice, RentalSlice,
+    RepairSlice, UtilitySlice, apply_loan_terms_update, validate_loan_input,
     validate_loan_terms_update,
 };
 #[cfg(test)]

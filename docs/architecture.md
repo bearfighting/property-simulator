@@ -104,7 +104,7 @@ Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明�
 | `simulation::validate_loan_input`、`validate_loan_terms_update`、`LoanSlice::propose_month`、`apply_loan_terms_update` | 贷款 Slice、可选期初贷款、账簿只读接口及注入的 `LoanCalculation`；条款更新和有效期；月计算结果及其输入贷款和计算接口；或当前贷款、更新字段、可选本金交易及计算接口 | 贷款账户/币种/负债余额与模型输入验证；按 Slice 账户校验条款更新交易；对照注入计算验证月结果并生成状态效果和 Ledger 提案；或更新后的贷款条款提案；错误为 `SimulationError` | `propose_month` 不自行实现利息计算、不写 Ledger；贷款规则实现和后续组合/过账由调用方负责。 |
 | `randomness`（调用方适配层）：`RootKey`、`RunKeyFactory`、`RandomStreams` | OS 熵或显式 seed、`TrialId` 与 `SemanticIdentity` | 随机流或 `RandomnessError`；`RandomStream` 实现 models 的 `RandomSource` | 为上层采样调用提供随机源；生产 `simulation` 不依赖此 crate，当前 `simulation` 仅在测试依赖它。它不是 M5 Core 的运行控制或恢复机制。 |
 
-`simulation` 的测试构建还会重导出 `coordinate_month`、`SimulationRun`/run control、`SimulationArchive`、贷款批次协调器、`MonthlyResult` 以及交易预检辅助 API。以上全部经 `#[cfg(test)]` 限定，只供既有测试使用；不是生产入口，也不属于 M5.1 所盘点的可调用生产 API。`simulation::lib.rs` 当前生产导出中另有少量公共数据类型（例如 `LoanContinuation`、`LoanRunUpdate` 和提案/活动值类型），其自身不构成月度整合入口。
+`simulation` 的测试构建还会重导出 `coordinate_month`、`SimulationRun`/run control、`SimulationArchive`、贷款批次协调器、`LoanRunUpdate`、`MonthlyResult` 以及交易预检辅助 API。以上全部经 `#[cfg(test)]` 限定，只供既有测试使用；不是生产入口，也不属于 M5.1 所盘点的可调用生产 API。`simulation::lib.rs` 当前生产导出中另有独立计算所需的公共数据类型（例如 `LoanContinuation` 和提案/活动值类型），其自身不构成月度整合入口。
 
 M5.1 只完成了职责盘点和文档映射。未使用 ID 导出是否移除、以及公开类型是否需要进一步收窄，留给后续 API 审查明确处理；当前不改生产 API、计算行为或 crate 依赖。
 

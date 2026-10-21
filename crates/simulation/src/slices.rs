@@ -11,9 +11,11 @@ mod utility;
 pub use loan::LoanCoordinatedMonth;
 #[cfg(test)]
 pub use loan::LoanMonthCommand;
+#[cfg(test)]
+pub use loan::LoanRunUpdate;
 pub use loan::{
-    LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanRunUpdate,
-    LoanSlice, LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, apply_loan_terms_update,
+    LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanSlice,
+    LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, apply_loan_terms_update,
     validate_loan_input, validate_loan_terms_update,
 };
 #[cfg(test)]
