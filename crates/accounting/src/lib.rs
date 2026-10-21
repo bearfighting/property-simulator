@@ -1,8 +1,10 @@
-//! Accounting definitions and validation built on shared domain identifiers.
+//! Value-based accounting rules built on shared domain identifiers and amounts.
 //!
-//! Account metadata and chart validation live here; posting and statement
-//! projection are added in later milestones. This crate depends on `domain`
-//! only for shared identifiers and values.
+//! This crate defines account metadata, chart and opening-balance validation,
+//! balanced transaction validation and posting, balance calculation, and
+//! financial statement projections from a ledger. Callers own and pass ledger
+//! values; this crate does not provide persistence or a resident ledger service.
+//! Its only workspace dependency is `domain`.
 
 mod account;
 mod account_code;

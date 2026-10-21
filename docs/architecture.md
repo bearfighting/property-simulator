@@ -82,6 +82,32 @@ M0-B 建立了当前 workspace 编译边界，代码位于 `crates/`。下表描
 
 Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出当前公开 API；`error` 保存输入、提案和计算错误，`types` 保存共享状态、类型化活动配置和提案数据（历史月度结果类型仅在测试编译），`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束；`slices::rental`、`slices::repair` 与 `slices::property_tax` 分别实现相应活动规则。物业税 Slice 只读取活动配置和冻结月份，并通过共享提案契约输出经营费用凭证。所有 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 定义账簿计算值，并提供交易验证、批次过账和余额推导操作，账簿值由调用方在计算中传入和接收，不是全局或跨调用驻留状态。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
 
+### 13.1 当前公开计算边界（M5.1）
+
+下表按 crate 的生产导出归纳调用边界，不逐项重复值类型的构造器和读取器。输入均由调用方持有并显式传入；模块不隐式保留跨调用状态。部分方法会按签名更新调用方持有的值：例如 `ChartOfAccounts::insert`、`Ledger::post`/`post_batch`、输入预检记录，以及随机源/采样器推进自身状态。Ledger 批次过账会先验证候选副本，再更新接收者。表中的“错误”是入口的返回类型；详细错误分类由对应类型定义。
+
+| 模块 / 入口 | 输入 | 输出 / 错误 | 协作与状态边界 |
+|---|---|---|---|
+| `domain`：`YearMonth` / `YearMonthRange`、`Currency` / `Money`、强类型 ID | 调用方提供的年月、范围、币种、金额和标识；Money 支持解析、checked 加减/取负/绝对值/整数乘法/比较及入账舍入 | 类型化值及 `DomainError`（适用的构造/算术操作）；`ResourceKey::new` 返回静态字符串错误；年月提供 checked 月份运算和含端点区间 | 共享值与基础不变量；无其他 workspace crate 调用、全局状态或 IO。`BranchId`、`RunId`、`SnapshotId` 当前只作为导出类型，未参与生产计算；`TrialId` 由 randomness 适配器使用。清理这些未使用导出属于后续 API 整理，不在 M5.1 删除。 |
+| `accounting`：`Account` / `AccountCode`、`AccountCategory::normal_balance`、`ChartOfAccounts`、`OpeningBalance(s)`、`LedgerTransaction` 构造与校验 | 账户属性和科目代码、期初余额、凭证 ID/月期/分录/来源 | 验证后的账户/账表/期初余额/凭证或 `AccountError`；余额汇总提供净值 | `Account::new` / `new_cash_position`、`AccountCode::new` / `validate_category`、账表插入、期初余额构造和凭证构造负责各自结构约束；只依赖 `domain` 值。 |
+| `accounting`：`Ledger::new` / `new_with_cash_accounts` | 账表、期初余额、可选显式现金账户集合 | `Ledger` 或 `AccountError` | 构造并验证可传递的账簿值；不调用其他 crate 的规则实现。 |
+| `accounting`：`Ledger::validate_transaction`、`post`、`post_batch`、`balance` / `balances` | Ledger 值和一笔或多笔 `LedgerTransaction`；余额查询用 `AccountId` | 验证/过账成功（过账返回 `()`），或 `AccountError`；余额查询返回账户余额/余额集合 | `post`/`post_batch` 通过 `&mut self` 更新调用方持有的值；批次先在候选副本验证，成功后替换接收者。 |
+| `accounting`：`validate_projection` / `project`、`ValidatedProjection::project`、`CashFlowTotals::net_change` | Ledger、包含端点的起止月、现金账户 ID，或同币种现金流分类合计 | `ValidatedProjection`、`FinancialProjection`（资产负债表、损益表、现金流量表）或净现金变动，或 `AccountError` | 仅从 Ledger 分录与来源计算投影，不维护竞争的现金余额/现金流事实；预检投影借用原 Ledger。 |
+| `models`：`FixedRateLoan::validate`、`derive_payment`、`calculate_month`、`calculate_optional_loan_month` | 固定利率贷款值；可选计算入口接收 `Option<FixedRateLoan>`，其中 `None` 表示不存在或已结清 | 验证、月供或 `LoanMonth` / `Option<LoanMonth>`，或 `LoanModelError` | 贷款数学实现依赖 `domain` 数值；Simulation 需要调用贷款规则时以 `LoanCalculation` 接口注入，不由 Slice 直接调用具体模型。 |
+| `models`：`RepairCostDistribution` / `RepairDistribution`、`RepairSampler`、`UtilityUsageDistribution` / `UtilityUsageSampler`，以及 `Distribution`、`Sampler`、`RandomSource` | 分布支持/概率参数、显式传入的采样器与随机源；维修样本校验还接收待验样本 | 支持边界/最小货币单位、分布/样本校验结果或类型化样本，或 `DomainError` / `SamplingError` | 概率分布描述样本规则；采样器消费调用方传入的随机源。模型 crate 不创建或保存运行随机流。 |
+| `simulation::validate_input` | `FrozenInput`、维修成本分布、实现 `LedgerRead` 的调用方账簿视图、`OpeningState` | `ValidatedInput`，或 `ValidationErrors` | `LedgerRead` 只暴露币种、账户事实和有符号余额；由调用方实现。 |
+| `ValidatedInput::validate_activities_before_sampling` | 可变的 `ValidatedInput`、活动实例集合、`LedgerRead`、额外现金流支持 | 成功或 `SimulationError` | 校验整组活动配置及现金流支持后，将预检活动集合写入该输入值；不是常驻运行状态。 |
+| `simulation::ActivityConfiguration::sample_kind`、`PropertyTaxCadence::months`、`ActivitySample::validate_for`、`PropertyTaxConfig::is_due` / `due_on` | 活动配置/排程频率；或样本、活动实例和月份；或物业税配置与目标月份 | 样本类型/月份间隔、来源校验或 `SimulationError`、物业税到期布尔值 | 类型化值上的局部映射、边界检查和排期计算；不协调其他活动。 |
+| `simulation::sample_repair`、`sample_utility` | 活动实例、月份、对应分布、调用方注入的 `Sampler` 和 `RandomSource`；Utility 还要求预检过的 `ValidatedInput` | 绑定实例、Slice、月份和可选用途的 `ActivitySample<T>`，或 `SamplingError` / `UtilitySamplingError` | 只做模型与活动配置适配并标记来源；不拥有随机生成器。 |
+| `simulation::propose_slice`（`SimulationSlice` 实现） | `ValidatedInput`、来源绑定的类型化 `ActivitySample`、调用方提供的 Slice 实现 | `SliceOutput`（独立提案及来源/资源记录），或 `SimulationError` | 调用注入的 Slice 接口；切片只读同一份期初状态、冻结输入和自身样本，不写 Ledger/共享状态。包含 Rental、Repair、Utility、Property Tax。 |
+| `simulation::identify_proposal`、`merge_proposals`、`validate_composition` | Slice 输出和 `OutputIdFactory`；或已识别提案集合；或资源声明与提案 | 赋 ID 的提案、合并提案或校验成功，错误为 `SimulationError` | 独立提案来源识别、重复身份/冲突检测及资源声明校验；不提交账簿，不装配完整月份。 |
+| `simulation::LoanSlice::propose_month`、`apply_loan_terms_update` | 已算出的 `LoanMonth` 和月份；或当前贷款、更新字段、可选本金交易及注入的 `LoanCalculation` | 贷款期结果/状态效果和 Ledger 提案；或更新后的贷款条款提案；错误为 `SimulationError` | `propose_month` 不计算利息、不写 Ledger；贷款计算和后续组合/过账由调用方负责。 |
+| `randomness`（调用方适配层）：`RootKey`、`RunKeyFactory`、`RandomStreams` | OS 熵或显式 seed、`TrialId` 与 `SemanticIdentity` | 随机流或 `RandomnessError`；`RandomStream` 实现 models 的 `RandomSource` | 为上层采样调用提供随机源；生产 `simulation` 不依赖此 crate，当前 `simulation` 仅在测试依赖它。它不是 M5 Core 的运行控制或恢复机制。 |
+
+`simulation` 的测试构建还会重导出 `coordinate_month`、`SimulationRun`/run control、`SimulationArchive`、贷款批次协调器、`MonthlyResult` 以及交易预检辅助 API。以上全部经 `#[cfg(test)]` 限定，只供既有测试使用；不是生产入口，也不属于 M5.1 所盘点的可调用生产 API。`simulation::lib.rs` 当前生产导出中另有少量公共数据类型（例如 `LoanContinuation`、`LoanRunUpdate` 和提案/活动值类型），其自身不构成月度整合入口。
+
+M5.1 只完成了职责盘点和文档映射。未使用 ID 导出是否移除、以及公开类型是否需要进一步收窄，留给后续 API 审查明确处理；当前不改生产 API、计算行为或 crate 依赖。
+
 早期单期协调器、运行控制、内存归档和贷款批次组合已移入 `crates/simulation/src/test_support/`，仅用于测试，不属于生产 crate 公开 API。当前依赖图如下；randomness 只出现在 simulation 的 dev-dependencies 中：
 
 下图是当前 Cargo manifest 中声明的依赖，不是实际函数调用图；实际跨 crate 调用及职责归属见 [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md)：
