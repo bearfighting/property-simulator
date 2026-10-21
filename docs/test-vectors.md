@@ -44,6 +44,41 @@ month-start rent update and a child branch; and lower-level tests cover the
 loan-update and independent-stream boundaries. This matrix intentionally does
 not claim an unfinished-run checkpoint or persistent rollback guarantee.
 
+## M4.2 operating activity vectors
+
+These vectors define the first deterministic and stochastic operating activities
+before their transition implementations. Amounts are CAD. Expense debits and
+cash credits are balanced operating transactions; cash-flow contributions are
+negative outflows. Zero economic-output cases are the empty-proposal identity;
+the deterministic tax input marker is retained separately for provenance. Utility
+usage is an integer count in the activity instance's configured unit; rate
+multiplication uses checked fixed-point arithmetic and rounds once at posting.
+
+| Case | Inputs | Expected result |
+|---|---|---|
+| Property tax monthly due | Amount $100.00, monthly cadence, first due 2026-01; period 2026-02 | Monthly result retains the deterministic `PropertyTax` marker; Dr property-tax expense $100.00; Cr cash $100.00; one event with key `property_tax.payment` and one transaction with output key `payment`; the transaction's `source_event_key` is `property_tax.payment` for that same instance and period, and the -$100.00 operating contribution references the transaction ID |
+| Property tax quarterly schedule | Amount $300.00, quarterly cadence, first due 2026-01; periods 2026-02 through 2026-04 | February and March retain only the deterministic input marker and have no economic proposal outputs; April posts exactly $300.00. January is not re-created if the run starts in February. No monthly accrual is posted. |
+| Property tax annual boundary | Amount $1,200.00, annual cadence, first due 2026-12; periods 2026-12, 2027-01, and 2027-12 | December 2026 posts $1,200.00; January 2027 retains only the deterministic input marker and has no economic proposal outputs; December 2027 posts $1,200.00. The first due month anchors the annual schedule across the year boundary. |
+| Zero due amount | Amount $0.00 on a due month | The deterministic `PropertyTax` marker is retained; no event, Effect, transaction, or cash-flow contribution is emitted, so economic outputs equal the empty identity. |
+| Rounded-zero payment | Amount $0.004 on a due month | The deterministic `PropertyTax` marker is retained. Posting rounds to $0.00; no zero-value transaction, event, Effect, or contribution is emitted. |
+| Invalid operating account role | Property-tax or utilities expense account is marked contra; alternatively, configured cash account is not a non-contra cash-position asset | Reject the activity configuration before transition; do not post a transaction or emit economic outputs. |
+| Utility positive usage | Utility model version identifies the distribution law; maximum 100 units, sample 12 units, rate $2.50/unit | The monthly result retains the sample and model version. Charge $30.00; Dr utilities expense $30.00; Cr cash $30.00; one event with key `utility.usage_charged` and one transaction with output key `usage-charge`; the transaction's `source_event_key` is `utility.usage_charged` for that same instance and period, and the -$30.00 operating contribution references the transaction ID |
+| Utility zero usage | Maximum 100 units, sample 0, rate $2.50/unit | The sampled value is retained; no event, Effect, transaction, or contribution is emitted, so economic outputs equal the empty-proposal identity. |
+| Utility minor-unit rounding | Sample 3 units, rate $0.125/unit | Exact charge $0.375 rounds once to $0.38 half-up; expense and cash postings are each $0.38 and the transaction balances. |
+| Utility rounded-zero charge | Sample 3 units, rate $0.001/unit | Exact charge $0.003 rounds to $0.00; the sample is retained but no zero-value transaction, event, Effect, or contribution is emitted. |
+| Utility support uses posted rounding | Maximum usage 100 units, rate $0.00004/unit | Validate that the exact maximum product $0.004 fits `Money`; its rounded maximum posted charge and operating cash-flow support contribution are both $0.00. Aggregate support uses the rounded posted bound, not the exact pre-rounding product. |
+| Utility support boundary | Maximum 100 units; samples 0 and 100 | Both samples are accepted; the resulting charges are respectively zero (empty economic proposal) and `100 × rate`. A sample above 100 or with mismatched carried period/Slice/activity/model/purpose is rejected before commit. The utility sampling boundary always uses `occupancy/operations` and `utility.usage`; a wrong trial is rejected by `RandomStreams`, while another category derives an independent stream under ADR-21 rather than being generically rejected. |
+| Utility unrepresentable support | Maximum usage and rate whose exact product is outside the supported `Money` range, or whose maximum operating support makes the whole-period category bound unrepresentable when combined with other active contributors | Reject the activity/run input before sampling. If calculation overflows despite accepted prevalidation, fail the transition as fatal under ADR-19. |
+| Aggregate operating support boundary | A due property-tax payment and rounded maximum utility charge each fit in `Money`, but their absolute support plus other active operating contributors exceeds the period category bound | Reject the monthly input before transition (and before utility sampling); support sums use maximum posted amounts after currency minor-unit rounding, and reversing Slice order cannot turn an unrepresentable support into an accepted month. |
+| Shared cash and permutation | One due tax instance for $100.00 and one utility instance for 12 units at $2.50/unit, both using the same cash account | Separate balanced transactions and unique source-linked outputs are retained; reversing instance/result order yields the same committed Ledger and aggregate operating outflow -$130.00. |
+| Grouping across new and existing activities | One due tax instance for $100.00, two utility instances for $20.00 and $30.00, and one Rental instance receiving $80.00; all evaluate independently against the same opening state and frozen month | Merge the four evaluated instance proposals as `((tax ⊕ utility-1) ⊕ (utility-2 ⊕ rent))` or `(tax ⊕ (utility-1 ⊕ utility-2)) ⊕ rent`, then pass each merged proposal set through the same monthly coordinator once. Both paths yield the same canonical monthly result, Ledger, retained output identities, and net operating contribution -$70.00. Every positive posting's transaction source-event key matches its same-instance, same-period event, and its contribution references that transaction ID; transactions remain separate. |
+| Mixed activity Ledger reconciliation | The preceding tax and utility transactions are batched with rent, repair, and loan transactions | All transactions remain independently attributable and balanced; summed signed activity contributions equal the Ledger direct operating projection for their operating postings. No activity reads another activity's result or account balance. |
+
+For both activities, trial/branch, period, Slice, model version, activity ID,
+output kind, and stable output key determine provenance and output identity under
+ADR-20. Reusing an activity/output identity is rejected before commit. Neither
+activity writes an Effect or changes opening world state.
+
 These hand-calculated vectors are the shared initial verification baseline for Ledger and mortgage calculations. Amounts are CAD unless stated; all values are exact dollars. Posted values use cents and positive half-up rounding. `Dr` and `Cr` mean debit and credit. A transaction balances when debits equal credits. ADRs reference IDs here to avoid duplicated arithmetic.
 
 ## M2 monthly activity vectors
