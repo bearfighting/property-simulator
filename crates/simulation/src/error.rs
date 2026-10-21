@@ -33,6 +33,7 @@ pub struct FatalSimulationFailure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimulationError {
     InvalidInput(&'static str),
+    InputValidation(crate::validation::ValidationErrors),
     InvalidProposal(&'static str),
     Domain(DomainError),
     Accounting(AccountError),

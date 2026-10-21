@@ -26,7 +26,7 @@
 
 ### 5.3 月度输入/输出（M6 目标）
 
-月度计算的参数和结果都是一次调用中的普通数据：生产契约 `MonthlyInput` 共享借用期初状态、当期冻结输入、活动配置、显式样本、独立的贷款延续值和期初 Ledger；当期事件、状态变化、Ledger 凭证增量、Ledger 派生现金流和期末状态由 `MonthlyResult` 表达。结果保留活动/样本来源和强类型贷款延续、事件及状态变化。结果内部构造校验凭证与已识别交易的一致性，以及现金流是否能从凭证分录推出；成功结果只能由 M6 crate 内部构造。期末状态就是该月的状态快照；后续 Application/Data Access 保存完整月度结果数据时，也保存与之关联的 Ledger 派生现金流序列。结果中的 Ledger 更新与交给 Data Access 的 Ledger 记录是同一批经济事实，不形成第二套账簿。现金流不是独立生成的账务事实。Core 不拥有跨调用常驻的快照实体、历史或运行状态。M6 的 Slice 调用与账簿结算边界见 [ADR-30](adr/ADR-30-monthly-integration-inputs-and-atomic-settlement.md)。M6.1 只确立类型与结构校验；适配调用及结算由 M6.2–M6.4 完成。
+月度计算的参数和结果都是一次调用中的普通数据：生产契约 `MonthlyInput` 共享借用期初状态、当期冻结输入、维修成本支持范围、活动配置、显式样本、独立的贷款延续值和期初 Ledger；当期事件、状态变化、Ledger 凭证增量、Ledger 派生现金流和期末状态由 `MonthlyResult` 表达。结果保留活动/样本来源和强类型贷款延续、事件及状态变化。结果内部构造校验凭证与已识别交易的一致性，以及现金流是否能从凭证分录推出；成功结果只能由 M6 crate 内部构造。M6.2 通过调用方提供的 `MonthlySliceAdapter` 异构边界绑定具体 Slice 和类型化显式样本；期初校验成功后，各 Slice 从相同 `ValidatedInput` 独立计算，结果按活动身份排序，并验证每笔贷款延续都匹配一个活动且币种一致。适配边界不分配随机数、不定义活动间执行顺序或依赖。期末状态就是该月的状态快照；后续 Application/Data Access 保存完整月度结果数据时，也保存与之关联的 Ledger 派生现金流序列。结果中的 Ledger 更新与交给 Data Access 的 Ledger 记录是同一批经济事实，不形成第二套账簿。现金流不是独立生成的账务事实。Core 不拥有跨调用常驻的快照实体、历史或运行状态。M6 的 Slice 调用与账簿结算边界见 [ADR-30](adr/ADR-30-monthly-integration-inputs-and-atomic-settlement.md)。M6.1 定义类型和结果结构校验；M6.2 完成期初准备及普通 Slice 调用；提案组合、贷款适配和结算由后续 M6 阶段完成。
 
 ### 5.4 单期计算责任（M6 目标）
 

@@ -340,6 +340,502 @@ fn production_monthly_result_rejects_duplicate_proposal_ids_and_reconciles_cash_
     assert!(build(money("-9")).is_err());
 }
 
+#[test]
+fn monthly_slice_adapters_bind_heterogeneous_samples_and_ignore_adapter_order() {
+    let frozen = input();
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(opening.cash);
+    let rental = rental_activity(61);
+    let utility = utility_activity(62, 10, "2");
+    let rental_sample = ActivitySample::new(&rental, frozen.period, ());
+    let utility_sample = ActivitySample::new(&utility, frozen.period, 3)
+        .with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into()));
+    let sample_records = vec![
+        ActivitySample::new(&rental, frozen.period, ActivitySampleValue::Rental),
+        ActivitySample::new(&utility, frozen.period, ActivitySampleValue::Utility(3))
+            .with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into())),
+    ];
+    let rental_slice = RentalSlice {
+        instance: rental.clone(),
+    };
+    let utility_slice = UtilitySlice {
+        instance: utility.clone(),
+    };
+    let rental_adapter = BoundSliceAdapter::new(&rental_slice, &rental_sample);
+    let utility_adapter = BoundSliceAdapter::new(&utility_slice, &utility_sample);
+    let adapters: [&dyn MonthlySliceAdapter; 2] = [&rental_adapter, &utility_adapter];
+    let reversed_adapters: [&dyn MonthlySliceAdapter; 2] = [&utility_adapter, &rental_adapter];
+    let monthly_input = MonthlyInput {
+        opening_state: &opening,
+        frozen_input: &frozen,
+        repair_distribution: &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        activities: &[rental, utility],
+        samples: &sample_records,
+        loan_continuations: &[],
+        opening_ledger: &ledger,
+    };
+    let first = evaluate_monthly_slices(
+        &monthly_input,
+        &ledger,
+        &crate::REPAIR_COST_RULES,
+        &adapters,
+    )
+    .unwrap();
+    let second = evaluate_monthly_slices(
+        &monthly_input,
+        &ledger,
+        &crate::REPAIR_COST_RULES,
+        &reversed_adapters,
+    )
+    .unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 2);
+    assert!(first[0].instance().id < first[1].instance().id);
+    assert_eq!(first[0].opening_state(), &opening);
+}
+
+#[test]
+fn monthly_slice_input_rejects_invalid_opening_context_before_adapter_evaluation() {
+    struct MustNotRun<'a> {
+        instance: &'a ActivityInstance,
+    }
+    impl MonthlySliceAdapter for MustNotRun<'_> {
+        fn instance(&self) -> &ActivityInstance {
+            self.instance
+        }
+        fn sample_kind(&self) -> ActivitySampleKind {
+            self.instance.configuration.sample_kind()
+        }
+        fn sample_record(
+            &self,
+            period: YearMonth,
+        ) -> Result<ActivitySample<ActivitySampleValue>, SimulationError> {
+            Ok(ActivitySample::new(
+                self.instance,
+                period,
+                ActivitySampleValue::Rental,
+            ))
+        }
+        fn evaluate(&self, _: &ValidatedInput) -> Result<SliceOutput, SimulationError> {
+            panic!("invalid opening context must prevent Slice evaluation")
+        }
+    }
+
+    let frozen = input();
+    let opening = OpeningState {
+        cash: money("99"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(money("100"));
+    let rental = rental_activity(63);
+    let sample = ActivitySample::new(&rental, frozen.period, ActivitySampleValue::Rental);
+    let adapter = MustNotRun { instance: &rental };
+    let adapters: [&dyn MonthlySliceAdapter; 1] = [&adapter];
+    let input = MonthlyInput {
+        opening_state: &opening,
+        frozen_input: &frozen,
+        repair_distribution: &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        activities: std::slice::from_ref(&rental),
+        samples: std::slice::from_ref(&sample),
+        loan_continuations: &[],
+        opening_ledger: &ledger,
+    };
+    assert!(matches!(
+        evaluate_monthly_slices(&input, &ledger, &crate::REPAIR_COST_RULES, &adapters),
+        Err(SimulationError::InputValidation(_))
+    ));
+}
+
+#[test]
+fn monthly_slice_input_rejects_mismatched_typed_sample_before_evaluation() {
+    let frozen = input();
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(opening.cash);
+    let rental = rental_activity(64);
+    let typed_sample = ActivitySample::new(&rental, frozen.period, ());
+    let wrong_record = ActivitySample::new(&rental, frozen.period, ActivitySampleValue::Utility(4));
+    let slice = RentalSlice {
+        instance: rental.clone(),
+    };
+    let adapter = BoundSliceAdapter::new(&slice, &typed_sample);
+    let adapters: [&dyn MonthlySliceAdapter; 1] = [&adapter];
+    let input = MonthlyInput {
+        opening_state: &opening,
+        frozen_input: &frozen,
+        repair_distribution: &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        activities: std::slice::from_ref(&rental),
+        samples: std::slice::from_ref(&wrong_record),
+        loan_continuations: &[],
+        opening_ledger: &ledger,
+    };
+    assert!(matches!(
+        evaluate_monthly_slices(&input, &ledger, &crate::REPAIR_COST_RULES, &adapters),
+        Err(SimulationError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn bound_adapter_validates_typed_sample_provenance_before_erasing_its_type() {
+    struct GuardSlice(ActivityInstance);
+    impl SimulationSlice for GuardSlice {
+        type Sample = ();
+        const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Rental;
+
+        fn instance(&self) -> &ActivityInstance {
+            &self.0
+        }
+
+        fn resources(&self, _: &FrozenInput) -> SliceResources {
+            SliceResources {
+                instance_id: self.0.id,
+                slice_id: self.0.slice_id,
+                reads: Default::default(),
+                writes: Default::default(),
+            }
+        }
+
+        fn sample_value(&self, _: &()) -> ActivitySampleValue {
+            panic!("invalid sample provenance must be rejected before conversion")
+        }
+
+        fn propose_validated(
+            &self,
+            _: &OpeningState,
+            _: &FrozenInput,
+            _: &ValidatedActivitySample<'_, ()>,
+        ) -> Result<SliceProposal, SimulationError> {
+            Ok(SliceProposal::default())
+        }
+    }
+
+    let frozen = input();
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(opening.cash);
+    let activity = rental_activity(67);
+    let mut typed_sample = ActivitySample::new(&activity, frozen.period, ());
+    typed_sample.slice_id = SliceId::from_bytes([99; 16]);
+    let slice = GuardSlice(activity.clone());
+    let adapter = BoundSliceAdapter::new(&slice, &typed_sample);
+    let adapters: [&dyn MonthlySliceAdapter; 1] = [&adapter];
+    let input = MonthlyInput {
+        opening_state: &opening,
+        frozen_input: &frozen,
+        repair_distribution: &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        activities: std::slice::from_ref(&activity),
+        samples: &[ActivitySample::new(
+            &activity,
+            frozen.period,
+            ActivitySampleValue::Rental,
+        )],
+        loan_continuations: &[],
+        opening_ledger: &ledger,
+    };
+    assert!(matches!(
+        evaluate_monthly_slices(&input, &ledger, &crate::REPAIR_COST_RULES, &adapters),
+        Err(SimulationError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn bound_adapter_rejects_declared_sample_kind_before_sample_conversion() {
+    struct WrongKindSlice(ActivityInstance);
+    impl SimulationSlice for WrongKindSlice {
+        type Sample = ();
+        const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Utility;
+
+        fn instance(&self) -> &ActivityInstance {
+            &self.0
+        }
+
+        fn resources(&self, _: &FrozenInput) -> SliceResources {
+            SliceResources {
+                instance_id: self.0.id,
+                slice_id: self.0.slice_id,
+                reads: Default::default(),
+                writes: Default::default(),
+            }
+        }
+
+        fn sample_value(&self, _: &()) -> ActivitySampleValue {
+            panic!("mismatched Slice kind must be rejected before conversion")
+        }
+
+        fn propose_validated(
+            &self,
+            _: &OpeningState,
+            _: &FrozenInput,
+            _: &ValidatedActivitySample<'_, ()>,
+        ) -> Result<SliceProposal, SimulationError> {
+            Ok(SliceProposal::default())
+        }
+    }
+
+    let frozen = input();
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(opening.cash);
+    let activity = rental_activity(68);
+    let typed_sample = ActivitySample::new(&activity, frozen.period, ());
+    let slice = WrongKindSlice(activity.clone());
+    let adapter = BoundSliceAdapter::new(&slice, &typed_sample);
+    let adapters: [&dyn MonthlySliceAdapter; 1] = [&adapter];
+    let monthly_input = MonthlyInput {
+        opening_state: &opening,
+        frozen_input: &frozen,
+        repair_distribution: &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        activities: std::slice::from_ref(&activity),
+        samples: &[ActivitySample::new(
+            &activity,
+            frozen.period,
+            ActivitySampleValue::Rental,
+        )],
+        loan_continuations: &[],
+        opening_ledger: &ledger,
+    };
+    assert!(matches!(
+        evaluate_monthly_slices(
+            &monthly_input,
+            &ledger,
+            &crate::REPAIR_COST_RULES,
+            &adapters,
+        ),
+        Err(SimulationError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn monthly_slice_transition_failure_returns_no_partial_outputs() {
+    struct FailingSlice(ActivityInstance);
+    impl SimulationSlice for FailingSlice {
+        type Sample = ();
+        const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Rental;
+
+        fn instance(&self) -> &ActivityInstance {
+            &self.0
+        }
+
+        fn resources(&self, _: &FrozenInput) -> SliceResources {
+            SliceResources {
+                instance_id: self.0.id,
+                slice_id: self.0.slice_id,
+                reads: Default::default(),
+                writes: Default::default(),
+            }
+        }
+
+        fn sample_value(&self, _: &()) -> ActivitySampleValue {
+            ActivitySampleValue::Rental
+        }
+
+        fn propose_validated(
+            &self,
+            _: &OpeningState,
+            _: &FrozenInput,
+            _: &ValidatedActivitySample<'_, ()>,
+        ) -> Result<SliceProposal, SimulationError> {
+            Err(SimulationError::InvalidProposal(
+                "injected transition failure",
+            ))
+        }
+    }
+
+    let frozen = input();
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(opening.cash);
+    let activity = rental_activity(65);
+    let sample = ActivitySample::new(&activity, frozen.period, ());
+    let slice = FailingSlice(activity.clone());
+    let adapter = BoundSliceAdapter::new(&slice, &sample);
+    let adapters: [&dyn MonthlySliceAdapter; 1] = [&adapter];
+    let monthly_input = MonthlyInput {
+        opening_state: &opening,
+        frozen_input: &frozen,
+        repair_distribution: &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        activities: std::slice::from_ref(&activity),
+        samples: &[ActivitySample::new(
+            &activity,
+            frozen.period,
+            ActivitySampleValue::Rental,
+        )],
+        loan_continuations: &[],
+        opening_ledger: &ledger,
+    };
+    assert!(matches!(
+        evaluate_monthly_slices(
+            &monthly_input,
+            &ledger,
+            &crate::REPAIR_COST_RULES,
+            &adapters,
+        ),
+        Err(SimulationError::Fatal(FatalSimulationFailure {
+            phase: FatalSimulationPhase::SliceTransition,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn monthly_slice_preparation_checks_loan_continuation_identity_without_dispatching_loan() {
+    let frozen = input();
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(opening.cash);
+    let loan_activity = activity_with_kind(66, ActivitySampleKind::Loan);
+    let continuation = LoanContinuation {
+        instance_id: loan_activity.id,
+        slice_id: loan_activity.slice_id,
+        loan: None,
+    };
+    let repair_distribution = RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    fn make_monthly_input<'a>(
+        opening: &'a OpeningState,
+        frozen: &'a FrozenInput,
+        repair_distribution: &'a RepairCostDistribution,
+        activity: &'a ActivityInstance,
+        ledger: &'a property_simulation_accounting::Ledger,
+        loan_continuations: &'a [LoanContinuation],
+    ) -> MonthlyInput<'a> {
+        MonthlyInput {
+            opening_state: opening,
+            frozen_input: frozen,
+            repair_distribution,
+            activities: std::slice::from_ref(activity),
+            samples: &[],
+            loan_continuations,
+            opening_ledger: ledger,
+        }
+    }
+    let empty_adapters: [&dyn MonthlySliceAdapter; 0] = [];
+    let valid = make_monthly_input(
+        &opening,
+        &frozen,
+        &repair_distribution,
+        &loan_activity,
+        &ledger,
+        std::slice::from_ref(&continuation),
+    );
+    assert!(
+        evaluate_monthly_slices(&valid, &ledger, &crate::REPAIR_COST_RULES, &empty_adapters,)
+            .unwrap()
+            .is_empty()
+    );
+
+    let missing = make_monthly_input(
+        &opening,
+        &frozen,
+        &repair_distribution,
+        &loan_activity,
+        &ledger,
+        &[],
+    );
+    assert!(matches!(
+        evaluate_monthly_slices(
+            &missing,
+            &ledger,
+            &crate::REPAIR_COST_RULES,
+            &empty_adapters,
+        ),
+        Err(SimulationError::InvalidInput(_))
+    ));
+
+    let mut wrong_source = continuation.clone();
+    wrong_source.slice_id = SliceId::from_bytes([99; 16]);
+    let mismatched = make_monthly_input(
+        &opening,
+        &frozen,
+        &repair_distribution,
+        &loan_activity,
+        &ledger,
+        std::slice::from_ref(&wrong_source),
+    );
+    assert!(matches!(
+        evaluate_monthly_slices(
+            &mismatched,
+            &ledger,
+            &crate::REPAIR_COST_RULES,
+            &empty_adapters,
+        ),
+        Err(SimulationError::InvalidInput(_))
+    ));
+
+    let duplicate_continuations = [continuation.clone(), continuation];
+    let duplicate = make_monthly_input(
+        &opening,
+        &frozen,
+        &repair_distribution,
+        &loan_activity,
+        &ledger,
+        &duplicate_continuations,
+    );
+    assert!(matches!(
+        evaluate_monthly_slices(
+            &duplicate,
+            &ledger,
+            &crate::REPAIR_COST_RULES,
+            &empty_adapters,
+        ),
+        Err(SimulationError::InvalidInput(_))
+    ));
+
+    let foreign_currency_loan = LoanContinuation {
+        instance_id: loan_activity.id,
+        slice_id: loan_activity.slice_id,
+        loan: Some(property_simulation_models::FixedRateLoan {
+            opening_balance: Money::parse("1", Currency::from_code("USD").unwrap()).unwrap(),
+            remaining_months: 12,
+            annual_rate: rust_decimal::Decimal::ZERO,
+            scheduled_payment: None,
+        }),
+    };
+    let wrong_currency = make_monthly_input(
+        &opening,
+        &frozen,
+        &repair_distribution,
+        &loan_activity,
+        &ledger,
+        std::slice::from_ref(&foreign_currency_loan),
+    );
+    assert!(matches!(
+        evaluate_monthly_slices(
+            &wrong_currency,
+            &ledger,
+            &crate::REPAIR_COST_RULES,
+            &empty_adapters,
+        ),
+        Err(SimulationError::InvalidInput(_))
+    ));
+}
+
 struct FixedWords(Vec<u64>);
 impl RandomSource for FixedWords {
     type Error = &'static str;

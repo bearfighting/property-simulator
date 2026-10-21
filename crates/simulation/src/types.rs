@@ -11,6 +11,7 @@ use property_simulation_domain::{
 };
 #[cfg(test)]
 use property_simulation_domain::{BranchId, TrialId};
+use property_simulation_models::RepairCostDistribution;
 pub use property_simulation_models::RepairSample;
 
 use crate::SimulationError;
@@ -26,6 +27,9 @@ use crate::slices::{LoanContinuation, LoanEvent, LoanStateEffect};
 pub struct MonthlyInput<'a> {
     pub opening_state: &'a OpeningState,
     pub frozen_input: &'a FrozenInput,
+    /// Bounded repair cost support used to validate explicit repair samples.
+    /// M6 does not sample or consume the occurrence probability.
+    pub repair_distribution: &'a RepairCostDistribution,
     pub activities: &'a [ActivityInstance],
     pub samples: &'a [ActivitySample<ActivitySampleValue>],
     /// Opening loan state is separate because the loan module does not implement

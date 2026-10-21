@@ -48,13 +48,13 @@
 
 输入验证器负责拒绝并报告用户可修正的结构问题，并产生满足不变量的冻结输入。该边界之后，状态转移、余额重算和投影不得因缺失引用、分类或投影前置条件而失败。金额采用有限 `i128` 表示；运行时 checked overflow 是显式失败，不能包装成经济结果，也不能静默夹值。未预见的不变量破坏、实现缺陷或基础设施故障由计算函数返回错误；错误调用不生成成功结果，调用方负责将 fatal 错误作为本次模拟失败处理。当前 Core 不定义失败运行恢复/重试或外部持久化一致性保证。
 
-当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数，并在 M6.1 定义 `MonthlyInput`/`MonthlyResult` 数据契约；loan continuation 以独立类型输入，因为贷款尚未实现 `SimulationSlice`。结果内部校验凭证与提案、现金流与分录的一致性，但尚未提供完整结果装配、账簿提交或 Ledger 投影计算。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `crates/simulation/src/test_support/`，由测试编译，其结果类型为测试专用 `TestMonthlyResult`。它们记录早期组合行为，不是生产调用边界。M6.2–M6.4 完成无 IO 的单月调用与结算。M6 不等同于 controller、运行控制或应用层调度。
+当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数；M6.1 定义 `MonthlyInput`/`MonthlyResult` 契约，M6.2 增加异构适配器调用和期初准备。`MonthlyInput` 通过 `RepairCostDistribution` 支持显式维修样本校验；贷款延续仍以独立类型输入，因为贷款尚未实现 `SimulationSlice`。M6.2 每次调用要求非贷款活动、样本和适配器一一对应，并检查贷款活动与延续值的身份和币种；普通 Slice 以相同 `ValidatedInput` 独立评估，输出按活动 ID 排序。尚未提供提案组合、完整结果装配、账簿提交或 Ledger 投影计算。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `crates/simulation/src/test_support/`，由测试编译，其结果类型为测试专用 `TestMonthlyResult`。它们记录早期组合行为，不是生产调用边界。M6.3–M6.4 继续完成提案组合与结算。M6 不等同于 controller、运行控制或应用层调度。
 
 ### 6.2 当前 Rust 实现
 
 当前静态 Slice 契约定义在 [`activity.rs`](../crates/simulation/src/activity.rs)：每个实现声明类型化 `Sample`、`SAMPLE_KIND`、所属活动实例、资源声明和样本转换；`propose_slice` 校验样本实例/Slice/月份及配置类型，再把只读状态、冻结输入和不透明的已验证样本交给 Slice。Slice 返回提案，不能直接修改共享状态或 Ledger。资源与提案合并分别由 [`composition.rs`](../crates/simulation/src/composition.rs) 和 [`proposals.rs`](../crates/simulation/src/proposals.rs) 负责。
 
-`propose_slice` 只调用调用方传入的 `SimulationSlice` 接口并返回绑定来源的 `SliceOutput`。`identify_proposal`、`merge_proposals` 与 `validate_composition` 是独立函数；调用方可按需要显式使用。输入验证依赖注入的 `LedgerRead`，贷款条款变换依赖注入的 `LoanCalculation`。随机源与采样器通过接口传入。当前不提供将这些计算装配为完整月份的生产函数。实例顺序、分组和执行顺序不构成隐式依赖。
+`propose_slice` 只调用调用方传入的 `SimulationSlice` 接口并返回绑定来源的 `SliceOutput`。`evaluate_monthly_slices` 先通过调用方提供的 `LedgerRead`、`RepairCostValidation` 验证月度期初上下文，再通过对象安全的 `MonthlySliceAdapter` 调用异构 Slice；`BoundSliceAdapter<S>` 将具体 Slice 与其类型化样本绑定。适配器与输入样本必须按身份和值匹配，输出按活动身份排序。`identify_proposal`、`merge_proposals` 与 `validate_composition` 仍是独立函数，M6.2 不负责组合。输入验证依赖注入的 `LedgerRead`，贷款条款变换依赖注入的 `LoanCalculation`。随机源与采样器通过接口传入。实例顺序、分组和执行顺序不构成隐式依赖。
 
 ### 6.3 共享资源与冲突
 
@@ -101,6 +101,7 @@ Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明�
 | `simulation::ActivityConfiguration::sample_kind`、`PropertyTaxCadence::months`、`ActivitySample::validate_for`、`PropertyTaxConfig::is_due` / `due_on` | 活动配置/排程频率；或样本、活动实例和月份；或物业税配置与目标月份 | 样本类型/月份间隔、来源校验或 `SimulationError`、物业税到期布尔值 | 类型化值上的局部映射、边界检查和排期计算；不协调其他活动。 |
 | `simulation::sample_repair`、`sample_utility` | 活动实例、月份、对应分布、调用方注入的 `Sampler` 和 `RandomSource`；Utility 还要求预检过的 `ValidatedInput` | 绑定实例、Slice、月份和可选用途的 `ActivitySample<T>`，或 `SamplingError` / `UtilitySamplingError` | 只做模型与活动配置适配并标记来源；不拥有随机生成器。 |
 | `simulation::propose_slice`（`SimulationSlice` 实现） | `ValidatedInput`、来源绑定的类型化 `ActivitySample`、调用方提供的 Slice 实现 | `SliceOutput`（独立提案及来源/资源记录），或 `SimulationError` | 调用注入的 Slice 接口；切片只读同一份期初状态、冻结输入和自身样本，不写 Ledger/共享状态。`RepairSlice` 借用调用方提供的 `RepairCostValidation` 完成提案前的维修样本校验。包含 Rental、Repair、Utility、Property Tax。 |
+| `simulation::evaluate_monthly_slices`、`BoundSliceAdapter<S>` | `MonthlyInput`、调用方的 `LedgerRead`/`RepairCostValidation`、异构 `MonthlySliceAdapter` 列表 | 按活动 ID 排序的 `Vec<SliceOutput>`，或含期初校验/活动上下文的 `SimulationError` | 校验期初输入与完整活动集；在样本转换前核对适配器实例和声明类型，再校验 typed sample 来源/值；核对每个非贷款活动对应一个适配器和样本，并核对贷款活动对应延续值及币种。`LedgerRead` 与借用 Ledger 的对应关系由调用方保证；本 API 不采样、不组合提案、不计算贷款、不结算 Ledger。 |
 | `simulation::identify_proposal`、`merge_proposals`、`validate_composition` | Slice 输出和 `OutputIdFactory`；或已识别提案集合；或资源声明与提案 | 赋 ID 的提案、合并提案或校验成功，错误为 `SimulationError` | 独立提案来源识别、重复身份/冲突检测及资源声明校验；不提交账簿，不装配完整月份。 |
 | `simulation::validate_loan_input`、`validate_loan_terms_update`、`LoanSlice::propose_month`、`apply_loan_terms_update` | 贷款 Slice、可选期初贷款、账簿只读接口及注入的 `LoanCalculation`；条款更新和有效期；月计算结果及其输入贷款和计算接口；或当前贷款、更新字段、可选本金交易及计算接口 | 贷款账户/币种/负债余额与模型输入验证；按 Slice 账户校验条款更新交易；对照注入计算验证月结果并生成状态效果和 Ledger 提案；或更新后的贷款条款提案；错误为 `SimulationError` | `propose_month` 不自行实现利息计算、不写 Ledger；贷款规则实现和后续组合/过账由调用方负责。 |
 | `randomness`（调用方适配层）：`RootKey`、`RunKeyFactory`、`RandomStreams` | OS 熵或显式 seed、`TrialId` 与 `SemanticIdentity` | 随机流或 `RandomnessError`；`RandomStream` 实现 models 的 `RandomSource` | 为上层采样调用提供随机源；生产 `simulation` 不依赖此 crate，当前 `simulation` 仅在测试依赖它。它不是 M5 Core 的运行控制或恢复机制。 |

@@ -84,6 +84,32 @@ impl Deref for SliceOutput {
     }
 }
 
+impl SliceOutput {
+    pub fn instance(&self) -> &ActivityInstance {
+        &self.instance
+    }
+
+    pub const fn period(&self) -> YearMonth {
+        self.period
+    }
+
+    pub fn opening_state(&self) -> &OpeningState {
+        &self.opening_state
+    }
+
+    pub const fn frozen_input(&self) -> &FrozenInput {
+        &self.frozen_input
+    }
+
+    pub fn resources(&self) -> &SliceResources {
+        &self.resources
+    }
+
+    pub fn sample(&self) -> &ActivitySample<ActivitySampleValue> {
+        &self.sample
+    }
+}
+
 /// Validate a typed sample against the concrete activity instance and frozen
 /// period before the Slice receives its value.
 pub fn propose_slice<S: SimulationSlice>(
