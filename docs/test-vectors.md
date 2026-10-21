@@ -200,6 +200,29 @@ The model tests implement M-01 through M-07 and M-09 through M-12; M-08 is the a
 
 At `YearMonth(u32::MAX, 12)`, coordinate rent, two repair instances, a due property-tax payment, two utility instances, and two active fixed-rate loans. The ordinary activities share one cash-position account; property tax and repairs use one expense account, while utilities and loan interest use another; each loan has its own liability account. Both repairs propose the same resulting property condition, which the Effect reducer accepts. All activity transactions remain separate, balanced, and linked to their event and source instance. Each loan continuation reconciles to its own posted liability balance. The per-category sum of activity cash-flow contributions equals the Ledger direct cash-flow projection. Reversing ordinary output/sample order and loan input order yields the same monthly result and Ledger, including transaction history order.
 
+## M4.6 multi-month operating lifecycle vector
+
+The test-owned monthly executor composes rent, repair, property tax, utility, and two
+loans through the same coordinator and Ledger batch for January and February. January
+uses tax amount $25 and each utility instance's initial rate. A February
+`RunUpdateValue::Activities` replaces the tax amount with $35 and changes the utility
+rates; January's result and snapshot retain the original configurations and February
+uses the replacement configurations. Utility samples are drawn independently from
+the `occupancy/operations` semantic identity for each activity instance and retain
+their `utility.usage` purpose, instance, Slice, model version, and period. The run
+stops after the inclusive February boundary and the February snapshot retains its
+samples, configurations, Ledger, and cash-flow contributions.
+
+Forking the January snapshot creates a new trial and branch identity. The child
+applies a distinct February activity configuration while the parent continues with
+its own February update. Both branches begin February from the January closing
+snapshot; their tax/utility postings, loan balances, snapshots, and configuration
+history remain isolated, and the parent January snapshot stays byte-for-byte
+unchanged. A fixed diagnostic key runs the same February composition with reversed
+activity and loan input order; compare the successful monthly outputs, Ledger, and
+contributions. Compare each random sample under its semantic identity;
+equal numeric samples across different instances are allowed.
+
 ### Structural input errors
 
 Reject negative annual interest rate, non-positive principal on an active loan, non-positive remaining term, invalid currency precision, a derived payment that rounds to zero, and terms effective other than at a month start. Zero annual rate and an absent/paid-off loan are valid. These vectors define calculation expectations; Ledger vectors are implemented with M1, and mortgage vectors with the mortgage milestone, not as placeholder tests in M0.

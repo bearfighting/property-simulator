@@ -6,7 +6,10 @@ use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, Currency, EffectId, EventId, LedgerTransactionId,
     ModelVersionId, Money, RunId, SliceId, SnapshotId, TrialId, YearMonth,
 };
-use property_simulation_models::{FixedRateLoan, RepairDistribution, RepairSample, RepairSampler};
+use property_simulation_models::{
+    FixedRateLoan, RepairDistribution, RepairSample, RepairSampler, UtilityUsageDistribution,
+    UtilityUsageSampler,
+};
 use property_simulation_randomness::{RootKey, RunKeyFactory};
 use property_simulation_simulation::{
     ActivityConfiguration, ActivityInstance, ActivitySample, ActivitySampleKind,
@@ -16,7 +19,7 @@ use property_simulation_simulation::{
     RepairSlice, RunCommand, RunConfig, RunIdentity, RunUpdate, RunUpdateValue, SimulationArchive,
     SimulationError, SimulationRun, SimulationSlice, SingleMonthExecutor, StopCondition,
     StopReason, UtilityConfig, UtilitySlice, ValidatedInput, coordinate_month_with_loans,
-    propose_slice, sample_repair_from_streams, saved_month,
+    propose_slice, sample_repair_from_streams, sample_utility_from_streams, saved_month,
 };
 
 fn month(number: u8) -> YearMonth {
@@ -107,6 +110,7 @@ struct CompositionExecutor {
     loans: Vec<LoanSlice>,
     distribution: RepairDistribution,
     sampler: RepairSampler,
+    utility_sampler: UtilityUsageSampler,
     ids: Ids,
 }
 
@@ -123,10 +127,17 @@ impl SingleMonthExecutor for CompositionExecutor {
             self.loans[0].instance_id,
             self.loans[1].instance_id,
         ];
-        if activities.len() != expected.len()
+        if activities.len() < expected.len()
             || expected
                 .iter()
                 .any(|id| !activities.iter().any(|item| item.id == *id))
+            || activities.iter().any(|item| {
+                !expected.contains(&item.id)
+                    && !matches!(
+                        item.configuration,
+                        ActivityConfiguration::PropertyTax(_) | ActivityConfiguration::Utility(_)
+                    )
+            })
         {
             return Err(SimulationError::InvalidInput(
                 "composition executor received an unexpected activity set",
@@ -181,7 +192,7 @@ impl SingleMonthExecutor for CompositionExecutor {
         &mut self,
         input: &ValidatedInput,
         opening_ledger: &Ledger,
-        _activities: &[ActivityInstance],
+        activities: &[ActivityInstance],
         continuations: &[LoanContinuation],
         updates: &[LoanRunUpdate],
         identity: Option<RunIdentity>,
@@ -217,7 +228,7 @@ impl SingleMonthExecutor for CompositionExecutor {
             .map_err(|_| SimulationError::InvalidInput("rental Slice failed"))?;
         let repair_output = propose_slice(&self.repair, input, &repair_sample)
             .map_err(|_| SimulationError::InvalidInput("repair Slice failed"))?;
-        let samples = vec![
+        let mut samples = vec![
             ActivitySample::new(self.rental.instance(), period, ActivitySampleValue::Rental),
             ActivitySample {
                 instance_id: self.repair.instance.id,
@@ -228,6 +239,58 @@ impl SingleMonthExecutor for CompositionExecutor {
                 value: ActivitySampleValue::Repair(repair_sample.value),
             },
         ];
+        let mut outputs = vec![rental_output, repair_output];
+        for instance in activities {
+            match &instance.configuration {
+                ActivityConfiguration::PropertyTax(_) => {
+                    let slice = PropertyTaxSlice {
+                        instance: instance.clone(),
+                    };
+                    let proposal_sample = ActivitySample::new(instance, period, ());
+                    outputs.push(
+                        propose_slice(&slice, input, &proposal_sample).map_err(|_| {
+                            SimulationError::InvalidInput("property-tax Slice failed")
+                        })?,
+                    );
+                    samples.push(ActivitySample::new(
+                        instance,
+                        period,
+                        ActivitySampleValue::PropertyTax,
+                    ));
+                }
+                ActivityConfiguration::Utility(config) => {
+                    let slice = UtilitySlice {
+                        instance: instance.clone(),
+                    };
+                    let typed = sample_utility_from_streams(
+                        input,
+                        streams,
+                        identity.trial_id,
+                        instance,
+                        period,
+                        &UtilityUsageDistribution {
+                            maximum: config.maximum_usage,
+                        },
+                        &mut self.utility_sampler,
+                    )
+                    .map_err(|_| SimulationError::InvalidInput("utility sampling failed"))?;
+                    let sample = ActivitySample {
+                        instance_id: typed.instance_id,
+                        slice_id: typed.slice_id,
+                        version: typed.version,
+                        period: typed.period,
+                        purpose: typed.purpose.clone(),
+                        value: ActivitySampleValue::Utility(typed.value),
+                    };
+                    outputs.push(
+                        propose_slice(&slice, input, &typed)
+                            .map_err(|_| SimulationError::InvalidInput("utility Slice failed"))?,
+                    );
+                    samples.push(sample);
+                }
+                _ => {}
+            }
+        }
         let loan_inputs = self
             .loans
             .iter()
@@ -248,7 +311,7 @@ impl SingleMonthExecutor for CompositionExecutor {
         coordinate_month_with_loans(
             input,
             opening_ledger,
-            vec![rental_output, repair_output],
+            outputs,
             samples,
             identity.trial_id,
             identity.branch_id,
@@ -446,9 +509,273 @@ fn fixture() -> (
             },
         },
         sampler: RepairSampler,
+        utility_sampler: UtilityUsageSampler,
         ids: Ids,
     };
     (run, executor, ledger, continuations)
+}
+
+fn operating_activities(tax_amount: &str, utility_rates: [&str; 2]) -> Vec<ActivityInstance> {
+    let tax = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([6; 16]),
+        slice_id: SliceId::from_bytes([16; 16]),
+        version: ModelVersionId::from_bytes([26; 16]),
+        configuration: ActivityConfiguration::PropertyTax(PropertyTaxConfig {
+            amount: money(tax_amount),
+            cadence: PropertyTaxCadence::Monthly,
+            first_due: month(1),
+            cash_account: account_id(1),
+            expense_account: account_id(3),
+        }),
+    };
+    let utility = |id: u8, unit: &str, rate: &str| ActivityInstance {
+        id: ActivityInstanceId::from_bytes([id; 16]),
+        slice_id: SliceId::from_bytes([id + 10; 16]),
+        version: ModelVersionId::from_bytes([id + 20; 16]),
+        configuration: ActivityConfiguration::Utility(UtilityConfig {
+            usage_unit: unit.into(),
+            maximum_usage: 20,
+            rate_per_unit: money(rate),
+            cash_account: account_id(1),
+            expense_account: account_id(8),
+        }),
+    };
+    vec![
+        activity(1, ActivitySampleKind::Rental),
+        activity(2, ActivitySampleKind::Repair),
+        activity(3, ActivitySampleKind::Loan),
+        activity(4, ActivitySampleKind::Loan),
+        tax,
+        utility(7, "kWh", utility_rates[0]),
+        utility(8, "m3", utility_rates[1]),
+    ]
+}
+
+fn activity_update(activities: Vec<ActivityInstance>, source: &str) -> RunUpdate {
+    RunUpdate {
+        effective_month: month(2),
+        source: source.into(),
+        value: RunUpdateValue::Activities(activities),
+    }
+}
+
+#[test]
+fn m46_operating_activities_follow_month_updates_and_branch_isolation() {
+    let (_, mut executor, ledger, loans) = fixture();
+    let parent_trial = TrialId::from_bytes([31; 16]);
+    let parent_branch = BranchId::from_bytes([41; 16]);
+    let parent_run_id = RunId::from_bytes([71; 16]);
+    let jan_snapshot_id = SnapshotId::from_bytes([72; 16]);
+    let initial = operating_activities("25", ["2", "3"]);
+    let initial_frozen = FrozenInput {
+        period: month(1),
+        rent: money("80"),
+        rent_account: account_id(2),
+        cash_account: account_id(1),
+        repair_expense_account: account_id(3),
+        repair_cost_limit: money("10"),
+    };
+    let mut parent = SimulationRun::new_with_activities_and_loans_and_identity(
+        RunConfig {
+            start: month(1),
+            end: Some(month(2)),
+            stop_conditions: vec![],
+        },
+        OpeningState {
+            cash: money("0"),
+            condition: AssetCondition::NeedsRepair,
+        },
+        initial_frozen,
+        ledger.clone(),
+        initial,
+        loans.clone(),
+        RunIdentity {
+            trial_id: parent_trial,
+            branch_id: parent_branch,
+        },
+    )
+    .unwrap();
+    let mut archive = SimulationArchive::default();
+    archive
+        .register_branch(BranchRecord {
+            id: parent_branch,
+            run_id: parent_run_id,
+            trial_id: parent_trial,
+            start_month: month(1),
+            parent_snapshot: None,
+            fork_month: None,
+        })
+        .unwrap();
+    let jan = parent
+        .call(RunCommand::Continue, &[], &mut executor)
+        .unwrap()
+        .monthly_result
+        .unwrap();
+    assert_eq!(jan.activities().len(), 7);
+    let jan_tax = jan
+        .activities()
+        .iter()
+        .find_map(|a| match &a.configuration {
+            ActivityConfiguration::PropertyTax(c) => Some(c.amount),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(jan_tax, money("25"));
+    for sample in jan
+        .samples()
+        .iter()
+        .filter(|s| matches!(s.value, ActivitySampleValue::Utility(_)))
+    {
+        assert_eq!(sample.purpose.as_deref(), Some("utility.usage"));
+        assert_eq!(sample.period, month(1));
+    }
+    assert_utility_sample_provenance(&jan);
+    let jan_saved = parent.latest_snapshot().unwrap().clone();
+    archive
+        .save_month(saved_month(
+            jan_snapshot_id,
+            parent_run_id,
+            jan_saved.clone(),
+            None,
+        ))
+        .unwrap();
+    let jan_archived = archive.snapshot(jan_snapshot_id).unwrap().snapshot.clone();
+
+    let parent_feb_activities = operating_activities("35", ["4", "5"]);
+    let parent_update = activity_update(parent_feb_activities.clone(), "parent operating update");
+    let parent_feb = parent
+        .call(RunCommand::Continue, &[parent_update], &mut executor)
+        .unwrap();
+    assert_eq!(parent_feb.stop_reason, Some(StopReason::EndMonth(month(2))));
+    let parent_result = parent_feb.monthly_result.unwrap();
+    assert_eq!(
+        parent_result.input_updates()[0].source,
+        "parent operating update"
+    );
+    assert_eq!(parent_result.activities(), parent_feb_activities.as_slice());
+    assert_eq!(parent_result.input_updates()[0].effective_month, month(2));
+    assert_source_and_ids(&parent_result);
+    assert_utility_sample_provenance(&parent_result);
+    assert_cash_flow_matches_snapshot(
+        &parent_result,
+        parent.latest_snapshot().unwrap().ledger(),
+        account_id(1),
+    );
+    let parent_feb_snapshot = parent.latest_snapshot().unwrap().clone();
+
+    let (_, mut reordered_executor, _, baseline_loans) = fixture();
+    reordered_executor.loans.reverse();
+    let mut reordered = SimulationRun::new_with_activities_and_loans_and_identity(
+        RunConfig {
+            start: month(1),
+            end: Some(month(2)),
+            stop_conditions: vec![],
+        },
+        OpeningState {
+            cash: money("0"),
+            condition: AssetCondition::NeedsRepair,
+        },
+        FrozenInput {
+            period: month(1),
+            rent: money("80"),
+            rent_account: account_id(2),
+            cash_account: account_id(1),
+            repair_expense_account: account_id(3),
+            repair_cost_limit: money("10"),
+        },
+        ledger.clone(),
+        operating_activities("25", ["2", "3"]),
+        baseline_loans,
+        RunIdentity {
+            trial_id: parent_trial,
+            branch_id: parent_branch,
+        },
+    )
+    .unwrap();
+    reordered
+        .call(RunCommand::Continue, &[], &mut reordered_executor)
+        .unwrap();
+    let mut reversed_activities = parent_feb_activities.clone();
+    reversed_activities.reverse();
+    let reversed_update = activity_update(reversed_activities, "parent operating update");
+    let reordered_feb = reordered
+        .call(
+            RunCommand::Continue,
+            &[reversed_update],
+            &mut reordered_executor,
+        )
+        .unwrap();
+    let reordered_result = reordered_feb.monthly_result.unwrap();
+    assert_eq!(parent_result.activities(), reordered_result.activities());
+    assert_eq!(parent_result.samples(), reordered_result.samples());
+    assert_eq!(parent_result.proposal(), reordered_result.proposal());
+    assert_eq!(
+        parent_result.cash_flow_contributions(),
+        reordered_result.cash_flow_contributions()
+    );
+    assert_eq!(
+        parent_result.loan_continuations(),
+        reordered_result.loan_continuations()
+    );
+    assert_eq!(
+        parent.latest_snapshot().unwrap().ledger(),
+        reordered.latest_snapshot().unwrap().ledger()
+    );
+
+    let child_trial = TrialId::from_bytes([73; 16]);
+    let child_branch = BranchId::from_bytes([74; 16]);
+    let child_run_id = RunId::from_bytes([75; 16]);
+    let mut child = archive
+        .create_branch(
+            jan_snapshot_id,
+            child_run_id,
+            child_branch,
+            child_trial,
+            Some(month(2)),
+            vec![],
+        )
+        .unwrap();
+    let (_, mut child_executor, _, _) = fixture();
+    child_executor.key_factory = RunKeyFactory::new(RootKey::from_seed([9; 32]));
+    let child_activities = operating_activities("45", ["6", "7"]);
+    let child_update = activity_update(child_activities.clone(), "child operating update");
+    let child_call = child
+        .call(RunCommand::Continue, &[child_update], &mut child_executor)
+        .unwrap();
+    assert_eq!(child_call.stop_reason, Some(StopReason::EndMonth(month(2))));
+    let child_result = child_call.monthly_result.unwrap();
+    assert_eq!(child_result.trial_id(), child_trial);
+    assert_eq!(child_result.branch_id(), child_branch);
+    assert_eq!(child_result.opening_state(), jan.closing_state());
+    assert_eq!(child_result.activities(), child_activities.as_slice());
+    assert_eq!(
+        child_result.input_updates()[0].source,
+        "child operating update"
+    );
+    assert_source_and_ids(&child_result);
+    assert_utility_sample_provenance(&child_result);
+    assert_cash_flow_matches_snapshot(
+        &child_result,
+        child.latest_snapshot().unwrap().ledger(),
+        account_id(1),
+    );
+    assert_eq!(
+        archive.snapshot(jan_snapshot_id).unwrap().snapshot,
+        jan_archived
+    );
+    assert_eq!(jan_saved, jan_archived);
+    assert_eq!(parent.latest_snapshot().unwrap(), &parent_feb_snapshot);
+    assert_eq!(parent.latest_snapshot().unwrap().result(), &parent_result);
+    assert_eq!(child.latest_snapshot().unwrap().result(), &child_result);
+    assert_ne!(
+        parent.latest_snapshot().unwrap().ledger(),
+        child.latest_snapshot().unwrap().ledger()
+    );
+
+    assert!(!parent_result.proposal().transactions().is_empty());
+    assert_eq!(parent_result.period(), month(2));
+    assert_eq!(child_result.period(), month(2));
+    assert_ne!(parent_result.branch_id(), child_result.branch_id());
 }
 
 #[test]
@@ -1017,6 +1344,27 @@ fn assert_source_and_ids(result: &MonthlyResult) {
         assert_eq!(contribution.trial_id, result.trial_id());
         assert_eq!(contribution.branch_id, result.branch_id());
         assert_eq!(contribution.period, result.period());
+    }
+}
+
+fn assert_utility_sample_provenance(result: &MonthlyResult) {
+    let utility_samples: Vec<_> = result
+        .samples()
+        .iter()
+        .filter(|sample| matches!(sample.value, ActivitySampleValue::Utility(_)))
+        .collect();
+    assert_eq!(utility_samples.len(), 2);
+    let identities: std::collections::BTreeSet<_> = utility_samples
+        .iter()
+        .map(|sample| sample.instance_id.as_bytes()[0])
+        .collect();
+    assert_eq!(identities, [7, 8].into_iter().collect());
+    for sample in utility_samples {
+        let id = sample.instance_id.as_bytes()[0];
+        assert_eq!(sample.slice_id.as_bytes()[0], id + 10);
+        assert_eq!(sample.version.as_bytes()[0], id + 20);
+        assert_eq!(sample.period, result.period());
+        assert_eq!(sample.purpose.as_deref(), Some("utility.usage"));
     }
 }
 
