@@ -46,7 +46,10 @@ impl SimulationRun {
             result: result.clone(),
             ledger,
         });
-        self.identity = Some((result.trial_id(), result.branch_id()));
+        self.run_identity = Some(RunIdentity {
+            trial_id: result.trial_id(),
+            branch_id: result.branch_id(),
+        });
         if let Some(reason) = reason {
             self.status = RunStatus::Stopped(reason);
         } else {

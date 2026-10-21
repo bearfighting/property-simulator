@@ -4,8 +4,8 @@ use property_simulation_accounting::{
     CashFlowCategory, LedgerEntry, LedgerTransaction, LedgerTransactionSource,
 };
 use property_simulation_domain::{
-    AccountId, ActivityInstanceId, BranchId, EffectId, EventId, LedgerTransactionId,
-    ModelVersionId, Money, ResourceKey, SliceId, TrialId, YearMonth,
+    AccountId, ActivityInstanceId, BranchId, EffectId, EventId, LedgerTransactionId, Money,
+    ResourceKey, SliceId, TrialId, YearMonth,
 };
 pub use property_simulation_models::RepairSample;
 
@@ -37,7 +37,6 @@ pub struct FrozenInput {
 pub struct ActivityInstance {
     pub id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub version: ModelVersionId,
     pub configuration: ActivityConfiguration,
 }
 /// Per-instance model configuration. The variant is the activity/sample kind,
@@ -157,7 +156,6 @@ pub struct ProposedTransaction {
     pub id: LedgerTransactionId,
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub version: ModelVersionId,
     pub period: YearMonth,
     pub key: String,
     pub source_event_id: Option<EventId>,
@@ -169,7 +167,6 @@ impl ProposedTransaction {
             LedgerTransactionSource {
                 instance_id: self.instance_id,
                 slice_id: self.slice_id,
-                model_version: self.version,
                 output_key: self.key,
                 source_event_id: self.source_event_id,
             },
@@ -181,7 +178,6 @@ pub struct ProposedEvent {
     pub id: EventId,
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub version: ModelVersionId,
     pub period: YearMonth,
     pub key: String,
 }
@@ -190,7 +186,6 @@ pub struct ProposedEffect {
     pub id: EffectId,
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub version: ModelVersionId,
     pub period: YearMonth,
     pub target: ResourceKey,
     pub key: String,
@@ -286,7 +281,6 @@ pub struct CashFlowContribution {
     pub period: YearMonth,
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub output_key: String,
     pub transaction_id: LedgerTransactionId,
     pub category: CashFlowCategory,
@@ -361,10 +355,10 @@ impl MonthlyResult {
                 ));
             }
         }
-        let source_matches = |instance_id, slice_id, version| {
-            activity_by_id.get(&instance_id).is_some_and(|activity| {
-                activity.slice_id == slice_id && activity.version == version
-            })
+        let source_matches = |instance_id, slice_id| {
+            activity_by_id
+                .get(&instance_id)
+                .is_some_and(|activity| activity.slice_id == slice_id)
         };
         let sample_kind_matches = |sample: &ActivitySample<ActivitySampleValue>| {
             activity_by_id
@@ -396,13 +390,13 @@ impl MonthlyResult {
             || samples.iter().any(|sample| sample.period != period)
             || samples
                 .iter()
-                .any(|sample| !source_matches(sample.instance_id, sample.slice_id, sample.version))
+                .any(|sample| !source_matches(sample.instance_id, sample.slice_id))
             || samples.iter().any(|sample| !sample_kind_matches(sample))
             || proposal.events.iter().any(|output| output.period != period)
             || proposal
                 .events
                 .iter()
-                .any(|output| !source_matches(output.instance_id, output.slice_id, output.version))
+                .any(|output| !source_matches(output.instance_id, output.slice_id))
             || proposal
                 .effects
                 .iter()
@@ -410,7 +404,7 @@ impl MonthlyResult {
             || proposal
                 .effects
                 .iter()
-                .any(|output| !source_matches(output.instance_id, output.slice_id, output.version))
+                .any(|output| !source_matches(output.instance_id, output.slice_id))
             || proposal
                 .transactions
                 .iter()
@@ -418,7 +412,7 @@ impl MonthlyResult {
             || proposal
                 .transactions
                 .iter()
-                .any(|output| !source_matches(output.instance_id, output.slice_id, output.version))
+                .any(|output| !source_matches(output.instance_id, output.slice_id))
             || proposal
                 .identity
                 .is_some_and(|identity| identity != (trial_id, branch_id, period))
@@ -449,7 +443,6 @@ impl MonthlyResult {
                     period,
                     instance_id: transaction.instance_id,
                     slice_id: transaction.slice_id,
-                    model_version: transaction.version,
                     output_key: transaction.key.clone(),
                     transaction_id: transaction.id,
                     category,
@@ -487,7 +480,7 @@ impl MonthlyResult {
                     _ => Money::from_parts(0, 0, opening_state.cash.currency())?,
                 },
             }
-            .rounded_for_posting(property_simulation_domain::RoundingPolicy::HalfUp)?;
+            .rounded_for_posting()?;
             if actual_support
                 .get(&activity.id)
                 .copied()
@@ -676,7 +669,6 @@ impl MonthlyResult {
                 id: event.id,
                 instance_id: event.instance_id,
                 slice_id: event.slice_id,
-                version: event.model_version,
                 period: event.period,
                 key: event.key.clone(),
             });
@@ -689,7 +681,6 @@ impl MonthlyResult {
                 ))?;
             if source.instance_id != output.instance_id
                 || source.slice_id != output.slice_id
-                || source.model_version != output.model_version
                 || transaction.period() != self.period
                 || source
                     .source_event_id
@@ -703,7 +694,6 @@ impl MonthlyResult {
                 id: transaction.id(),
                 instance_id: source.instance_id,
                 slice_id: source.slice_id,
-                version: source.model_version,
                 period: transaction.period(),
                 key: source.output_key.clone(),
                 source_event_id: source.source_event_id,
@@ -714,7 +704,6 @@ impl MonthlyResult {
         let loan_activity = ActivityInstance {
             id: output.instance_id,
             slice_id: output.slice_id,
-            version: output.model_version,
             configuration: ActivityConfiguration::Loan,
         };
         if activities
@@ -758,7 +747,6 @@ impl MonthlyResult {
         result.loan_continuations.push(LoanContinuation {
             instance_id: output.instance_id,
             slice_id: output.slice_id,
-            model_version: output.model_version,
             loan: output.closing_loan,
         });
         result
@@ -772,7 +760,6 @@ impl MonthlyResult {
             if effect.period != self.period
                 || effect.instance_id != output.instance_id
                 || effect.slice_id != output.slice_id
-                || effect.model_version != output.model_version
                 || !output
                     .events
                     .iter()

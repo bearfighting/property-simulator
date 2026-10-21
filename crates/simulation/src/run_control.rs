@@ -200,8 +200,7 @@ pub struct SimulationRun {
     ledger: Ledger,
     history: Vec<RunUpdate>,
     latest: Option<MonthSnapshot>,
-    identity: Option<(TrialId, BranchId)>,
-    execution_identity: Option<RunIdentity>,
+    run_identity: Option<RunIdentity>,
     randomness_mode: Option<bool>,
     random_streams: Option<property_simulation_randomness::RandomStreams>,
     status: RunStatus,
@@ -273,9 +272,7 @@ impl SimulationRun {
             !loan_ids.insert(loan.instance_id)
                 || loan_activities
                     .get(&loan.instance_id)
-                    .is_none_or(|activity| {
-                        activity.slice_id != loan.slice_id || activity.version != loan.model_version
-                    })
+                    .is_none_or(|activity| activity.slice_id != loan.slice_id)
         }) || loan_ids.len() != loan_activities.len()
         {
             return Err(RunControlError::InvalidConfig(
@@ -333,8 +330,7 @@ impl SimulationRun {
             ledger,
             history: Vec::new(),
             latest: None,
-            identity: None,
-            execution_identity: None,
+            run_identity: None,
             randomness_mode: None,
             random_streams: None,
             status: RunStatus::Running {
@@ -398,7 +394,7 @@ impl SimulationRun {
             activities,
             loans,
         )?;
-        run.set_execution_identity(identity.trial_id, identity.branch_id);
+        run.set_run_identity(identity);
         Ok(run)
     }
 
@@ -432,10 +428,7 @@ impl SimulationRun {
     pub fn loan_continuations(&self) -> &[LoanContinuation] {
         &self.loan_continuations
     }
-    pub(crate) fn set_execution_identity(&mut self, trial_id: TrialId, branch_id: BranchId) {
-        self.execution_identity = Some(RunIdentity {
-            trial_id,
-            branch_id,
-        });
+    pub(crate) fn set_run_identity(&mut self, identity: RunIdentity) {
+        self.run_identity = Some(identity);
     }
 }

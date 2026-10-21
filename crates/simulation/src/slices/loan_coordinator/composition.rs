@@ -2,8 +2,7 @@ use super::super::loan::{LoanMonthCommand, LoanMonthInput};
 use super::month::prepare_loan_month;
 use crate::{
     FatalSimulationFailure, FatalSimulationPhase, MonthlyResult, OutputIdFactory, SimulationError,
-    SliceOutput, ValidatedInput, activity::ActivitySample,
-    coordinator::coordinate_month_allow_empty_with_transactions,
+    SliceOutput, ValidatedInput, coordinator::coordinate_month_allow_empty_with_transactions,
 };
 use property_simulation_accounting::BalanceSide;
 use property_simulation_domain::Money;
@@ -16,7 +15,6 @@ pub fn coordinate_month_with_loans(
     input: &ValidatedInput,
     opening_ledger: &property_simulation_accounting::Ledger,
     outputs: Vec<SliceOutput>,
-    samples: Vec<ActivitySample<crate::ActivitySampleValue>>,
     trial_id: property_simulation_domain::TrialId,
     branch_id: property_simulation_domain::BranchId,
     ids: &dyn OutputIdFactory,
@@ -54,7 +52,6 @@ pub fn coordinate_month_with_loans(
         input,
         opening_ledger,
         outputs,
-        samples,
         trial_id,
         branch_id,
         ids,

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
-use property_simulation_domain::{AccountId, Currency, Money, RoundingPolicy, YearMonth};
+use property_simulation_domain::{AccountId, Currency, Money, YearMonth};
 
 use crate::transaction::LedgerTransaction;
 use crate::{AccountError, BalanceSide, ChartOfAccounts, OpeningBalances};
@@ -126,7 +126,7 @@ impl Ledger {
             if entry.amount.is_negative() {
                 return Err(AccountError::NegativePostingAmount);
             }
-            if entry.amount.rounded_for_posting(RoundingPolicy::HalfUp)? != entry.amount {
+            if entry.amount.rounded_for_posting()? != entry.amount {
                 return Err(AccountError::PostingAmountPrecision(entry.amount));
             }
             match entry.side {

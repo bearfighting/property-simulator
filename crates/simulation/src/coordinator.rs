@@ -17,7 +17,6 @@ pub fn coordinate_month(
     input: &ValidatedInput,
     opening_ledger: &Ledger,
     outputs: Vec<SliceOutput>,
-    samples: Vec<ActivitySample<ActivitySampleValue>>,
     trial_id: TrialId,
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
@@ -26,7 +25,6 @@ pub fn coordinate_month(
         input,
         opening_ledger,
         outputs,
-        samples,
         trial_id,
         branch_id,
         ids,
@@ -39,7 +37,6 @@ pub(crate) fn coordinate_month_allow_empty_with_transactions(
     input: &ValidatedInput,
     opening_ledger: &Ledger,
     outputs: Vec<SliceOutput>,
-    samples: Vec<ActivitySample<ActivitySampleValue>>,
     trial_id: TrialId,
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
@@ -49,7 +46,6 @@ pub(crate) fn coordinate_month_allow_empty_with_transactions(
         input,
         opening_ledger,
         outputs,
-        samples,
         trial_id,
         branch_id,
         ids,
@@ -62,7 +58,6 @@ fn coordinate_month_inner(
     input: &ValidatedInput,
     opening_ledger: &Ledger,
     outputs: Vec<SliceOutput>,
-    samples: Vec<ActivitySample<ActivitySampleValue>>,
     trial_id: TrialId,
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
@@ -75,10 +70,7 @@ fn coordinate_month_inner(
     }
     if outputs.iter().any(|output| {
         output.instance.configuration.sample_kind() == crate::types::ActivitySampleKind::Loan
-    }) || samples
-        .iter()
-        .any(|sample| matches!(&sample.value, ActivitySampleValue::Loan(_)))
-    {
+    }) {
         return Err(SimulationError::InvalidProposal(
             "loan activities must be coordinated through coordinate_month_with_loans",
         ));
@@ -93,7 +85,7 @@ fn coordinate_month_inner(
     let mut declarations = Vec::with_capacity(outputs.len());
     let mut activities = Vec::with_capacity(outputs.len());
     let mut identified = Vec::with_capacity(outputs.len());
-    let mut evaluated_samples = Vec::with_capacity(outputs.len());
+    let mut samples = Vec::with_capacity(outputs.len());
     for output in outputs {
         if output.period != period
             || output.frozen_input != *input.frozen_input()
@@ -105,21 +97,11 @@ fn coordinate_month_inner(
         }
         activities.push(output.instance.clone());
         declarations.push(output.resources.clone());
-        evaluated_samples.push(output.sample.clone());
+        samples.push(output.sample.clone());
         identified.push(identify_proposal(output, identity)?);
     }
     validate_cashflow_support(input.frozen_input(), &activities)?;
     validate_sample_set(&activities, &samples, period)?;
-    for sample in &samples {
-        if !evaluated_samples
-            .iter()
-            .any(|evaluated| evaluated == sample)
-        {
-            return Err(SimulationError::InvalidProposal(
-                "result sample differs from the value used to evaluate its Slice",
-            ));
-        }
-    }
     validate_composition(&declarations, &identified)?;
     let proposal = merge_proposals(identified)?;
     let condition = reduce_condition(input.opening_state().condition, proposal.effects())?;
@@ -214,7 +196,6 @@ fn validate_sample_set(
             .find(|activity| activity.id == sample.instance_id)
             .unwrap();
         if sample.slice_id != activity.slice_id
-            || sample.version != activity.version
             || !matches!(
                 (&sample.value, activity.configuration.sample_kind()),
                 (

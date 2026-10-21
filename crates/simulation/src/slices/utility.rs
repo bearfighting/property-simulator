@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
-use property_simulation_domain::RoundingPolicy;
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::{SliceResources, account_resource_key};
@@ -35,7 +34,6 @@ impl SimulationSlice for UtilitySlice {
         SliceResources {
             instance_id: self.instance.id,
             slice_id: self.instance.slice_id,
-            version: self.instance.version,
             reads: BTreeSet::new(),
             writes,
         }
@@ -57,11 +55,7 @@ impl SimulationSlice for UtilitySlice {
                 "utility usage sample exceeds configured support",
             ));
         }
-        crate::validation::validate_activity_configuration(
-            &self.instance,
-            input.frozen_input(),
-            input.opening_ledger(),
-        )
+        Ok(())
     }
 
     fn propose_validated(
@@ -74,7 +68,7 @@ impl SimulationSlice for UtilitySlice {
         let amount = config
             .rate_per_unit
             .checked_mul_u64(*sample.value())?
-            .rounded_for_posting(RoundingPolicy::HalfUp)?;
+            .rounded_for_posting()?;
         if amount.is_zero() {
             return Ok(SliceProposal::default());
         }

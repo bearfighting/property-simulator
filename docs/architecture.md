@@ -15,11 +15,11 @@
 | ADR-05 | Slice 独立计算、统一提交 | Slice 不直接写共享 State/Ledger；输出 Proposals/Effects |
 | ADR-06 | Event、Effect、Ledger 分离 | 事件说明发生了什么；Effect 改变状态；Ledger 记录经济事实 |
 | ADR-07 | 现金流按月入账 | 保留每笔明细及其来源，月末产生聚合视图 |
-| ADR-08 | 核心产物是 Dataset | JSON 完整交换，CSV/XLSX 扁平导出；不生成投资报告 |
-| ADR-09 | 随机流显式管理；重新模拟可重新抽样 | 记录规则/参数与抽样配置；重新模拟创建新随机试验流，不承诺生成相同结果 |
+| ADR-08 | 核心产物是内存 Dataset | 配置、来源、已完成结果、快照和分支关系；导出属于 Phase II；不生成投资报告 |
+| ADR-09 | 随机流显式管理；重新模拟可重新抽样 | 保留解释已完成结果所需的规则输入和样本；重新模拟创建新随机试验流，不承诺生成相同结果 |
 | ADR-10 | 三阶段交付 | I 领域内核 M0–M5；II CLI 与持久化；III GPUI 桌面应用。各阶段顺序以实施路线为准；交互式领域决策不属于 v1。 |
 | ADR-11 | 初期 Rust 静态注册 | 暂不做动态插件、通用配置语言或异步服务架构 |
-| ADR-12 | v1 随机范畴独立 | 自然环境、房屋/组件、政策/宏观、居住/运营范畴间按独立处理；Slice 只读期初状态和冻结输入中的共享状态，不读其他实例的当月结果。未来相关性须作为显式、版本化模型设计。 |
+| ADR-12 | v1 随机范畴独立 | 自然环境、房屋/组件、政策/宏观、居住/运营范畴间按独立处理；Slice 只读期初状态和冻结输入中的共享状态，不读其他实例的当月结果。未来相关性须作为明确的模型设计。 |
 | [ADR-13](adr/ADR-13-ledger-profile.md) | 家庭房产 Ledger | 最小科目范围、期初净值及同月权责/现金简化 |
 | [ADR-14](adr/ADR-14-mortgage-interest.md) | 贷款利息计算 | 月利率、按余额/期限推导月供、本金/利息分配、末期结清和舍入规则 |
 | [ADR-15](adr/ADR-15-random-streams-and-branches.md) | 随机流与分支 | 新分支创建新 trial；未完成运行不要求 checkpoint 恢复（ADR-21） |
@@ -43,37 +43,11 @@
 
 单期协调器提供统一的状态转移：读取期初状态、本期冻结输入和显式采样值，独立计算 Slice 并以满足交换律和结合律的方式组合结果，再生成期末状态。成功完成的月份必须满足状态、事件和账簿不变量；不可恢复运行时故障停止运行，但不承诺故障后的回滚或持久化一致性。协调器不读取总运行期限，也不选择下一期。更高层运行控制器决定是否再次调用单期协调器，并评估结束月份、终止条件和逐期继续/停止；快速运行与逐期交互复用同一个单期转移，不复制领域规则。
 
-### 6.2 建议接口（概念草案）
+### 6.2 当前 Rust 调用契约
 
-```rust
-trait SimulationSlice {
-    fn id(&self) -> SliceId;
-    fn version(&self) -> ModelVersion;
-    fn required_inputs(&self) -> InputRequirements;
-    fn validate(&self, scenario: &Scenario) -> Vec<ValidationIssue>;
-    fn propose(&self, ctx: &SliceContext<'_>) -> Result<SliceProposal, SimulationError>;
-}
+当前静态 Slice 契约定义在 [`activity.rs`](../crates/simulation/src/activity.rs)：每个实现声明类型化 `Sample`、`SAMPLE_KIND`、所属活动实例、资源声明和样本转换；`propose_slice` 校验样本实例/Slice/月份及配置类型，再把只读状态、冻结输入和不透明的已验证样本交给 Slice。Slice 返回提案，不能直接修改共享状态或 Ledger。资源与提案合并分别由 [`composition.rs`](../crates/simulation/src/composition.rs) 和 [`proposals.rs`](../crates/simulation/src/proposals.rs) 负责。
 
-struct SliceContext<'a> {
-    period: YearMonth,
-    opening_state: &'a WorldState,
-    input: &'a FrozenMonthlyInput,
-}
-
-struct SliceProposal {
-    events: Vec<ProposedEvent>,
-    effects: Vec<ProposedEffect>,
-    transactions: Vec<ProposedLedgerTransaction>,
-    decisions: Vec<DecisionRequest>,
-    scheduled_actions: Vec<ScheduledAction>,
-}
-```
-
-Slice 只从上下文读取显式、类型化的本期采样值，不调用采样器。样本保留实例、Slice、模型版本和期间来源，交给 Slice 前由协调边界核对来源及样本类型；单期结果再次核对样本类型与活动实例。概率分布定义概率法则，采样器负责从分布产生具体值；二者与 Slice 分别实现，并在组合边界验证兼容性。随机源和流派生遵循 ADR-21：程序启动读取 OS 熵，使用 ChaCha12 与 BLAKE3 语义键子流；未完成运行的随机状态不持久化。单期调用须能基于显式输入独立理解和测试。
-
-该接口只是方向；初期可用静态 enum 和具体结构，避免过早动态分发、类型擦除及插件化。每个实例都接收相同的期初状态和冻结输入；实例输出只交给组合器，不作为其他实例的输入。
-
-`DecisionRequest` 表示需要策略处理的领域选择，不意味着暂停运行。v1 使用场景配置的自动规则解析；交互式等待用户输入属于未来能力。
+普通 Slice 的单期输出已封装提案、活动身份、冻结输入、资源声明和实际使用的样本；[`coordinate_month`](../crates/simulation/src/coordinator.rs) 只接收这些输出，不再接收第二份样本列表。协调器仍在提交前核对输出中的样本来源/种类和资源声明，避免无效输出越过组合边界。贷款月度状态需要额外延续与负债对账，由 loan coordinator 准备并合并到同一 Ledger 批次。实例顺序、分组和执行顺序不构成隐式依赖。
 
 ### 6.3 共享资源与冲突
 
@@ -82,7 +56,7 @@ Slice 只从上下文读取显式、类型化的本期采样值，不调用采�
 - 每月结果由当月生效活动的已提交记录汇总；现金余额按分录推导，现金流按账户和分类投影。保留逐项活动及来源，不以净额替代活动记录。随机模型可决定活动是否发生及其数值，由活动规则生成对应结果。
 - 多笔贷款由同一贷款规则实现逐笔计算并分别保存状态；首版贷款实例之间不建立相关性或联动规则。贷款作为普通 Slice 活动影响期初状态或月度现金流，不设置特殊资金用途/资金流向机制。
 - Effect 显式声明 `ResourceKey` 目标；相同资源的相同状态值可幂等共存，异值写入拒绝。现金影响保留为独立、可追踪的复式凭证，由 Ledger 按账户推导余额，不在提案合并时净额化。
-- 所有提案带 `slice_id`、Slice 实例 ID、`model_version`、`source_event_id`（若有）、`period`。
+- 所有提案带 `slice_id`、Slice 实例 ID、`source_event_id`（若有）和 `period`。
 - Slice 实例由调用方赋予稳定 ID；协调器根据 trial/branch、月份、实例 ID、输出类型及稳定输出键派生事件、Effect 和流水 ID。ID 不依赖执行顺序、分组或 worker 调度。
 
 
@@ -95,23 +69,22 @@ M0-B 已选定最小 workspace 边界，当前实现位于 `crates/`：
 | `property-simulation-domain` (`domain`) | 领域值、实体、不变量与纯领域规则 | 无 workspace crate 依赖 |
 | `property-simulation-accounting` (`accounting`) | 科目、凭证、分录、余额和报表投影 | `domain` |
 | `property-simulation-models` (`models`) | 领域模型策略与概率分布 | `domain` |
-| `property-simulation-simulation` (`simulation`) | 月度生命周期、Slice 协调和运行控制 | `domain`、`accounting`、`models` |
+| `property-simulation-simulation` (`simulation`) | 月度生命周期、Slice 协调和运行控制 | `domain`、`accounting`、`models`、`randomness` |
 | `property-simulation-randomness` (`randomness`) | OS 熵适配、短期运行密钥与语义 ChaCha12 子流 | `domain`、`models` |
 
 `simulation` depends on `randomness` only for its explicit executor stream hook. Domain Slice implementations still receive caller-provided model `RandomSource` values and do not access operating-system entropy.
 
 Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出公开 API；`error` 统一模拟错误，`types` 保存共享状态、类型化活动配置、提案数据与单期结果类型，`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束；`slices::rental`、`slices::repair` 与 `slices::property_tax` 分别实现相应活动规则。物业税 Slice 只读取活动配置和冻结月份，以确定性 `()` 样本保留输入标记，并通过共享提案契约输出经营费用凭证；活动配置与实例共同保存在月度结果中。所有 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 持有账簿状态并负责交易验证、原子过账和余额推导，避免把依赖账簿上下文的不变量分散给独立服务。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
 
-当前 M2.5 单期协调器位于 `simulation::coordinator`：它只协调已评估输出，不依赖或分派具体 Slice；Slice 输出在评估时绑定资源声明。协调器验证声明与来源后，在账簿副本上提交，并用显式 reducer 生成当前支持的期末状态。该模块依赖 simulation 契约及 accounting Ledger，不把业务转移逻辑放入 CLI/GUI 或账务层。
+当前单期协调器位于 `simulation::coordinator`：它只协调已评估输出，不依赖或分派具体 Slice；Slice 输出在评估时绑定资源声明和样本。协调器验证声明与来源后，在账簿副本上提交，并用显式 reducer 生成当前支持的期末状态。该模块依赖 simulation 契约及 accounting Ledger，不把业务转移逻辑放入 CLI/GUI 或账务层。
 
 依赖图：
 
 ```text
-accounting ─┐
-            ├──> domain
-models ─────┘
-
-simulation ───> domain, accounting, models
+accounting ─────> domain
+models ─────────> domain
+randomness ─────> domain, models
+simulation ─────> domain, accounting, models, randomness
 ```
 
 这些 crate 目前只建立编译边界并记录各自职责，不提供空的占位 API；实际公开类型随对应里程碑加入。Infrastructure、CLI 和 GUI 暂不建 crate，待其有明确职责时再加入。Rust workspace 使用 edition 2024、stable toolchain 和集中配置；本地与 CI 共用 `scripts/check.sh`。
@@ -136,7 +109,7 @@ property-simulation-sandbox/
 │   ├── simulation-export/     # JSON, CSV, XLSX
 │   ├── simulation-cli/        # batch runs and test fixtures
 │   └── desktop/               # GPUI
-├── scenarios/                 # versioned example presets
+├── scenarios/                 # example presets
 ├── tests/                     # golden, property, statistical tests
 └── docs/
     ├── project-spec.md
@@ -167,9 +140,9 @@ crates/
 
 - `YearMonth`：有效年月、排序、加减月、包含端点的区间迭代；不使用日期天数表达月度模型。
 - `Money`：带显式币种代码的十进制定点金额，禁止二进制浮点参与账务计算；一个账本首版只允许一种币种，不做兑换。货币符号和本地化格式由展示层处理。
-- `RoundingPolicy`：中间计算使用十进制定点精度，最终入账金额按单币种货币最小单位四舍五入（正数 midpoint half-up）；舍入规则是模型版本的一部分。贷款利息按此规则舍入到分。若未来出现多币种或负数舍入场景，再补充相应约定。
-- 强类型、不透明 ID：场景、运行、Slice、实体、事件、决策、凭证、账户及模型版本各用独立类型；`AccountCode` 是可读科目代码，不是 `AccountId`。ID 由领域调用方提供，核心计算不生成 ID；重试复用原凭证 ID。
-- 所有可序列化模型有明确 schema/version；金额编码为带货币的十进制字符串。
+- 金额舍入：中间计算使用十进制定点精度，最终入账金额按单币种货币最小单位四舍五入（正数 midpoint half-up）。贷款利息按此规则舍入到分。当前规则固定，不通过可配置策略参数传递。
+- 强类型、不透明 ID：场景、运行、Slice、实体、事件、决策、凭证及账户各用独立类型；`AccountCode` 是可读科目代码，不是 `AccountId`。ID 由领域调用方提供，核心计算不生成 ID；重试复用原凭证 ID。
+- M5 的领域内存类型不依赖序列化格式。金额在领域中使用带币种的定点类型；SQLite 和文件导出的具体编码属于 Phase II 的基础设施边界。
 
 **状态、历史与连续运行**
 
@@ -184,6 +157,6 @@ crates/
 **事件与状态变化**
 
 - `Event` 记录已发生事实；`Decision` 记录用户或策略选择；`Effect` 描述经过校验的状态变化；`LedgerTransaction` 记录该业务动作的会计影响。
-- 记录携带稳定 ID、期间、来源 Slice/模型版本、因果引用和适用实体。
+- 记录携带稳定 ID、期间、来源 Slice、因果引用和适用实体。
 - Slice 只向只读上下文提交候选提案；统一协调器负责验证、冲突处理及成功期次的完整提交。不可恢复运行时故障后的回滚、恢复和持久化一致性不作保证。Slice 不直接改写世界状态或总账。
 - 业务事件可以有多个 Effects 和多张有明确语义的凭证；导出/查询层不得把事件、状态变化和会计事实混成一条含义模糊的流水。

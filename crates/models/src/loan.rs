@@ -1,4 +1,4 @@
-use property_simulation_domain::{DomainError, Money, RoundingPolicy};
+use property_simulation_domain::{DomainError, Money};
 use rust_decimal::Decimal;
 
 /// Inputs and continuation data for a fixed-rate, fully amortizing loan.
@@ -49,11 +49,7 @@ impl FixedRateLoan {
         if self.opening_balance.is_zero() || self.opening_balance.is_negative() {
             return Err(LoanModelError::NonPositiveBalance);
         }
-        if self
-            .opening_balance
-            .rounded_for_posting(RoundingPolicy::HalfUp)?
-            != self.opening_balance
-        {
+        if self.opening_balance.rounded_for_posting()? != self.opening_balance {
             return Err(LoanModelError::InvalidPrincipalPrecision);
         }
         Ok(())
@@ -66,7 +62,7 @@ impl FixedRateLoan {
             if payment.currency() != self.opening_balance.currency()
                 || payment.is_negative()
                 || payment.is_zero()
-                || payment.rounded_for_posting(RoundingPolicy::HalfUp)? != payment
+                || payment.rounded_for_posting()? != payment
                 || payment.checked_cmp(interest)? == std::cmp::Ordering::Less
             {
                 return Err(LoanModelError::InvalidScheduledPayment);
@@ -100,7 +96,7 @@ impl FixedRateLoan {
                 .ok_or(LoanModelError::Arithmetic)?
         };
         let payment = money(raw, self.opening_balance.currency())?
-            .rounded_for_posting(RoundingPolicy::HalfUp)
+            .rounded_for_posting()
             .map_err(LoanModelError::from)?;
         if payment.is_zero() {
             return Err(LoanModelError::DerivedPaymentRoundsToZero);
@@ -147,7 +143,7 @@ impl FixedRateLoan {
                 .ok_or(LoanModelError::Arithmetic)?,
             self.opening_balance.currency(),
         )?
-        .rounded_for_posting(RoundingPolicy::HalfUp)
+        .rounded_for_posting()
         .map_err(Into::into)
     }
 }

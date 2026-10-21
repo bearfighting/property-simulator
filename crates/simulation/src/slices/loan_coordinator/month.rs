@@ -54,7 +54,6 @@ fn coordinate_loan_month_inner(
         return Ok(LoanCoordinatedMonth {
             instance_id: slice.instance_id,
             slice_id: slice.slice_id,
-            model_version: slice.model_version,
             cash_account: slice.cash_account,
             liability_account: slice.liability_account,
             period,
@@ -100,7 +99,6 @@ fn coordinate_loan_month_inner(
             id: event_id,
             instance_id: slice.instance_id,
             slice_id: slice.slice_id,
-            model_version: slice.model_version,
             period,
             key: "loan_terms_update".into(),
             previous_balance: Some(loan.opening_balance),
@@ -154,7 +152,6 @@ fn coordinate_loan_month_inner(
                 .with_source(LedgerTransactionSource {
                     instance_id: slice.instance_id,
                     slice_id: slice.slice_id,
-                    model_version: slice.model_version,
                     output_key: "loan_balance_update".into(),
                     source_event_id: Some(event_id),
                 });
@@ -165,7 +162,6 @@ fn coordinate_loan_month_inner(
                 period,
                 instance_id: slice.instance_id,
                 slice_id: slice.slice_id,
-                model_version: slice.model_version,
                 output_key: "loan_balance_update".into(),
                 transaction_id: tx_id,
                 category: CashFlowCategory::Financing,
@@ -225,7 +221,6 @@ fn coordinate_loan_month_inner(
             return Ok(LoanCoordinatedMonth {
                 instance_id: slice.instance_id,
                 slice_id: slice.slice_id,
-                model_version: slice.model_version,
                 cash_account: slice.cash_account,
                 liability_account: slice.liability_account,
                 period,
@@ -239,7 +234,6 @@ fn coordinate_loan_month_inner(
                     id: ids.effect_id(trial_id, branch_id, period, slice.instance_id, "loan_state"),
                     instance_id: slice.instance_id,
                     slice_id: slice.slice_id,
-                    model_version: slice.model_version,
                     period,
                     previous: Some(opening_loan),
                     updated: None,
@@ -274,7 +268,6 @@ fn coordinate_loan_month_inner(
     .with_source(LedgerTransactionSource {
         instance_id: slice.instance_id,
         slice_id: slice.slice_id,
-        model_version: slice.model_version,
         output_key: "loan_payment".into(),
         source_event_id: Some(payment_event_id),
     });
@@ -282,7 +275,6 @@ fn coordinate_loan_month_inner(
         id: payment_event_id,
         instance_id: slice.instance_id,
         slice_id: slice.slice_id,
-        model_version: slice.model_version,
         period,
         key: "loan_payment".into(),
         previous_balance: Some(loan.opening_balance),
@@ -348,7 +340,6 @@ fn coordinate_loan_month_inner(
             period,
             instance_id: slice.instance_id,
             slice_id: slice.slice_id,
-            model_version: slice.model_version,
             output_key: "loan_payment_interest".into(),
             transaction_id,
             category: CashFlowCategory::Operating,
@@ -360,7 +351,6 @@ fn coordinate_loan_month_inner(
             period,
             instance_id: slice.instance_id,
             slice_id: slice.slice_id,
-            model_version: slice.model_version,
             output_key: "loan_payment_principal".into(),
             transaction_id,
             category: CashFlowCategory::Financing,
@@ -371,7 +361,6 @@ fn coordinate_loan_month_inner(
     Ok(LoanCoordinatedMonth {
         instance_id: slice.instance_id,
         slice_id: slice.slice_id,
-        model_version: slice.model_version,
         cash_account: slice.cash_account,
         liability_account: slice.liability_account,
         period,
@@ -385,7 +374,6 @@ fn coordinate_loan_month_inner(
             id: ids.effect_id(trial_id, branch_id, period, slice.instance_id, "loan_state"),
             instance_id: slice.instance_id,
             slice_id: slice.slice_id,
-            model_version: slice.model_version,
             period,
             previous: Some(opening_loan),
             updated: closing_loan,

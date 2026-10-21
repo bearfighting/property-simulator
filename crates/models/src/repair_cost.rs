@@ -1,5 +1,5 @@
 use crate::sampling::{RandomSource, Sampler, SamplingError, uniform_inclusive};
-use property_simulation_domain::{DomainError, Money, RoundingPolicy};
+use property_simulation_domain::{DomainError, Money};
 
 /// Typed outcome shared with the simulation crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ impl RepairCostDistribution {
 
     pub fn validate_sample(&self, value: Money) -> Result<(), DomainError> {
         self.validate_support()?;
-        let rounded = value.rounded_for_posting(RoundingPolicy::HalfUp)?;
+        let rounded = value.rounded_for_posting()?;
         let maximum_supported = self.money_for_minor_units(self.maximum_minor_units()?)?;
         if value.is_negative()
             || value != rounded
@@ -130,7 +130,7 @@ impl Sampler<RepairDistribution> for RepairSampler {
             .cost
             .money_for_minor_units(units)
             .map_err(|_| SamplingError::InvalidDistribution)?
-            .rounded_for_posting(RoundingPolicy::HalfUp)
+            .rounded_for_posting()
             .map_err(|_| SamplingError::InvalidDistribution)?;
         Ok(RepairSample::Repair { cost })
     }

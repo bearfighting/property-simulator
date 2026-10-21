@@ -279,7 +279,10 @@ impl SimulationArchive {
             result.loan_continuations().to_vec(),
         )
         .map_err(|_| ArchiveError::InvalidRunBoundary)?;
-        run.set_execution_identity(trial_id, branch_id);
+        run.set_run_identity(crate::RunIdentity {
+            trial_id,
+            branch_id,
+        });
         self.register_branch(BranchRecord {
             id: branch_id,
             run_id,

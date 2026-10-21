@@ -56,7 +56,6 @@ pub(crate) fn identify_proposal_for(
             ),
             instance_id: instance.id,
             slice_id: instance.slice_id,
-            version: instance.version,
             period,
             key: event.key,
         })
@@ -85,7 +84,6 @@ pub(crate) fn identify_proposal_for(
                 ),
                 instance_id: instance.id,
                 slice_id: instance.slice_id,
-                version: instance.version,
                 period,
                 target: effect.target,
                 key: effect.key,
@@ -114,7 +112,6 @@ pub(crate) fn identify_proposal_for(
                 ),
                 instance_id: instance.id,
                 slice_id: instance.slice_id,
-                version: instance.version,
                 period,
                 key: transaction.key,
                 source_event_id,

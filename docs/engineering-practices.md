@@ -10,7 +10,7 @@
 
 - **Domain**：实体、值对象、不变量、领域错误、利息/故障等纯计算规则；不依赖数据库、文件、GUI、CLI 或外部服务。
 - **Application / Services**：用例编排、运行流程、Slice 调度、事务边界和端口调用；协调 domain，不重新实现领域规则。
-- **Configuration**：场景输入、默认值展开、版本化配置、解析和校验；转换成明确的 domain/application 输入，不让配置格式类型渗入领域核心。
+- **Configuration**：场景输入、默认值展开、配置、解析和校验；转换成明确的 domain/application 输入，不让配置格式类型渗入领域核心。
 - **Data Access / Infrastructure**：SQLite、文件、序列化、随机数生成器适配、时钟等外部能力；通过接口由上层注入，不能反向依赖具体 domain 实现细节。
 - **Unit of Work / Work Unit**：定义一次成功期次提交的工作边界。正常成功结果将状态 Effects、Ledger 凭证、事件和快照作为同一完整提交；同一提交操作的重复提交须按定义拒绝或保持幂等。未完成运行 checkpoint 恢复不属于首版要求；不可恢复运行时错误发生后不保证回滚、恢复或持久化一致性。内存实现可先用于核心测试，持久化实现后续提供。
 - **Presentation**：CLI、GPUI 及导出适配层负责输入/展示/调用应用用例，不承载领域计算或直接操作存储实现。

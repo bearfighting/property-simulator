@@ -1,6 +1,5 @@
 use property_simulation_domain::{
-    AccountId, ActivityInstanceId, EventId, LedgerTransactionId, ModelVersionId, Money, SliceId,
-    YearMonth,
+    AccountId, ActivityInstanceId, EventId, LedgerTransactionId, Money, SliceId, YearMonth,
 };
 
 use crate::{BalanceSide, CashFlowCategory};
@@ -46,7 +45,6 @@ impl LedgerEntry {
 pub struct LedgerTransactionSource {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub output_key: String,
     pub source_event_id: Option<EventId>,
 }

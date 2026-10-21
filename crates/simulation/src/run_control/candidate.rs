@@ -111,7 +111,7 @@ pub(super) fn prepare_month(
     let loan_activity_map: std::collections::BTreeMap<_, _> = activities
         .iter()
         .filter(|activity| activity.configuration.sample_kind() == crate::ActivitySampleKind::Loan)
-        .map(|activity| (activity.id, (activity.slice_id, activity.version)))
+        .map(|activity| (activity.id, activity.slice_id))
         .collect();
     let prior_loans: std::collections::BTreeMap<_, _> = run
         .loan_continuations
@@ -119,13 +119,13 @@ pub(super) fn prepare_month(
         .map(|loan| (loan.instance_id, loan))
         .collect();
     let mut candidate_loans = Vec::with_capacity(loan_activity_map.len());
-    for (instance_id, (slice_id, version)) in &loan_activity_map {
+    for (instance_id, slice_id) in &loan_activity_map {
         let Some(loan) = prior_loans.get(instance_id) else {
             return Err(RunControlError::InvalidUpdate(
                 "a new loan activity requires an explicit opening loan state",
             ));
         };
-        if loan.slice_id != *slice_id || loan.model_version != *version {
+        if loan.slice_id != *slice_id {
             return Err(RunControlError::InvalidUpdate(
                 "loan activity identity cannot change while it is active",
             ));

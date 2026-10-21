@@ -1,5 +1,4 @@
 use property_simulation_accounting::{AccountCategory, AccountError, Ledger, LedgerTransaction};
-use property_simulation_domain::RoundingPolicy;
 use property_simulation_models::RepairCostDistribution;
 
 use crate::SimulationError;
@@ -110,10 +109,7 @@ pub(crate) fn validate_activity_configuration(
             config.expense_account,
             !config.amount.is_negative()
                 && config.amount.currency() == ledger.currency()
-                && config
-                    .amount
-                    .rounded_for_posting(RoundingPolicy::HalfUp)
-                    .is_ok(),
+                && config.amount.rounded_for_posting().is_ok(),
             "invalid property tax amount, currency, or account role",
         ),
         crate::ActivityConfiguration::Utility(config) => {
@@ -125,7 +121,7 @@ pub(crate) fn validate_activity_configuration(
                     && !config.rate_per_unit.is_negative()
                     && config.rate_per_unit.currency() == ledger.currency()
                     && maximum
-                        .and_then(|amount| amount.rounded_for_posting(RoundingPolicy::HalfUp))
+                        .and_then(|amount| amount.rounded_for_posting())
                         .is_ok(),
                 "invalid utility unit, maximum charge, currency, or account role",
             )
@@ -218,7 +214,7 @@ pub fn validate_input(
         ("repair_cost_limit", input.repair_cost_limit),
         ("repair_distribution.maximum", repair_distribution.maximum),
     ] {
-        if !amount.is_negative() && amount.rounded_for_posting(RoundingPolicy::HalfUp).is_err() {
+        if !amount.is_negative() && amount.rounded_for_posting().is_err() {
             issues.push(ValidationIssue {
                 field,
                 message: "amount cannot be rounded for posting",
@@ -336,10 +332,8 @@ pub(crate) fn validate_cashflow_support_with_additional(
     >,
 ) -> Result<(), SimulationError> {
     let currency = input.rent.currency();
-    let rent = input.rent.rounded_for_posting(RoundingPolicy::HalfUp)?;
-    let repair = input
-        .repair_cost_limit
-        .rounded_for_posting(RoundingPolicy::HalfUp)?;
+    let rent = input.rent.rounded_for_posting()?;
+    let repair = input.repair_cost_limit.rounded_for_posting()?;
     let mut absolute_support = std::collections::BTreeMap::from([
         (
             property_simulation_accounting::CashFlowCategory::Operating,
@@ -365,7 +359,7 @@ pub(crate) fn validate_cashflow_support_with_additional(
                 crate::ActivityConfiguration::PropertyTax(config)
                     if tax_due(input.period, config.first_due, config.cadence) =>
                 {
-                    config.amount.rounded_for_posting(RoundingPolicy::HalfUp)?
+                    config.amount.rounded_for_posting()?
                 }
                 _ => property_simulation_domain::Money::from_parts(0, 0, currency)?,
             },
@@ -378,7 +372,7 @@ pub(crate) fn validate_cashflow_support_with_additional(
                             "utility maximum exact charge exceeds the representable Money range",
                         )
                     })?
-                    .rounded_for_posting(RoundingPolicy::HalfUp)
+                    .rounded_for_posting()
                     .map_err(|_| {
                         SimulationError::InvalidInput(
                             "utility maximum charge cannot be rounded for posting",

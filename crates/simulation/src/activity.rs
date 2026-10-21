@@ -6,7 +6,7 @@ use crate::types::{
     ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState, RepairSample, SliceProposal,
 };
 use crate::validation::ValidatedInput;
-use property_simulation_domain::{ActivityInstanceId, ModelVersionId, SliceId, YearMonth};
+use property_simulation_domain::{ActivityInstanceId, SliceId, YearMonth};
 use property_simulation_models::{
     Distribution, RandomSource, RepairDistribution, Sampler, SamplingError,
 };
@@ -103,7 +103,6 @@ pub fn propose_slice<S: SimulationSlice>(
     let resources = slice.resources(frozen_input);
     if resources.instance_id != slice.instance().id
         || resources.slice_id != slice.instance().slice_id
-        || resources.version != slice.instance().version
     {
         return Err(SimulationError::InvalidProposal(
             "resource declaration provenance does not match Slice",
@@ -148,7 +147,6 @@ pub fn propose_slice<S: SimulationSlice>(
 pub struct ActivitySample<T> {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub version: ModelVersionId,
     pub period: YearMonth,
     /// Semantic random purpose, absent for caller supplied deterministic samples.
     pub purpose: Option<String>,
@@ -170,7 +168,6 @@ pub enum UtilitySamplingError {
     InvalidDistribution,
     ActivitySetNotPreflighted,
     PeriodMismatch,
-    InvalidMaximumCharge,
     Randomness(property_simulation_randomness::RandomnessError),
     Sampler(SamplingError<std::convert::Infallible>),
 }
@@ -190,32 +187,18 @@ pub fn sample_utility_from_streams<S>(
 where
     S: Sampler<property_simulation_models::UtilityUsageDistribution>,
 {
-    let utility_config = match &instance.configuration {
+    if !matches!(
+        &instance.configuration,
         crate::types::ActivityConfiguration::Utility(config)
-            if distribution.maximum == config.maximum_usage =>
-        {
-            config
-        }
-        _ => return Err(UtilitySamplingError::InvalidDistribution),
-    };
+            if distribution.maximum == config.maximum_usage
+    ) {
+        return Err(UtilitySamplingError::InvalidDistribution);
+    }
     if !validated.has_preflighted_activity(instance) {
         return Err(UtilitySamplingError::ActivitySetNotPreflighted);
     }
     if validated.frozen_input().period != period {
         return Err(UtilitySamplingError::PeriodMismatch);
-    }
-    if !distribution.validate() {
-        return Err(UtilitySamplingError::InvalidDistribution);
-    }
-    if utility_config
-        .rate_per_unit
-        .checked_mul_u64(utility_config.maximum_usage)
-        .and_then(|maximum| {
-            maximum.rounded_for_posting(property_simulation_domain::RoundingPolicy::HalfUp)
-        })
-        .is_err()
-    {
-        return Err(UtilitySamplingError::InvalidMaximumCharge);
     }
     let mut random = streams
         .stream(&property_simulation_randomness::SemanticIdentity {
@@ -224,7 +207,6 @@ where
             slice_id: instance.slice_id,
             activity_id: instance.id,
             period,
-            model_version: instance.version,
             purpose: UTILITY_SAMPLE_PURPOSE.into(),
         })
         .map_err(UtilitySamplingError::Randomness)?;
@@ -281,7 +263,6 @@ where
             slice_id: instance.slice_id,
             activity_id: instance.id,
             period,
-            model_version: instance.version,
             purpose: REPAIR_SAMPLE_PURPOSE.into(),
         })
         .map_err(RepairSamplingError::Randomness)?;
@@ -296,7 +277,6 @@ impl<T> ActivitySample<T> {
         Self {
             instance_id: instance.id,
             slice_id: instance.slice_id,
-            version: instance.version,
             period,
             purpose: None,
             value,
@@ -315,7 +295,6 @@ impl<T> ActivitySample<T> {
     ) -> Result<(), SimulationError> {
         if self.instance_id != instance.id
             || self.slice_id != instance.slice_id
-            || self.version != instance.version
             || self.period != period
         {
             return Err(SimulationError::InvalidInput(

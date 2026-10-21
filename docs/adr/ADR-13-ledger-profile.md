@@ -31,7 +31,7 @@ M1 projection APIs use an inclusive period. Balance sheet is as of its end month
 - Indirect cash flow as the initial projection: requires reconciliation adjustments for non-cash and timing differences that are not part of the initial model.
 
 ## Consequences
-Balances and statements derive from opening balances and posted entries. Principal repayment reduces the designated cash position and loan liability, not expense; interest is recognized separately as an expense. Negative equity is represented by a debit balance in equity. A credit cash-position balance is shown as a negative signed cash amount and does not imply a separate financing event or liability. The ledger is a scoped property model, not a complete household balance sheet. Future accounting profiles require an explicit versioned decision.
+Balances and statements derive from opening balances and posted entries. Principal repayment reduces the designated cash position and loan liability, not expense; interest is recognized separately as an expense. Negative equity is represented by a debit balance in equity. A credit cash-position balance is shown as a negative signed cash amount and does not imply a separate financing event or liability. The ledger is a scoped property model, not a complete household balance sheet. Future accounting profiles require an explicit design decision.
 
 ## References
 - The U.S. Department of Education's [Federal Student Aid Handbook, Accounting Systems](https://fsapartners.ed.gov/knowledge-center/fsa-handbook/2025-2026/vol4/appx-accounting-systems) describes its account numbers as arbitrary and says those numbers are not required for institutions' own ledgers; the ranges above are likewise this project's convention.

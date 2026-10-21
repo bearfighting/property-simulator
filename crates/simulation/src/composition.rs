@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use property_simulation_domain::{
-    AccountId, ActivityInstanceId, ModelVersionId, ResourceKey, SliceId,
-};
+use property_simulation_domain::{AccountId, ActivityInstanceId, ResourceKey, SliceId};
 
 use crate::{error::SimulationError, types::IdentifiedProposal};
 
@@ -13,7 +11,6 @@ use crate::{error::SimulationError, types::IdentifiedProposal};
 pub struct SliceResources {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub version: ModelVersionId,
     pub reads: BTreeSet<ResourceKey>,
     pub writes: BTreeSet<ResourceKey>,
 }
@@ -42,26 +39,27 @@ pub fn validate_composition(
         ));
     }
     for proposal in proposals {
-        for (instance_id, slice_id, version) in proposal
+        for (instance_id, slice_id) in proposal
             .events()
             .iter()
-            .map(|output| (output.instance_id, output.slice_id, output.version))
+            .map(|output| (output.instance_id, output.slice_id))
             .chain(
                 proposal
                     .effects()
                     .iter()
-                    .map(|output| (output.instance_id, output.slice_id, output.version)),
+                    .map(|output| (output.instance_id, output.slice_id)),
             )
             .chain(
                 proposal
                     .transactions()
                     .iter()
-                    .map(|output| (output.instance_id, output.slice_id, output.version)),
+                    .map(|output| (output.instance_id, output.slice_id)),
             )
         {
-            if by_id.get(&instance_id).is_none_or(|declaration| {
-                declaration.slice_id != slice_id || declaration.version != version
-            }) {
+            if by_id
+                .get(&instance_id)
+                .is_none_or(|declaration| declaration.slice_id != slice_id)
+            {
                 return Err(SimulationError::InvalidProposal(
                     "proposal provenance does not match resource declaration",
                 ));

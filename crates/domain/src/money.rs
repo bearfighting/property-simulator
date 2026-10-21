@@ -26,11 +26,6 @@ impl fmt::Display for Currency {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RoundingPolicy {
-    HalfUp,
-}
-
 /// Fixed-point amount backed by a checked signed 128-bit coefficient.
 /// Scale is capped at 28 decimal places; public arithmetic is checked and never wraps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -232,7 +227,7 @@ impl Money {
         })
     }
 
-    pub fn rounded_for_posting(self, _policy: RoundingPolicy) -> Result<Self, DomainError> {
+    pub fn rounded_for_posting(self) -> Result<Self, DomainError> {
         if self.is_negative() {
             return Err(DomainError::NegativePostingAmount);
         }
@@ -343,22 +338,20 @@ mod tests {
         let jpy = Currency::from_code("JPY").unwrap();
         let half_cent = Money::parse("0.005", cad).unwrap();
         assert_eq!(
-            half_cent
-                .rounded_for_posting(RoundingPolicy::HalfUp)
-                .unwrap(),
+            half_cent.rounded_for_posting().unwrap(),
             Money::parse("0.01", cad).unwrap()
         );
         assert_eq!(
             Money::parse("0.0049", cad)
                 .unwrap()
-                .rounded_for_posting(RoundingPolicy::HalfUp)
+                .rounded_for_posting()
                 .unwrap(),
             Money::from_parts(0, 0, cad).unwrap()
         );
         assert_eq!(
             Money::parse("1.5", jpy)
                 .unwrap()
-                .rounded_for_posting(RoundingPolicy::HalfUp)
+                .rounded_for_posting()
                 .unwrap(),
             Money::parse("2", jpy).unwrap()
         );
@@ -421,7 +414,7 @@ mod tests {
         );
         assert_eq!(
             Money::new(Decimal::new(1_000, 3), cad)
-                .rounded_for_posting(RoundingPolicy::HalfUp)
+                .rounded_for_posting()
                 .unwrap(),
             Money::parse("1", cad).unwrap()
         );

@@ -15,4 +15,4 @@ Organize streams by environment, physical property/component, policy/macro, and 
 - Implicit correlations: hard to audit and unsupported by a calibrated model.
 
 ## Consequences
-Any later correlation mechanism must be explicit, justified, and versioned.
+Any later correlation mechanism must be explicit and justified.

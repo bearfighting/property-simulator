@@ -40,7 +40,7 @@ impl SimulationRun {
                 "executor randomness requirement changed during the run",
             ));
         }
-        if requires_random_streams && self.execution_identity.is_none() {
+        if requires_random_streams && self.run_identity.is_none() {
             return Err(RunControlError::Randomness(
                 "random streams require a trial identity",
             ));
@@ -48,7 +48,7 @@ impl SimulationRun {
         self.randomness_mode = Some(requires_random_streams);
         if requires_random_streams && self.random_streams.is_none() {
             let streams = executor
-                .create_random_streams(self.execution_identity)
+                .create_random_streams(self.run_identity)
                 .map_err(|_| RunControlError::Randomness("failed to create random streams"))?;
             self.random_streams = Some(streams.ok_or(RunControlError::Randomness(
                 "executor requested random streams but did not create them",
@@ -61,7 +61,7 @@ impl SimulationRun {
             &prepared.activities,
             &prepared.candidate_loans,
             &prepared.loan_updates,
-            self.execution_identity,
+            self.run_identity,
             random_streams,
         ) {
             Ok(completed) => completed,

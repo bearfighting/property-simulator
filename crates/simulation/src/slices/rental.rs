@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
-use property_simulation_domain::RoundingPolicy;
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::{SliceResources, account_resource_key};
@@ -24,7 +23,6 @@ impl SimulationSlice for RentalSlice {
         SliceResources {
             instance_id: self.instance.id,
             slice_id: self.instance.slice_id,
-            version: self.instance.version,
             reads: BTreeSet::new(),
             writes: [input.cash_account, input.rent_account]
                 .into_iter()
@@ -41,7 +39,7 @@ impl SimulationSlice for RentalSlice {
         input: &FrozenInput,
         _sample: &ValidatedActivitySample<'_, ()>,
     ) -> Result<SliceProposal, SimulationError> {
-        let rent = input.rent.rounded_for_posting(RoundingPolicy::HalfUp)?;
+        let rent = input.rent.rounded_for_posting()?;
         if rent.is_zero() {
             return Ok(SliceProposal::default());
         }

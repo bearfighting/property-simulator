@@ -2,7 +2,7 @@ use super::*;
 use property_simulation_accounting::ChartOfAccounts;
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, Currency, EffectId, EventId, LedgerTransactionId,
-    ModelVersionId, Money, SliceId, TrialId, YearMonth,
+    Money, SliceId, TrialId, YearMonth,
 };
 use property_simulation_models::{
     RandomSource, RepairCostDistribution, RepairDistribution, RepairSample, RepairSampler,
@@ -128,7 +128,6 @@ fn repair_sampling_composition_binds_activity_and_period_provenance() {
     .unwrap();
     assert_eq!(sample.instance_id, instance.id);
     assert_eq!(sample.slice_id, instance.slice_id);
-    assert_eq!(sample.version, instance.version);
     assert_eq!(sample.period, YearMonth::new(2025, 1).unwrap());
     assert_eq!(sample.value, RepairSample::NoRepair);
     let wrong_purpose = sample.clone().with_purpose(Some("repair.cost".into()));
@@ -269,14 +268,6 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
         &validated,
         &ledger,
         vec![output],
-        vec![
-            ActivitySample::new(
-                &instance,
-                period,
-                ActivitySampleValue::Repair(sampled.value),
-            )
-            .with_purpose(sampled.purpose.clone()),
-        ],
         trial,
         BranchId::from_bytes([62; 16]),
         &TestIds,
@@ -346,7 +337,6 @@ fn activity_with_kind(id: u8, sample_kind: ActivitySampleKind) -> ActivityInstan
     ActivityInstance {
         id: ActivityInstanceId::from_bytes(b),
         slice_id: SliceId::from_bytes([1; 16]),
-        version: ModelVersionId::from_bytes([2; 16]),
         configuration: match sample_kind {
             ActivitySampleKind::Rental => ActivityConfiguration::Rental,
             ActivitySampleKind::Repair => ActivityConfiguration::Repair,
@@ -499,11 +489,6 @@ fn property_tax_posts_on_anchored_due_month_and_retains_marker() {
         &validated,
         &ledger,
         vec![output],
-        vec![ActivitySample::new(
-            &instance,
-            frozen.period,
-            ActivitySampleValue::PropertyTax,
-        )],
         TrialId::from_bytes([1; 16]),
         BranchId::from_bytes([2; 16]),
         &TestIds,
@@ -650,11 +635,6 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &validated,
         &ledger,
         vec![output],
-        vec![ActivitySample::new(
-            &instance,
-            frozen.period,
-            ActivitySampleValue::PropertyTax,
-        )],
         TrialId::from_bytes([1; 16]),
         BranchId::from_bytes([2; 16]),
         &TestIds,
@@ -686,11 +666,6 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &december_input,
         &ledger,
         vec![output],
-        vec![ActivitySample::new(
-            &instance,
-            frozen.period,
-            ActivitySampleValue::PropertyTax,
-        )],
         TrialId::from_bytes([1; 16]),
         BranchId::from_bytes([2; 16]),
         &TestIds,
@@ -731,7 +706,6 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
     let (empty_result, unchanged) = coordinate_month(
         &empty_input,
         &ledger_for_cash(state.cash),
-        vec![],
         vec![],
         TrialId::from_bytes([1; 16]),
         BranchId::from_bytes([2; 16]),
@@ -797,26 +771,13 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
         ),
     )
     .unwrap();
-    let samples = vec![
-        ActivitySample::new(&rent, frozen.period, ActivitySampleValue::Rental),
-        ActivitySample::new(&tax, frozen.period, ActivitySampleValue::PropertyTax),
-        ActivitySample::new(
-            &repair,
-            frozen.period,
-            ActivitySampleValue::Repair(RepairSample::Repair { cost: money("10") }),
-        ),
-    ];
+
     let args = (TrialId::from_bytes([1; 16]), BranchId::from_bytes([2; 16]));
     assert!(
         coordinate_month(
             &validated,
             &ledger,
             vec![tax_output.clone(), tax_output.clone()],
-            vec![ActivitySample::new(
-                &tax,
-                frozen.period,
-                ActivitySampleValue::PropertyTax
-            )],
             args.0,
             args.1,
             &TestIds,
@@ -831,7 +792,6 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
             tax_output.clone(),
             repair_output.clone(),
         ],
-        samples.clone(),
         args.0,
         args.1,
         &TestIds,
@@ -841,7 +801,6 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
         &validated,
         &ledger,
         vec![repair_output, tax_output, rent_output],
-        samples.into_iter().rev().collect(),
         args.0,
         args.1,
         &TestIds,
@@ -1049,14 +1008,6 @@ fn utility_slice_posts_exact_usage_charge_and_retains_sample_provenance() {
         &validated,
         &ledger,
         vec![output],
-        vec![
-            ActivitySample::new(
-                &slice.instance,
-                frozen.period,
-                ActivitySampleValue::Utility(3),
-            )
-            .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())),
-        ],
         identity().trial,
         identity().branch,
         identity().factory,
@@ -1333,26 +1284,11 @@ fn utility_and_rental_composition_is_permutation_invariant() {
     let out_ua = propose_slice(&utility_a, &validated, &ua).unwrap();
     let out_ub = propose_slice(&utility_b, &validated, &ub).unwrap();
     let out_rent = propose_slice(&rental, &validated, &rent).unwrap();
-    let samples = vec![
-        ActivitySample::new(
-            &utility_a.instance,
-            frozen.period,
-            ActivitySampleValue::Utility(2),
-        )
-        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())),
-        ActivitySample::new(
-            &utility_b.instance,
-            frozen.period,
-            ActivitySampleValue::Utility(3),
-        )
-        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())),
-        ActivitySample::new(&rental.instance, frozen.period, ActivitySampleValue::Rental),
-    ];
+
     let left = coordinate_month(
         &validated,
         &ledger,
         vec![out_ua.clone(), out_ub.clone(), out_rent.clone()],
-        samples.clone(),
         identity().trial,
         identity().branch,
         identity().factory,
@@ -1362,7 +1298,6 @@ fn utility_and_rental_composition_is_permutation_invariant() {
         &validated,
         &ledger,
         vec![out_rent, out_ub, out_ua],
-        samples.into_iter().rev().collect(),
         identity().trial,
         identity().branch,
         identity().factory,
@@ -1372,7 +1307,7 @@ fn utility_and_rental_composition_is_permutation_invariant() {
 }
 
 #[test]
-fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
+fn coordinator_enforces_output_provenance_and_posts_month_atomically() {
     use crate::{RentalSlice, RepairSlice, coordinate_month, propose_slice};
     let mut frozen = input();
     frozen.rent = money("80");
@@ -1408,28 +1343,12 @@ fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
         &sample(&repair, RepairSample::Repair { cost: money("10") }),
     )
     .unwrap();
-    let samples = vec![
-        ActivitySample::new(&rental, frozen.period, ActivitySampleValue::Rental),
-        ActivitySample::new(
-            &repair,
-            frozen.period,
-            ActivitySampleValue::Repair(RepairSample::Repair { cost: money("10") }),
-        ),
-    ];
-    let mismatched_samples = vec![
-        samples[0].clone(),
-        ActivitySample::new(
-            &repair,
-            frozen.period,
-            ActivitySampleValue::Repair(RepairSample::NoRepair),
-        ),
-    ];
+
     assert!(
         coordinate_month(
             &validated,
             &ledger,
             vec![repair_output.clone(), rental_output.clone()],
-            mismatched_samples,
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             &TestIds,
@@ -1453,7 +1372,6 @@ fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
             &changed_input,
             &ledger,
             vec![repair_output.clone(), rental_output.clone()],
-            samples.clone(),
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             &TestIds,
@@ -1466,7 +1384,6 @@ fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
         &validated,
         &ledger,
         forward_outputs.clone(),
-        samples.clone(),
         TrialId::from_bytes([6; 16]),
         BranchId::from_bytes([7; 16]),
         &TestIds,
@@ -1501,7 +1418,6 @@ fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
                 && transaction.source().is_some_and(|source| {
                     source.instance_id == contribution.instance_id
                         && source.slice_id == contribution.slice_id
-                        && source.model_version == contribution.model_version
                         && source.output_key == contribution.output_key
                 })
         }));
@@ -1511,7 +1427,6 @@ fn coordinator_posts_rent_and_repair_and_derives_month_end_state_from_ledger() {
         &validated,
         &ledger,
         forward_outputs.into_iter().rev().collect(),
-        samples.into_iter().rev().collect(),
         TrialId::from_bytes([6; 16]),
         BranchId::from_bytes([7; 16]),
         &TestIds,
@@ -1560,24 +1475,12 @@ fn independent_repair_instances_superpose_in_any_order() {
         &sample(&second, second_value),
     )
     .unwrap();
-    let samples = vec![
-        ActivitySample::new(
-            &first,
-            frozen.period,
-            ActivitySampleValue::Repair(first_value),
-        ),
-        ActivitySample::new(
-            &second,
-            frozen.period,
-            ActivitySampleValue::Repair(second_value),
-        ),
-    ];
+
     let identity = identity();
     let (forward_result, forward_ledger) = coordinate_month(
         &validated,
         &ledger,
         vec![first_output.clone(), second_output.clone()],
-        samples.clone(),
         identity.trial,
         identity.branch,
         identity.factory,
@@ -1587,7 +1490,6 @@ fn independent_repair_instances_superpose_in_any_order() {
         &validated,
         &ledger,
         vec![second_output, first_output],
-        samples.into_iter().rev().collect(),
         identity.trial,
         identity.branch,
         identity.factory,
@@ -1644,7 +1546,6 @@ fn coordinator_rejects_a_ledger_other_than_the_validated_opening_ledger() {
         coordinate_month(
             &validated,
             &other_ledger,
-            vec![],
             vec![],
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
@@ -1718,7 +1619,6 @@ fn coordinator_rejects_unknown_effect_and_invalid_journal_without_partial_commit
             &validated,
             &ledger,
             vec![output(unknown_effect)],
-            vec![sample.clone()],
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             &TestIds,
@@ -1751,7 +1651,7 @@ fn coordinator_rejects_unknown_effect_and_invalid_journal_without_partial_commit
             &validated,
             &ledger,
             vec![output(invalid_journal)],
-            vec![sample],
+
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             &TestIds,
@@ -1811,7 +1711,6 @@ fn coordinator_rejects_sample_from_unknown_activity_without_mutating_opening_led
             &validated,
             &ledger,
             vec![output],
-            vec![wrong_source],
             TrialId::from_bytes([6; 16]),
             BranchId::from_bytes([7; 16]),
             &TestIds,
@@ -1969,7 +1868,6 @@ fn active_cashflow_support_includes_context_bound_contributions() {
     let loan = ActivityInstance {
         id: ActivityInstanceId::from_bytes([61; 16]),
         slice_id: SliceId::from_bytes([62; 16]),
-        version: ModelVersionId::from_bytes([63; 16]),
         configuration: ActivityConfiguration::Loan,
     };
     assert!(
@@ -2169,7 +2067,6 @@ fn proposal_transaction_validation_uses_ledger_rules_without_mutating_ledger() {
             id: LedgerTransactionId::from_bytes([77; 16]),
             instance_id: activity(1).id,
             slice_id: activity(1).slice_id,
-            version: activity(1).version,
             period: input().period,
             key: "unbalanced".into(),
             source_event_id: None,
@@ -2501,7 +2398,6 @@ fn output_ids_are_repeatable_and_use_all_identity_dimensions() {
     assert_eq!(forward, reverse);
     assert_eq!(forward.transactions()[0].instance_id, slice.instance.id);
     assert_eq!(forward.transactions()[0].slice_id, slice.instance.slice_id);
-    assert_eq!(forward.transactions()[0].version, slice.instance.version);
     assert_eq!(forward.transactions()[0].period, input().period);
     assert_ne!(
         forward,
@@ -2625,10 +2521,6 @@ fn identification_uses_coordinator_source_and_rejects_wrong_period() {
     assert_eq!(
         identified.events()[0].slice_id,
         authoritative_instance.slice_id
-    );
-    assert_eq!(
-        identified.events()[0].version,
-        authoritative_instance.version
     );
 
     assert_eq!(
@@ -2832,7 +2724,6 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
     let sample = ActivitySample {
         instance_id: activity(1).id,
         slice_id: activity(1).slice_id,
-        version: activity(1).version,
         period,
         purpose: None,
         value: ActivitySampleValue::Repair(RepairSample::NoRepair),
@@ -3125,21 +3016,18 @@ fn composition_allows_independent_read_write_overlap_and_rejects_undeclared_effe
     let a = SliceResources {
         instance_id: ActivityInstanceId::from_bytes([1; 16]),
         slice_id: SliceId::from_bytes([1; 16]),
-        version: ModelVersionId::from_bytes([2; 16]),
         reads: Default::default(),
         writes: [key.clone()].into_iter().collect(),
     };
     let b = SliceResources {
         instance_id: ActivityInstanceId::from_bytes([2; 16]),
         slice_id: SliceId::from_bytes([2; 16]),
-        version: ModelVersionId::from_bytes([2; 16]),
         writes: Default::default(),
         reads: [key.clone()].into_iter().collect(),
     };
     let same_writer = SliceResources {
         instance_id: ActivityInstanceId::from_bytes([3; 16]),
         slice_id: SliceId::from_bytes([3; 16]),
-        version: ModelVersionId::from_bytes([2; 16]),
         reads: Default::default(),
         writes: [key.clone()].into_iter().collect(),
     };
@@ -3165,22 +3053,10 @@ fn composition_allows_independent_read_write_overlap_and_rejects_undeclared_effe
     let undeclared = SliceResources {
         instance_id: active.id,
         slice_id: active.slice_id,
-        version: active.version,
         reads: Default::default(),
         writes: Default::default(),
     };
     assert!(validate_composition(&[undeclared], std::slice::from_ref(&proposal)).is_err());
-
-    let wrong_version = SliceResources {
-        instance_id: active.id,
-        slice_id: active.slice_id,
-        version: ModelVersionId::from_bytes([9; 16]),
-        reads: Default::default(),
-        writes: [property_simulation_domain::ResourceKey::new("property.condition").unwrap()]
-            .into_iter()
-            .collect(),
-    };
-    assert!(validate_composition(&[wrong_version], &[proposal]).is_err());
 }
 
 #[test]

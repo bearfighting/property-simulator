@@ -1,14 +1,11 @@
 //! Ephemeral OS entropy, run-key derivation, and semantic ChaCha12 streams.
 
 use blake3::Hasher;
-use property_simulation_domain::{ActivityInstanceId, ModelVersionId, SliceId, TrialId, YearMonth};
+use property_simulation_domain::{ActivityInstanceId, SliceId, TrialId, YearMonth};
 use property_simulation_models::RandomSource;
 use rand_chacha::ChaCha12Rng;
 use rand_core::{RngCore, SeedableRng};
 use std::sync::atomic::{AtomicU64, Ordering};
-
-const SCHEMA_VERSION: u16 = 1;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RandomnessError {
     EntropyUnavailable,
@@ -53,17 +50,13 @@ impl RunKeyFactory {
         }
     }
 
-    pub fn from_os() -> Result<Self, RandomnessError> {
-        RootKey::from_os().map(Self::new)
-    }
-
     pub fn run_streams(&self, trial: TrialId) -> Result<RandomStreams, RandomnessError> {
         let sequence = self
             .sequence
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| RandomnessError::RunSequenceExhausted)?;
         let mut hasher = Hasher::new_keyed(&self.root.0);
-        hasher.update(b"property-simulation/run-key/v1\0");
+        hasher.update(b"property-simulation/run-key\0");
         hasher.update(trial.as_bytes());
         hasher.update(&sequence.to_le_bytes());
         Ok(RandomStreams {
@@ -89,7 +82,6 @@ pub struct SemanticIdentity {
     pub slice_id: SliceId,
     pub activity_id: ActivityInstanceId,
     pub period: YearMonth,
-    pub model_version: ModelVersionId,
     pub purpose: String,
 }
 
@@ -105,14 +97,12 @@ impl RandomStreams {
         }
         let mut hasher = Hasher::new_keyed(&self.run_key);
         hasher.update(b"property-simulation/semantic-stream\0");
-        hasher.update(&SCHEMA_VERSION.to_le_bytes());
         hasher.update(identity.trial_id.as_bytes());
         hasher.update(&[identity.category as u8]);
         hasher.update(identity.slice_id.as_bytes());
         hasher.update(identity.activity_id.as_bytes());
         hasher.update(&identity.period.year().to_le_bytes());
         hasher.update(&[identity.period.month()]);
-        hasher.update(identity.model_version.as_bytes());
         hasher.update(&(identity.purpose.len() as u64).to_le_bytes());
         hasher.update(identity.purpose.as_bytes());
         Ok(RandomStream(ChaCha12Rng::from_seed(
@@ -142,7 +132,6 @@ mod tests {
             slice_id: SliceId::from_bytes([2; 16]),
             activity_id: ActivityInstanceId::from_bytes([3; 16]),
             period: YearMonth::new(2026, 1).unwrap(),
-            model_version: ModelVersionId::from_bytes([4; 16]),
             purpose: "repair-cost".into(),
         }
     }
@@ -219,9 +208,6 @@ mod tests {
         assert_ne!(draws(&streams, &changed), expected);
         changed = base.clone();
         changed.slice_id = SliceId::from_bytes([6; 16]);
-        assert_ne!(draws(&streams, &changed), expected);
-        changed = base.clone();
-        changed.model_version = ModelVersionId::from_bytes([7; 16]);
         assert_ne!(draws(&streams, &changed), expected);
         changed = base.clone();
         changed.category = RandomCategory::Environment;

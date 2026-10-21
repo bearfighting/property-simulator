@@ -15,7 +15,7 @@ impl SimulationRun {
             trial_id: result.trial_id(),
             branch_id: result.branch_id(),
         };
-        let diagnostic_identity = self.execution_identity.or(Some(returned_identity));
+        let diagnostic_identity = Some(self.run_identity.unwrap_or(returned_identity));
         let result = result
             .with_input_updates(updates.to_vec(), prepared.input_effects.clone())
             .map_err(|source| {
@@ -64,16 +64,9 @@ impl SimulationRun {
                 })
                 == Some(result.closing_state().cash);
         let output_is_consistent = result.period() == self.next_month
-            && self.execution_identity.is_none_or(|identity| {
-                identity
-                    == RunIdentity {
-                        trial_id: result.trial_id(),
-                        branch_id: result.branch_id(),
-                    }
-            })
             && self
-                .identity
-                .is_none_or(|identity| identity == (result.trial_id(), result.branch_id()))
+                .run_identity
+                .is_none_or(|identity| identity == returned_identity)
             && result.opening_state() == prepared.validated.opening_state()
             && result.frozen_input() == &prepared.input
             && result.activities() == expected_activities

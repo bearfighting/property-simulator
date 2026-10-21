@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
-use property_simulation_domain::{Money, RoundingPolicy};
+use property_simulation_domain::Money;
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::{SliceResources, account_resource_key};
@@ -25,7 +25,6 @@ impl SimulationSlice for RepairSlice {
         SliceResources {
             instance_id: self.instance.id,
             slice_id: self.instance.slice_id,
-            version: self.instance.version,
             reads: BTreeSet::new(),
             writes: [
                 account_resource_key(input.cash_account),
@@ -66,7 +65,7 @@ impl SimulationSlice for RepairSlice {
             ),
             RepairSample::Repair { cost } => (*cost, true),
         };
-        let posted_cost = cost.rounded_for_posting(RoundingPolicy::HalfUp)?;
+        let posted_cost = cost.rounded_for_posting()?;
         if !repair {
             return Ok(SliceProposal::default());
         }

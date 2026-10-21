@@ -20,7 +20,6 @@ opaque_id!(
     DecisionId,
     LedgerTransactionId,
     AccountId,
-    ModelVersionId,
     ActivityInstanceId,
     EffectId,
     SnapshotId

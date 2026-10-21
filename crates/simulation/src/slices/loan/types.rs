@@ -1,8 +1,7 @@
 use crate::{CashFlowContribution, OutputIdFactory, SliceProposal};
 use property_simulation_accounting::{Ledger, LedgerTransaction};
 use property_simulation_domain::{
-    AccountId, ActivityInstanceId, BranchId, EffectId, EventId, ModelVersionId, Money, SliceId,
-    TrialId, YearMonth,
+    AccountId, ActivityInstanceId, BranchId, EffectId, EventId, Money, SliceId, TrialId, YearMonth,
 };
 use property_simulation_models::{FixedRateLoan, LoanMonth};
 
@@ -11,7 +10,6 @@ use property_simulation_models::{FixedRateLoan, LoanMonth};
 pub struct LoanSlice {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub liability_account: AccountId,
     pub interest_expense_account: AccountId,
     pub cash_account: AccountId,
@@ -21,7 +19,6 @@ pub struct LoanSlice {
 pub struct LoanMonthOutput {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub period: YearMonth,
     pub result: LoanMonth,
     pub state_effect: LoanStateEffectProposal,
@@ -37,7 +34,6 @@ pub struct LoanStateEffectProposal {
 pub struct LoanCoordinatedMonth {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub cash_account: AccountId,
     pub liability_account: AccountId,
     pub period: YearMonth,
@@ -61,7 +57,6 @@ pub struct LoanMonthInput {
 pub struct LoanContinuation {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub loan: Option<FixedRateLoan>,
 }
 
@@ -70,7 +65,6 @@ pub struct LoanStateEffect {
     pub id: EffectId,
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub period: YearMonth,
     pub previous: Option<FixedRateLoan>,
     pub updated: Option<FixedRateLoan>,
@@ -82,7 +76,6 @@ pub struct LoanEvent {
     pub id: EventId,
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
-    pub model_version: ModelVersionId,
     pub period: YearMonth,
     pub key: String,
     pub previous_balance: Option<Money>,

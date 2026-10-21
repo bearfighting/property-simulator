@@ -8,8 +8,7 @@ mod time;
 pub use error::DomainError;
 pub use ids::{
     AccountId, ActivityInstanceId, BranchId, DecisionId, EffectId, EntityId, EventId,
-    LedgerTransactionId, ModelVersionId, ResourceKey, RunId, ScenarioId, SliceId, SnapshotId,
-    TrialId,
+    LedgerTransactionId, ResourceKey, RunId, ScenarioId, SliceId, SnapshotId, TrialId,
 };
-pub use money::{Currency, Money, RoundingPolicy};
+pub use money::{Currency, Money};
 pub use time::{YearMonth, YearMonthRange};

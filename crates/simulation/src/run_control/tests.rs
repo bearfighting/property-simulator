@@ -5,7 +5,7 @@ use property_simulation_accounting::{
     LedgerEntry, OpeningBalance, OpeningBalances,
 };
 use property_simulation_domain::{
-    AccountId, ActivityInstanceId, BranchId, Currency, ModelVersionId, SliceId, TrialId,
+    AccountId, ActivityInstanceId, BranchId, Currency, SliceId, TrialId,
 };
 use property_simulation_models::RandomSource;
 
@@ -288,7 +288,6 @@ fn random_run_key_is_allocated_once_and_reused_across_months() {
                     slice_id: SliceId::from_bytes([2; 16]),
                     activity_id: ActivityInstanceId::from_bytes([3; 16]),
                     period: input.frozen_input().period,
-                    model_version: ModelVersionId::from_bytes([4; 16]),
                     purpose: "test".into(),
                 })
                 .unwrap();
@@ -432,7 +431,6 @@ fn activity_updates_are_passed_to_executor_and_recorded() {
     let activity = crate::ActivityInstance {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
         configuration: crate::ActivityConfiguration::Rental,
     };
     let update = RunUpdate {
@@ -457,7 +455,6 @@ fn loan_run_requires_a_continuation_for_each_loan_activity() {
     let activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([31; 16]),
         slice_id: SliceId::from_bytes([32; 16]),
-        version: ModelVersionId::from_bytes([33; 16]),
         configuration: crate::ActivityConfiguration::Loan,
     };
     let config = RunConfig {
@@ -484,7 +481,6 @@ fn loan_run_requires_a_continuation_for_each_loan_activity() {
     let continuation = LoanContinuation {
         instance_id: activity.id,
         slice_id: activity.slice_id,
-        model_version: activity.version,
         loan: Some(loan),
     };
     let run = SimulationRun::new_with_activities_and_loans(
@@ -540,7 +536,6 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
                 property_simulation_domain::LedgerTransactionId::from_bytes([10; 16]);
             let instance_id = property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]);
             let slice_id = property_simulation_domain::SliceId::from_bytes([8; 16]);
-            let version = property_simulation_domain::ModelVersionId::from_bytes([9; 16]);
             let key = "negative-cash-test";
             let entries = [
                 LedgerEntry::new(id(3), BalanceSide::Debit, amount),
@@ -557,7 +552,6 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
                     property_simulation_accounting::LedgerTransactionSource {
                         instance_id,
                         slice_id,
-                        model_version: version,
                         output_key: key.into(),
                         source_event_id: None,
                     },
@@ -566,7 +560,6 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
             let activity = crate::ActivityInstance {
                 id: instance_id,
                 slice_id,
-                version,
                 configuration: crate::ActivityConfiguration::Repair,
             };
             if activities != [activity.clone()] {
@@ -582,7 +575,6 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
                     id: transaction_id,
                     instance_id: activity.id,
                     slice_id: activity.slice_id,
-                    version: activity.version,
                     period: input.frozen_input().period,
                     key: key.into(),
                     source_event_id: None,
@@ -618,7 +610,6 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
     let activity = crate::ActivityInstance {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
         configuration: crate::ActivityConfiguration::Repair,
     };
     let mut run = SimulationRun::new_with_activities(
@@ -828,7 +819,6 @@ fn rejects_duplicate_activity_updates_before_execution() {
     let activity = crate::ActivityInstance {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
         configuration: crate::ActivityConfiguration::Rental,
     };
     let update = RunUpdate {
@@ -955,7 +945,6 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
     let activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([7; 16]),
         slice_id: SliceId::from_bytes([8; 16]),
-        version: ModelVersionId::from_bytes([9; 16]),
         configuration: crate::ActivityConfiguration::Repair,
     };
     let mut run = SimulationRun::new_with_activities(
@@ -970,10 +959,10 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
         vec![activity.clone()],
     )
     .unwrap();
-    run.set_execution_identity(
-        TrialId::from_bytes([31; 16]),
-        BranchId::from_bytes([32; 16]),
-    );
+    run.set_run_identity(RunIdentity {
+        trial_id: TrialId::from_bytes([31; 16]),
+        branch_id: BranchId::from_bytes([32; 16]),
+    });
     let mut executor = SampleBoundaryExecutor {
         reject_once: true,
         fallback: Executor::default(),
@@ -1132,13 +1121,11 @@ fn unrepresentable_loan_and_input_cashflow_support_rejects_before_executor() {
     let loan_activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([46; 16]),
         slice_id: SliceId::from_bytes([47; 16]),
-        version: ModelVersionId::from_bytes([48; 16]),
         configuration: crate::ActivityConfiguration::Loan,
     };
     let continuation = LoanContinuation {
         instance_id: loan_activity.id,
         slice_id: loan_activity.slice_id,
-        model_version: loan_activity.version,
         loan: Some(property_simulation_models::FixedRateLoan {
             opening_balance: principal,
             remaining_months: 1,
@@ -1294,7 +1281,6 @@ fn inconsistent_executor_output_fails_without_committing_a_snapshot() {
     let activity = crate::ActivityInstance {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
         configuration: crate::ActivityConfiguration::Repair,
     };
     let mut run = SimulationRun::new_with_activities(
@@ -1398,14 +1384,12 @@ fn rejects_ledger_postings_that_disagree_with_monthly_result() {
                 vec![crate::ActivityInstance {
                     id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
                     slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-                    version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
                     configuration: crate::ActivityConfiguration::Rental,
                 }],
                 vec![ActivitySample::new(
                     &crate::ActivityInstance {
                         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
                         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-                        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
                         configuration: crate::ActivityConfiguration::Rental,
                     },
                     input.frozen_input().period,
@@ -1422,7 +1406,6 @@ fn rejects_ledger_postings_that_disagree_with_monthly_result() {
                             [7; 16],
                         ),
                         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-                        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
                         period: input.frozen_input().period,
                         key: "reported-posting".into(),
                         source_event_id: None,
@@ -1444,7 +1427,6 @@ fn rejects_ledger_postings_that_disagree_with_monthly_result() {
     let activity = crate::ActivityInstance {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-        version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
         configuration: crate::ActivityConfiguration::Rental,
     };
     let (ledger, mut input, state) = make_fixture_ledger();
@@ -1641,16 +1623,13 @@ fn archive_cashflow_summary_derives_nonzero_month_activity_and_run_totals() {
     use crate::{
         BranchRecord, IdentifiedProposal, ProposedTransaction, SimulationArchive, saved_month,
     };
-    use property_simulation_domain::{
-        ActivityInstanceId, ModelVersionId, RunId, SliceId, SnapshotId,
-    };
+    use property_simulation_domain::{ActivityInstanceId, RunId, SliceId, SnapshotId};
 
     let (mut ledger, mut input, state) = make_fixture_ledger();
     input.rent = Money::new(25.into(), input.rent.currency());
     let activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([21; 16]),
         slice_id: SliceId::from_bytes([22; 16]),
-        version: ModelVersionId::from_bytes([23; 16]),
         configuration: crate::ActivityConfiguration::Rental,
     };
     let trial = TrialId::from_bytes([24; 16]);
@@ -1659,7 +1638,6 @@ fn archive_cashflow_summary_derives_nonzero_month_activity_and_run_totals() {
         id: property_simulation_domain::LedgerTransactionId::from_bytes([26; 16]),
         instance_id: activity.id,
         slice_id: activity.slice_id,
-        version: activity.version,
         period: month(1),
         key: "rent.received".into(),
         source_event_id: None,

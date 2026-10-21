@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
-use property_simulation_domain::RoundingPolicy;
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::{SliceResources, account_resource_key};
@@ -35,7 +34,6 @@ impl SimulationSlice for PropertyTaxSlice {
         SliceResources {
             instance_id: self.instance.id,
             slice_id: self.instance.slice_id,
-            version: self.instance.version,
             reads: BTreeSet::new(),
             writes,
         }
@@ -45,11 +43,14 @@ impl SimulationSlice for PropertyTaxSlice {
     }
     fn validate_sample(&self, input: &ValidatedInput, _sample: &()) -> Result<(), SimulationError> {
         config(&self.instance)?;
-        crate::validation::validate_activity_configuration(
-            &self.instance,
-            input.frozen_input(),
-            input.opening_ledger(),
-        )
+        if !input.has_preflighted_activity(&self.instance) {
+            crate::validation::validate_activity_configuration(
+                &self.instance,
+                input.frozen_input(),
+                input.opening_ledger(),
+            )?;
+        }
+        Ok(())
     }
     fn propose_validated(
         &self,
@@ -61,7 +62,7 @@ impl SimulationSlice for PropertyTaxSlice {
         if !tax_due(input.period, config.first_due, config.cadence) {
             return Ok(SliceProposal::default());
         }
-        let amount = config.amount.rounded_for_posting(RoundingPolicy::HalfUp)?;
+        let amount = config.amount.rounded_for_posting()?;
         if amount.is_zero() {
             return Ok(SliceProposal::default());
         }

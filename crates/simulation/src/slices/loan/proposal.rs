@@ -1,6 +1,4 @@
-use super::{
-    LoanCoordinatedMonth, LoanMonthCommand, LoanMonthOutput, LoanSlice, LoanStateEffectProposal,
-};
+use super::{LoanMonthOutput, LoanSlice, LoanStateEffectProposal};
 use crate::{EventProposal, SimulationError, SliceProposal, TransactionProposal};
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 use property_simulation_domain::YearMonth;
@@ -43,7 +41,6 @@ impl LoanSlice {
         Ok(LoanMonthOutput {
             instance_id: self.instance_id,
             slice_id: self.slice_id,
-            model_version: self.model_version,
             period,
             state_effect: LoanStateEffectProposal {
                 updated: if result.closing_balance.is_zero() {
@@ -60,14 +57,5 @@ impl LoanSlice {
             result,
             proposal,
         })
-    }
-
-    /// Delegate to the loan coordinator. This convenience method performs no validation
-    /// or ledger mutation itself.
-    pub fn coordinate_month(
-        &self,
-        command: LoanMonthCommand<'_>,
-    ) -> Result<LoanCoordinatedMonth, SimulationError> {
-        super::super::loan_coordinator::coordinate_loan_month(self, command)
     }
 }

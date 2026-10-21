@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use property_simulation_domain::{AccountId, Currency, Money, RoundingPolicy};
+use property_simulation_domain::{AccountId, Currency, Money};
 
 use crate::{AccountCategory, AccountError, BalanceSide, ChartOfAccounts};
 
@@ -106,7 +106,7 @@ impl OpeningBalances {
             if entry.amount.currency() != currency {
                 return Err(AccountError::OpeningCurrencyMismatch);
             }
-            if entry.amount.rounded_for_posting(RoundingPolicy::HalfUp)? != entry.amount {
+            if entry.amount.rounded_for_posting()? != entry.amount {
                 return Err(AccountError::OpeningBalancePrecision(entry.amount));
             }
             match entry.side {

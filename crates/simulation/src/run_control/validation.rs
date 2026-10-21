@@ -100,7 +100,7 @@ pub(super) fn loan_output_matches(
     let expected: std::collections::BTreeMap<_, _> = activities
         .iter()
         .filter(|activity| activity.configuration.sample_kind() == crate::ActivitySampleKind::Loan)
-        .map(|activity| (activity.id, (activity.slice_id, activity.version)))
+        .map(|activity| (activity.id, activity.slice_id))
         .collect();
     let actual: std::collections::BTreeMap<_, _> = result
         .loan_continuations()
@@ -114,15 +114,11 @@ pub(super) fn loan_output_matches(
     if actual.len() != expected.len() || actual.len() != result.loan_continuations().len() {
         return false;
     }
-    for (instance_id, (slice_id, version)) in &expected {
+    for (instance_id, slice_id) in &expected {
         let (Some(before), Some(after)) = (prior.get(instance_id), actual.get(instance_id)) else {
             return false;
         };
-        if before.slice_id != *slice_id
-            || before.model_version != *version
-            || after.slice_id != *slice_id
-            || after.model_version != *version
-        {
+        if before.slice_id != *slice_id || after.slice_id != *slice_id {
             return false;
         }
         let update = updates
@@ -190,7 +186,6 @@ pub(super) fn loan_output_matches(
                 return false;
             };
             if event.slice_id != *slice_id
-                || event.model_version != *version
                 || event.previous_balance != Some(previous_loan.opening_balance)
                 || event.updated_balance != Some(updated_balance)
                 || event.previous_remaining_months != Some(previous_loan.remaining_months)
@@ -210,7 +205,6 @@ pub(super) fn loan_output_matches(
                 return false;
             };
             if event.slice_id != *slice_id
-                || event.model_version != *version
                 || event.previous_balance != Some(payment_loan.opening_balance)
                 || event.updated_balance != Some(month.closing_balance)
                 || event.previous_remaining_months != Some(payment_loan.remaining_months)
@@ -232,7 +226,6 @@ pub(super) fn loan_output_matches(
         if let Some(effect) = effects.first() {
             let expected_source = payment_event.or(update_event).map(|event| event.id);
             if effect.slice_id != *slice_id
-                || effect.model_version != *version
                 || effect.previous != previous
                 || effect.updated != loan
                 || expected_source != Some(effect.source_event_id)

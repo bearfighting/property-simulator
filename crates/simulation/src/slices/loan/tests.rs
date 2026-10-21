@@ -1,16 +1,15 @@
 use crate::slices::loan::*;
 use crate::{
-    ActivityConfiguration, ActivityInstance, ActivitySample, ActivitySampleValue, AssetCondition,
-    FrozenInput, OpeningState, PropertyTaxCadence, PropertyTaxConfig, PropertyTaxSlice,
-    propose_slice,
+    ActivityConfiguration, ActivityInstance, ActivitySample, AssetCondition, FrozenInput,
+    OpeningState, PropertyTaxCadence, PropertyTaxConfig, PropertyTaxSlice, propose_slice,
 };
-use crate::{OutputIdFactory, coordinate_month_with_loans};
+use crate::{OutputIdFactory, coordinate_loan_month, coordinate_month_with_loans};
 use property_simulation_accounting::{
     Account, AccountCategory, AccountCode, ChartOfAccounts, OpeningBalance, OpeningBalances,
 };
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, Ledger, LedgerTransaction};
 use property_simulation_domain::{
-    AccountId, ActivityInstanceId, BranchId, ModelVersionId, SliceId, TrialId, YearMonth,
+    AccountId, ActivityInstanceId, BranchId, SliceId, TrialId, YearMonth,
 };
 use property_simulation_domain::{Currency, EffectId, EventId, LedgerTransactionId, Money};
 use property_simulation_models::FixedRateLoan;
@@ -95,7 +94,6 @@ fn fixture(balance: &str) -> (LoanSlice, Ledger) {
     let slice = LoanSlice {
         instance_id: ActivityInstanceId::from_bytes([7; 16]),
         slice_id: SliceId::from_bytes([8; 16]),
-        model_version: ModelVersionId::from_bytes([9; 16]),
         liability_account: AccountId::from_bytes([3; 16]),
         interest_expense_account: AccountId::from_bytes([4; 16]),
         cash_account: AccountId::from_bytes([1; 16]),
@@ -136,7 +134,6 @@ fn property_tax_composes_with_a_loan_in_the_same_month() {
     let tax = ActivityInstance {
         id: ActivityInstanceId::from_bytes([40; 16]),
         slice_id: SliceId::from_bytes([41; 16]),
-        version: ModelVersionId::from_bytes([42; 16]),
         configuration: ActivityConfiguration::PropertyTax(PropertyTaxConfig {
             amount: Money::parse("25", currency).unwrap(),
             cadence: PropertyTaxCadence::Monthly,
@@ -149,12 +146,11 @@ fn property_tax_composes_with_a_loan_in_the_same_month() {
         instance: tax.clone(),
     };
     let output = propose_slice(&slice, &input, &ActivitySample::new(&tax, period, ())).unwrap();
-    let sample = ActivitySample::new(&tax, period, ActivitySampleValue::PropertyTax);
+
     let (result, committed) = coordinate_month_with_loans(
         &input,
         &ledger,
         vec![output],
-        vec![sample],
         TrialId::from_bytes([10; 16]),
         BranchId::from_bytes([11; 16]),
         &Ids,
@@ -195,7 +191,6 @@ fn loan_aware_coordinator_accepts_a_month_with_no_active_activities() {
     let (result, unchanged) = coordinate_month_with_loans(
         &input,
         &ledger,
-        vec![],
         vec![],
         TrialId::from_bytes([10; 16]),
         BranchId::from_bytes([11; 16]),
@@ -257,7 +252,6 @@ fn proposes_separate_operating_interest_and_financing_principal() {
     let slice = LoanSlice {
         instance_id: ActivityInstanceId::from_bytes([1; 16]),
         slice_id: SliceId::from_bytes([2; 16]),
-        model_version: ModelVersionId::from_bytes([3; 16]),
         liability_account: id(4),
         interest_expense_account: id(5),
         cash_account: id(6),
@@ -301,9 +295,11 @@ fn proposes_separate_operating_interest_and_financing_principal() {
 fn coordinated_payment_reconciles_ledger_and_cash_flow_and_then_noops_after_payoff() {
     let (slice, ledger) = fixture("10000");
     let period = YearMonth::new(2026, 1).unwrap();
-    let result = slice
-        .coordinate_month(command(period, Some(loan("10000", 12)), None, &ledger))
-        .unwrap();
+    let result = coordinate_loan_month(
+        &slice,
+        command(period, Some(loan("10000", 12)), None, &ledger),
+    )
+    .unwrap();
     assert_eq!(
         result.ledger.balance(slice.liability_account).unwrap().1,
         result.month.unwrap().closing_balance
@@ -331,31 +327,35 @@ fn coordinated_payment_reconciles_ledger_and_cash_flow_and_then_noops_after_payo
             .any(|event| event.id == source_event && event.key == "loan_payment")
     );
     let (slice, ledger) = fixture("100");
-    let final_month = slice
-        .coordinate_month(command(period, Some(loan("100", 1)), None, &ledger))
-        .unwrap();
+    let final_month =
+        coordinate_loan_month(&slice, command(period, Some(loan("100", 1)), None, &ledger))
+            .unwrap();
     assert_eq!(final_month.closing_loan, None);
-    let continued = slice
-        .coordinate_month(command(
+    let continued = coordinate_loan_month(
+        &slice,
+        command(
             YearMonth::new(2026, 2).unwrap(),
             None,
             None,
             &final_month.ledger,
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     assert_eq!(continued.ledger, final_month.ledger);
     assert!(continued.cash_flow_contributions.is_empty());
 
     let (inactive_slice, unsettled_ledger) = fixture("100");
     assert!(
-        inactive_slice
-            .coordinate_month(command(
+        coordinate_loan_month(
+            &inactive_slice,
+            command(
                 YearMonth::new(2026, 2).unwrap(),
                 None,
                 None,
                 &unsettled_ledger,
-            ))
-            .is_err()
+            )
+        )
+        .is_err()
     );
 }
 
@@ -378,9 +378,11 @@ fn principal_terms_update_is_committed_with_payment_and_cash_delta() {
         )),
     )
     .unwrap();
-    let result = slice
-        .coordinate_month(command(period, Some(current), Some(update), &ledger))
-        .unwrap();
+    let result = coordinate_loan_month(
+        &slice,
+        command(period, Some(current), Some(update), &ledger),
+    )
+    .unwrap();
     assert_eq!(
         result.ledger.balance(slice.liability_account).unwrap().1,
         result.month.unwrap().closing_balance
@@ -447,9 +449,11 @@ fn rate_only_change_is_recorded_and_zero_balance_update_settles_without_payment(
         None,
     )
     .unwrap();
-    let result = slice
-        .coordinate_month(command(period, Some(current), Some(rate_update), &ledger))
-        .unwrap();
+    let result = coordinate_loan_month(
+        &slice,
+        command(period, Some(current), Some(rate_update), &ledger),
+    )
+    .unwrap();
     let terms_event = result
         .events
         .iter()
@@ -483,9 +487,11 @@ fn rate_only_change_is_recorded_and_zero_balance_update_settles_without_payment(
         )),
     )
     .unwrap();
-    let payoff = slice
-        .coordinate_month(command(payoff_period, Some(current), Some(update), &ledger))
-        .unwrap();
+    let payoff = coordinate_loan_month(
+        &slice,
+        command(payoff_period, Some(current), Some(update), &ledger),
+    )
+    .unwrap();
     assert_eq!(payoff.closing_loan, None);
     assert_eq!(payoff.month, None);
     assert_eq!(
@@ -519,9 +525,11 @@ fn mismatched_caller_principal_transaction_is_rejected_before_any_commit() {
     )
     .unwrap();
     assert!(
-        slice
-            .coordinate_month(command(period, Some(current), Some(update), &ledger))
-            .is_err()
+        coordinate_loan_month(
+            &slice,
+            command(period, Some(current), Some(update), &ledger)
+        )
+        .is_err()
     );
     assert_eq!(
         ledger.balance(slice.liability_account).unwrap().1,
@@ -554,7 +562,6 @@ fn loan_composition_is_retained_in_month_result_and_snapshot_payload() {
     let (result, committed) = coordinate_month_with_loans(
         &input,
         &ledger,
-        vec![],
         vec![],
         TrialId::from_bytes([10; 16]),
         BranchId::from_bytes([11; 16]),
@@ -604,9 +611,11 @@ fn rejects_bad_account_roles_and_wrong_effective_month_before_commit() {
     let mut bad_slice = slice.clone();
     bad_slice.liability_account = slice.interest_expense_account;
     assert!(
-        bad_slice
-            .coordinate_month(command(period, Some(loan("10000", 12)), None, &ledger))
-            .is_err()
+        coordinate_loan_month(
+            &bad_slice,
+            command(period, Some(loan("10000", 12)), None, &ledger)
+        )
+        .is_err()
     );
     let update = apply_loan_terms_update(
         loan("10000", 12),
@@ -623,14 +632,11 @@ fn rejects_bad_account_roles_and_wrong_effective_month_before_commit() {
     )
     .unwrap();
     assert!(
-        slice
-            .coordinate_month(command(
-                period,
-                Some(loan("10000", 12)),
-                Some(update),
-                &ledger
-            ))
-            .is_err()
+        coordinate_loan_month(
+            &slice,
+            command(period, Some(loan("10000", 12)), Some(update), &ledger)
+        )
+        .is_err()
     );
     assert_eq!(
         ledger.balance(slice.liability_account).unwrap().1,

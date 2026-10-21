@@ -18,7 +18,7 @@ For M3 Ledger integration, an opening loan balance is an opening liability fact,
 ## Alternatives considered
 - Recalculate the scheduled payment from each month's new balance and remaining term: rejected because it changes the installment each month instead of preserving a level-payment schedule.
 - Require the user to supply a separate monthly payment: rejected because it can conflict with the supplied remaining term and interest rate.
-- Supporting negative rates or day-level partial accrual/effective dates: deferred pending an explicit versioned convention; negative-rate inputs are rejected under this convention.
+- Supporting negative rates or day-level partial accrual/effective dates: deferred pending an explicit design decision; negative-rate inputs are rejected under this convention.
 
 ## Consequences
-Use exact decimal arithmetic, not binary floating point. Tests must assert the derived payment, month-by-month interest and principal split, final-payment adjustment, closing balance, balanced Ledger postings, and reconciliation between loan continuation balances and Ledger liabilities. The payment formula and rounding convention are part of the model version. See vectors for zero rate, ordinary amortization, final payment, and rounding boundaries.
+Use exact decimal arithmetic, not binary floating point. Tests must assert the derived payment, month-by-month interest and principal split, final-payment adjustment, closing balance, balanced Ledger postings, and reconciliation between loan continuation balances and Ledger liabilities. The payment formula and rounding convention are part of the application behavior and change with the application version. See vectors for zero rate, ordinary amortization, final payment, and rounding boundaries.

@@ -4,7 +4,7 @@ use property_simulation_accounting::{
 };
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, Currency, EffectId, EventId, LedgerTransactionId,
-    ModelVersionId, Money, RunId, SliceId, SnapshotId, TrialId, YearMonth,
+    Money, RunId, SliceId, SnapshotId, TrialId, YearMonth,
 };
 use property_simulation_models::{
     FixedRateLoan, RepairDistribution, RepairSample, RepairSampler, UtilityUsageDistribution,
@@ -38,7 +38,6 @@ fn activity(value: u8, kind: ActivitySampleKind) -> ActivityInstance {
     ActivityInstance {
         id: ActivityInstanceId::from_bytes([value; 16]),
         slice_id: SliceId::from_bytes([value + 10; 16]),
-        version: ModelVersionId::from_bytes([value + 20; 16]),
         configuration: match kind {
             ActivitySampleKind::Rental => ActivityConfiguration::Rental,
             ActivitySampleKind::Repair => ActivityConfiguration::Repair,
@@ -219,7 +218,6 @@ impl SingleMonthExecutor for CompositionExecutor {
         let repair_sample = ActivitySample {
             instance_id: self.repair.instance.id,
             slice_id: self.repair.instance.slice_id,
-            version: self.repair.instance.version,
             period,
             purpose: repair_purpose,
             value: repair_value,
@@ -233,7 +231,6 @@ impl SingleMonthExecutor for CompositionExecutor {
             ActivitySample {
                 instance_id: self.repair.instance.id,
                 slice_id: self.repair.instance.slice_id,
-                version: self.repair.instance.version,
                 period,
                 purpose: repair_sample.purpose.clone(),
                 value: ActivitySampleValue::Repair(repair_sample.value),
@@ -277,7 +274,6 @@ impl SingleMonthExecutor for CompositionExecutor {
                     let sample = ActivitySample {
                         instance_id: typed.instance_id,
                         slice_id: typed.slice_id,
-                        version: typed.version,
                         period: typed.period,
                         purpose: typed.purpose.clone(),
                         value: ActivitySampleValue::Utility(typed.value),
@@ -312,7 +308,6 @@ impl SingleMonthExecutor for CompositionExecutor {
             input,
             opening_ledger,
             outputs,
-            samples,
             identity.trial_id,
             identity.branch_id,
             &self.ids,
@@ -442,7 +437,6 @@ fn fixture() -> (
         LoanSlice {
             instance_id: ActivityInstanceId::from_bytes([3; 16]),
             slice_id: SliceId::from_bytes([13; 16]),
-            model_version: ModelVersionId::from_bytes([23; 16]),
             liability_account: liability_ids[0],
             interest_expense_account: interest_id,
             cash_account: cash_id,
@@ -450,7 +444,6 @@ fn fixture() -> (
         LoanSlice {
             instance_id: ActivityInstanceId::from_bytes([4; 16]),
             slice_id: SliceId::from_bytes([14; 16]),
-            model_version: ModelVersionId::from_bytes([24; 16]),
             liability_account: liability_ids[1],
             interest_expense_account: interest_id,
             cash_account: cash_id,
@@ -460,13 +453,11 @@ fn fixture() -> (
         LoanContinuation {
             instance_id: loans[0].instance_id,
             slice_id: loans[0].slice_id,
-            model_version: loans[0].model_version,
             loan: Some(first),
         },
         LoanContinuation {
             instance_id: loans[1].instance_id,
             slice_id: loans[1].slice_id,
-            model_version: loans[1].model_version,
             loan: Some(second),
         },
     ];
@@ -519,7 +510,6 @@ fn operating_activities(tax_amount: &str, utility_rates: [&str; 2]) -> Vec<Activ
     let tax = ActivityInstance {
         id: ActivityInstanceId::from_bytes([6; 16]),
         slice_id: SliceId::from_bytes([16; 16]),
-        version: ModelVersionId::from_bytes([26; 16]),
         configuration: ActivityConfiguration::PropertyTax(PropertyTaxConfig {
             amount: money(tax_amount),
             cadence: PropertyTaxCadence::Monthly,
@@ -531,7 +521,6 @@ fn operating_activities(tax_amount: &str, utility_rates: [&str; 2]) -> Vec<Activ
     let utility = |id: u8, unit: &str, rate: &str| ActivityInstance {
         id: ActivityInstanceId::from_bytes([id; 16]),
         slice_id: SliceId::from_bytes([id + 10; 16]),
-        version: ModelVersionId::from_bytes([id + 20; 16]),
         configuration: ActivityConfiguration::Utility(UtilityConfig {
             usage_unit: unit.into(),
             maximum_usage: 20,
@@ -807,7 +796,6 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
     let tax = ActivityInstance {
         id: ActivityInstanceId::from_bytes([6; 16]),
         slice_id: SliceId::from_bytes([16; 16]),
-        version: ModelVersionId::from_bytes([26; 16]),
         configuration: ActivityConfiguration::PropertyTax(PropertyTaxConfig {
             amount: money("25"),
             cadence: PropertyTaxCadence::Monthly,
@@ -819,7 +807,6 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
     let utility_a = ActivityInstance {
         id: ActivityInstanceId::from_bytes([7; 16]),
         slice_id: SliceId::from_bytes([17; 16]),
-        version: ModelVersionId::from_bytes([27; 16]),
         configuration: ActivityConfiguration::Utility(UtilityConfig {
             usage_unit: "kWh".into(),
             maximum_usage: 20,
@@ -831,7 +818,6 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
     let utility_b = ActivityInstance {
         id: ActivityInstanceId::from_bytes([8; 16]),
         slice_id: SliceId::from_bytes([18; 16]),
-        version: ModelVersionId::from_bytes([28; 16]),
         configuration: ActivityConfiguration::Utility(UtilityConfig {
             usage_unit: "m³".into(),
             maximum_usage: 20,
@@ -893,26 +879,7 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
         propose_slice(&utility_a_slice, &validated, &utility_a_sample).unwrap(),
         propose_slice(&utility_b_slice, &validated, &utility_b_sample).unwrap(),
     ];
-    let samples = vec![
-        ActivitySample::new(
-            executor.rental.instance(),
-            period,
-            ActivitySampleValue::Rental,
-        ),
-        ActivitySample::new(
-            executor.repair.instance(),
-            period,
-            ActivitySampleValue::Repair(repair_sample.value),
-        ),
-        ActivitySample::new(
-            &repair_b,
-            period,
-            ActivitySampleValue::Repair(repair_b_sample.value),
-        ),
-        ActivitySample::new(&tax, period, ActivitySampleValue::PropertyTax),
-        ActivitySample::new(&utility_a, period, ActivitySampleValue::Utility(2)),
-        ActivitySample::new(&utility_b, period, ActivitySampleValue::Utility(3)),
-    ];
+
     let loan_inputs: Vec<_> = executor
         .loans
         .iter()
@@ -932,7 +899,6 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
         &validated,
         &ledger,
         outputs.clone(),
-        samples.clone(),
         trial_id,
         branch_id,
         &executor.ids,
@@ -943,7 +909,6 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
         &validated,
         &ledger,
         outputs.into_iter().rev().collect(),
-        samples.into_iter().rev().collect(),
         trial_id,
         branch_id,
         &executor.ids,
@@ -1244,7 +1209,6 @@ fn m37_mixed_slice_batch_checks_only_the_month_end_cash_balance() {
     let loan_slice = LoanSlice {
         instance_id: ActivityInstanceId::from_bytes([82; 16]),
         slice_id: SliceId::from_bytes([92; 16]),
-        model_version: ModelVersionId::from_bytes([102; 16]),
         liability_account: liability,
         interest_expense_account: interest,
         cash_account: cash,
@@ -1285,11 +1249,6 @@ fn m37_mixed_slice_batch_checks_only_the_month_end_cash_balance() {
         &input,
         &ledger,
         vec![repair_output],
-        vec![ActivitySample::new(
-            &repair.instance,
-            period,
-            ActivitySampleValue::Repair(repair_sample),
-        )],
         TrialId::from_bytes([91; 16]),
         BranchId::from_bytes([92; 16]),
         &Ids,
@@ -1362,7 +1321,6 @@ fn assert_utility_sample_provenance(result: &MonthlyResult) {
     for sample in utility_samples {
         let id = sample.instance_id.as_bytes()[0];
         assert_eq!(sample.slice_id.as_bytes()[0], id + 10);
-        assert_eq!(sample.version.as_bytes()[0], id + 20);
         assert_eq!(sample.period, result.period());
         assert_eq!(sample.purpose.as_deref(), Some("utility.usage"));
     }
