@@ -11,13 +11,13 @@
 | ADR-01 | 月度计算时间单位 | 原运行控制提案已由 ADR-27 取代；当前模块不定义运行生命周期 |
 | ADR-02 | 统一 **monthly tick** | 一次领域计算使用一个年月；不表示当前已有运行器或月度事务协调器 |
 | ADR-03 | 从**任意有效初始快照**开始 | 不要求补齐模拟前的购房/还贷事件 |
-| ADR-04 | Scenario Preset + 用户覆盖 | 初始事实与未来假设分离；每个 Slice 校验自己的输入 |
+| ADR-04 | 配置预设 + 用户覆盖 | 仅描述配置来源；不定义运行场景/分支生命周期，初始事实与未来假设分离 |
 | ADR-05 | Slice 独立计算 | 原统一提交器已由 ADR-28 取代；当前 Slice 返回独立输出，不直接写 Ledger |
 | ADR-06 | Event、Effect、Ledger 分离 | 事件说明发生了什么；Effect 改变状态；Ledger 记录经济事实 |
 | ADR-07 | 现金流按月入账 | 保留每笔明细及其来源，月末产生聚合视图 |
-| ADR-08 | 数据集作为 Core 输出 | 已由 ADR-27 取代；M5 只定义单次月度计算输入/输出，历史由 Core 之外处理 |
+| ADR-08 | 数据集作为 Core 输出 | 已由 ADR-27/29 取代；M6 返回单月结果，历史由应用层通过数据访问保存 |
 | ADR-09 | 随机输入显式提供 | 采样使用调用方提供的随机输入；Core 不管理运行随机流或结果重放 |
-| ADR-10 | 三阶段交付 | I 领域内核 M0–M5；II CLI 与持久化；III GPUI 桌面应用。各阶段顺序以实施路线为准；交互式领域决策不属于当前范围。 |
+| ADR-10 | 交付阶段 | 当前按 M5 Core 模块、M6 单月整合、后续应用/数据访问、CLI/GPUI 展开，详见 ADR-29 与路线图。 |
 | ADR-11 | 初期 Rust 静态注册 | 暂不做动态插件、通用配置语言或异步服务架构 |
 | ADR-12 | 初始随机范畴独立 | 自然环境、房屋/组件、政策/宏观、居住/运营范畴间按独立处理；Slice 只读期初状态和冻结输入中的共享状态，不读其他实例的当月结果。未来相关性须作为明确的模型设计。 |
 | [ADR-13](adr/ADR-13-ledger-profile.md) | 家庭房产 Ledger | 最小科目范围、期初净值及同月权责/现金简化 |
@@ -34,19 +34,20 @@
 | [ADR-24](adr/ADR-24-m4-operating-activity-contracts.md) | M4 运营活动契约 | 物业税与公用事业活动边界、配置和来源 |
 | [ADR-25](adr/ADR-25-m5-in-memory-core-contract.md) | M5 内存数据契约 | 历史归档范围已由 ADR-27 取代；不定义常驻运行对象 |
 | [ADR-26](adr/ADR-26-scenario-scoped-runtime-and-concurrency.md) | 单线程计算边界与延后场景管理 | 当前计算模块不管理场景集合或调度 |
-| [ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md) | 月度计算边界与 Ledger 派生现金流 | Core 只处理月度输入/输出；不设计分支或持久化 |
+| [ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md) | 月度计算边界与 Ledger 派生现金流 | M6 处理单月输入/输出；Application/Data Access 管理持久化 |
 | [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md) | M5 前 crate 调用边界检查 | 已完成依赖/调用盘点和生产边界整改；不预设 controller/work unit |
+| [ADR-29](adr/ADR-29-layered-calculation-and-application-boundaries.md) | Core、单月整合、应用与数据访问边界 | M5 完成底层模块；M6 完成单月整合；应用层唯一协调数据访问和计算 |
 
 
 ## 6. Slice 架构与契约
 
 ### 6.1 目标
 
-领域计算的基本契约是“完整期初状态 + 当期冻结输入 + 当期随机输入 → 当期结果 + 期末状态”。Slice 是计算规则的代码边界，不是活动种类的固定容器：实现和活动实例不要求一一对应；一个实现可处理多个同类独立实例，也可由多个实现共同计算一项活动。每个生效活动经相应规则计算后产生带来源的事件、Effects 和 Ledger 交易。规则只依赖同一份期初状态、显式输入和该实例的显式随机样本；Slice 实例不得读取同月其他 Slice 的结果，也不得通过依赖或顺序传递中间结果。所有被接受的实例结果组合都必须满足交换律和结合律；无法满足时在组合边界拒绝。若需要历史信息，其继续有效的影响必须已进入明确定义的状态字段。事件与账簿历史可供审计、展示和投影，不作为隐式计算上下文。**Slice 不得直接修改共享世界或 Ledger。**
+领域计算的基本契约是“完整期初状态 + 当期冻结输入 + 当期随机输入 → 完整月度结果”。结果包含期末状态。Slice 是计算规则的代码边界，不是活动种类的固定容器：实现和活动实例不要求一一对应；一个实现可处理多个同类独立实例，也可由多个实现共同计算一项活动。每个生效活动经相应规则计算后产生带来源的事件、Effects 和 Ledger 交易。规则只依赖同一份期初状态、显式输入和该实例的显式随机样本；Slice 实例不得读取同月其他 Slice 的结果，也不得通过依赖或顺序传递中间结果。所有被接受的实例结果组合都必须满足交换律和结合律；无法满足时在组合边界拒绝。若需要历史信息，其继续有效的影响必须已进入明确定义的状态字段。事件与账簿历史可供审计、展示和投影，不作为隐式计算上下文。**Slice 不得直接修改共享世界或 Ledger。**
 
 输入验证器负责拒绝并报告用户可修正的结构问题，并产生满足不变量的冻结输入。该边界之后，状态转移、余额重算和投影不得因缺失引用、分类或投影前置条件而失败。金额采用有限 `i128` 表示；运行时 checked overflow 是显式失败，不能包装成经济结果，也不能静默夹值。未预见的不变量破坏、实现缺陷或基础设施故障由计算函数返回错误；错误调用不生成成功结果，调用方负责将 fatal 错误作为本次模拟失败处理。当前 Core 不定义失败运行恢复/重试或外部持久化一致性保证。
 
-当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数；不拥有月度运行、完整结果装配、账簿提交、快照归档或分支。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `simulation/src/test_support/`，由测试编译。它们记录早期组合行为，不是生产调用边界。后续 M5 再设计月度纯输入/输出组合；当前不设计 controller、work unit 或 CLI/GUI 调度。
+当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数；不拥有月度运行、完整结果装配、账簿提交、快照归档或分支。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `crates/simulation/src/test_support/`，由测试编译。它们记录早期组合行为，不是生产调用边界。M5 完成底层独立模块；M6 才提供无 IO 的单月计算整合。M6 不等同于 controller、运行控制或应用层调度。
 
 ### 6.2 当前 Rust 实现
 
@@ -67,7 +68,7 @@
 
 ## 13. Rust Workspace 与依赖方向
 
-M0-B 建立了当前 workspace 编译边界，代码位于 `crates/`。下表描述当前 crate 的依赖和代码内容；它不等同于月度调用/组合架构，完整月度边界由 M5 决定：
+M0-B 建立了当前 workspace 编译边界，代码位于 `crates/`。下表描述当前 crate 的依赖和代码内容；它不等同于月度调用/组合架构。M5 完成底层模块，单月整合由 M6 提供：
 
 | Crate | 职责 | 依赖 |
 |---|---|---|
@@ -79,9 +80,9 @@ M0-B 建立了当前 workspace 编译边界，代码位于 `crates/`。下表描
 
 生产 `simulation` 不依赖 `randomness`。Slice 采样函数接收调用方提供的 `RandomSource` 和 `Sampler`；OS 熵读取与语义流分配由调用方负责。测试夹具使用 randomness crate 验证采样隔离。
 
-Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出当前公开 API；`error` 保存输入、提案和计算错误，`types` 保存共享状态、类型化活动配置和提案数据（历史月度结果类型仅在测试编译），`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束；`slices::rental`、`slices::repair` 与 `slices::property_tax` 分别实现相应活动规则。物业税 Slice 只读取活动配置和冻结月份，并通过共享提案契约输出经营费用凭证。所有 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 持有账簿状态并负责交易验证、原子过账和余额推导。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
+Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出当前公开 API；`error` 保存输入、提案和计算错误，`types` 保存共享状态、类型化活动配置和提案数据（历史月度结果类型仅在测试编译），`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束；`slices::rental`、`slices::repair` 与 `slices::property_tax` 分别实现相应活动规则。物业税 Slice 只读取活动配置和冻结月份，并通过共享提案契约输出经营费用凭证。所有 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 定义账簿计算值，并提供交易验证、批次过账和余额推导操作，账簿值由调用方在计算中传入和接收，不是全局或跨调用驻留状态。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
 
-早期单期协调器、运行控制、内存归档和贷款批次组合已移入 `simulation/src/test_support/`，仅用于测试，不属于生产 crate 公开 API。当前依赖图如下；randomness 只出现在 simulation 的 dev-dependencies 中：
+早期单期协调器、运行控制、内存归档和贷款批次组合已移入 `crates/simulation/src/test_support/`，仅用于测试，不属于生产 crate 公开 API。当前依赖图如下；randomness 只出现在 simulation 的 dev-dependencies 中：
 
 下图是当前 Cargo manifest 中声明的依赖，不是实际函数调用图；实际跨 crate 调用及职责归属见 [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md)：
 
@@ -95,12 +96,28 @@ simulation (tests) ─────> randomness
 
 已按 [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md) 完成生产边界整改。跨 crate 的共享值类型和窄接口依赖保留；Ledger 读取及贷款模型计算通过调用方注入接口。Infrastructure、CLI 和 GUI 暂不建 crate，待相应应用阶段职责明确后再决定。Rust workspace 使用 edition 2024、stable toolchain 和集中配置；本地与 CI 共用 `scripts/check.sh`。
 
+目标调用流如下；这是职责/运行时交互图，不代表当前 crate 已实现：
+
+```mermaid
+flowchart TD
+    UI[CLI / GUI] -->|invoke use case| App[Application]
+    App -->|load inputs, opening state, Ledger| DA[Data Access<br/>SQLite later]
+    App -->|pass typed inputs| MI[Monthly Integration<br/>M6]
+    MI -->|call through interfaces| Core[Core modules<br/>domain / accounting / models / Slices]
+    MI -->|return MonthlyResult| App
+    App -->|persist inputs, result, Ledger| DA
+```
+
+图中箭头表示运行时调用/数据流，不表示具体 crate 的编译依赖。Application 通过注入的窄接口调用 Data Access，具体存储适配器实现该接口；Application 不依赖 SQLite 实现。月度结果由 Monthly Integration 返回给 Application；Application 将用户输入、完整月度结果/快照数据和 Ledger 记录交给 Data Access 保存。月度结果含事件、状态变化、期末状态和按实例归属的 Ledger 派生现金流序列；其中 Ledger 更新与单独交给 Data Access 的 Ledger 记录是同一批经济事实，不形成第二套账簿；现金流不是独立账务事实。Presentation 不直接访问 Data Access 或 Monthly Integration。M5/M6 保持单线程。
+
+早期候选目录树（不是当前结构承诺）：
+
 ```text
 property-simulation-sandbox/
 ├── Cargo.toml
 ├── crates/
-│   ├── simulation-core/       # clock, state, event, effect, monthly runner
-│   ├── simulation-models/     # distributions, hazards, random streams
+│   ├── simulation-core/       # domain values and independent calculation primitives
+│   ├── simulation-models/     # distributions, hazards, domain models
 │   ├── real-estate/           # property entities + domain slices
 │   │   └── slices/
 │   │       ├── acquisition_mortgage/
@@ -111,11 +128,12 @@ property-simulation-sandbox/
 │   │       ├── utilities/
 │   │       └── disposal/
 │   ├── simulation-ledger/     # accounts, transactions, validation
-│   ├── simulation-storage/    # Phase II: SQLite, completed snapshots and user settings
-│   ├── simulation-export/     # Phase II: JSON, CSV, XLSX
-│   ├── simulation-cli/        # batch runs and test fixtures
+│   ├── simulation-application/ # Top layer: use cases, coordinates monthly calculation and data access
+│   ├── simulation-storage/    # Data access implementation: SQLite and persisted inputs/results/Ledger
+│   ├── simulation-export/     # application-side export adapters
+│   ├── simulation-cli/        # presentation; invokes application use cases
 │   └── desktop/               # GPUI
-├── scenarios/                 # example presets
+├── examples/                  # example calculation inputs/presets
 ├── tests/                     # golden, property, statistical tests
 └── docs/
     ├── project-spec.md
@@ -123,20 +141,20 @@ property-simulation-sandbox/
     └── adr/
 ```
 
-上述初始方案是候选结构参考。当前 M0-B crate 选择见本节开头；未来按真实编译边界扩展，保持 domain 不依赖 IO/展示层且不引入循环依赖。
+上述树仅是早期候选结构参考，不表示这些 crate 已建立，也不承诺最终物理拆分。它不定义 monthly runner、run-control、分支或多场景调度。当前 M0-B crate 选择见本节开头；未来按真实编译边界扩展，保持 domain 不依赖 IO/展示层且不引入循环依赖。
 
 **候选库**：`serde`、`serde_json`、`rand`/`rand_distr`、`rust_decimal`、`time`、`thiserror`、`tracing`、`clap`、`rusqlite` 或 `sqlx`、`csv`、`rust_xlsxwriter`、GPUI。具体版本与 Linux 平台兼容性在初始化时验证。
 
 
 ### 20.2 领域边界与建议类型
 
-第一阶段按编译边界组织模块，不预先拆分成大量空 crate。建议的初始布局：
+下方是早期目录建议，保留作类型归属参考，不是 M5/M6 的运行架构或 crate 拆分承诺。M5 只完善独立计算模块，M6 单月整合由更高的计算层承担；本目录不预设 coordinator/composer：
 
 ```text
 crates/
-  domain/          # YearMonth、金额、Scenario、WorldState、领域 ID 与错误
+  domain/          # YearMonth、金额、类型化输入、WorldState、领域 ID 与错误
   accounting/      # 科目表、凭证、分录、余额、报表投影与校验
-  simulation/      # 月度生命周期、Slice 契约、协调、Effects、随机流
+  simulation/      # 独立 Slice 契约、提案和输入验证；不含月度生命周期协调
   models/          # 利率、贷款摊还、分布、风险/退化模型
 ```
 
@@ -147,7 +165,7 @@ crates/
 - `YearMonth`：有效年月、排序、加减月、包含端点的区间迭代；不使用日期天数表达月度模型。
 - `Money`：带显式币种代码的十进制定点金额，禁止二进制浮点参与账务计算；一个账本首版只允许一种币种，不做兑换。货币符号和本地化格式由展示层处理。
 - 金额舍入：中间计算使用十进制定点精度，最终入账金额按单币种货币最小单位四舍五入（正数 midpoint half-up）。贷款利息按此规则舍入到分。当前规则固定，不通过可配置策略参数传递。
-- 强类型、不透明 ID：场景、运行、Slice、实体、事件、决策、凭证及账户各用独立类型；`AccountCode` 是可读科目代码，不是 `AccountId`。ID 由领域调用方提供，核心计算不生成 ID；Ledger 拒绝重复凭证 ID。
+- 强类型、不透明 ID：Slice、活动实例、实体、事件、决策、凭证及账户各用独立类型；当前计算不要求场景或运行身份。`AccountCode` 是可读科目代码，不是 `AccountId`。ID 由领域调用方提供，核心计算不生成 ID；Ledger 拒绝重复凭证 ID。
 - M5 的领域内存类型不依赖序列化格式。金额在领域中使用带币种的定点类型；数据库和文件导出的具体编码不属于当前计算边界。
 
 **状态、历史与连续运行**
@@ -155,7 +173,7 @@ crates/
 - `InitialWorldState` 表示起点事实，不自动创建对应的历史交易或事件。
 - 初始账务输入由用户提供的所有已知资产、负债，以及用于生成未来收入/费用的假设构成；核心领域校验负责检查这些类型化输入是否足以构建期初账簿和所启用 Slice 的完整状态。界面负责格式解析和交互提示，不重复领域规则。不得静默补造余额或假设。
 - `WorldState` 保存所有已知且会影响未来的领域变量，包括纳入模型的账户余额、组件状态/年龄、租赁状态、Slice 继续计算所需状态和共享环境状态。
-- 单月计算接收期初状态和当期输入，返回完整结果、Ledger 和期末状态；连续月份由调用方传递期末状态。Core 不持有跨月历史、不管理分支，也不定义数据库。见 ADR-27。多场景集合及并行调度属于应用层，见 ADR-26。
+- M6 单月整合接收期初状态和当期输入，返回包含 Ledger 变化和期末状态的完整结果；它不持有跨月运行状态或历史。应用层负责多次调用及其读写流程；数据访问由应用层调用。当前不设计分支或多场景调度，整体按单线程执行；如将来有更高层并行需求，再单独讨论（ADR-26、ADR-29）。
 - 月度结果记录当期用户输入和模型生成事实的来源；继续计算所需的影响进入期末状态，不要求把历史日志作为后续月份的计算输入。
 - 续跑边界必须验证充分状态：启用的 Slice 所需字段缺失时明确报错，不以隐式默认值补齐。
 
@@ -163,5 +181,5 @@ crates/
 
 - `Event` 记录已发生事实；`Decision` 记录用户或策略选择；`Effect` 描述经过校验的状态变化；`LedgerTransaction` 记录该业务动作的会计影响。
 - 记录携带稳定 ID、期间、来源 Slice、因果引用和适用实体。
-- Slice 只根据只读输入和显式样本返回候选提案，不修改调用方状态或 Ledger。当前生产 API 尚未提供月度提案装配、账簿提交或完整结果生成；这些纯输入/输出职责由 M5 细化。运行控制与持久化不属于当前模块。
+- Slice 只根据只读输入和显式样本返回候选提案，不修改调用方状态或 Ledger。M5 完善各独立模块；M6 负责单月提案装配、账簿结算和完整结果生成。运行控制、数据访问与持久化不属于这两层。
 - 业务事件可以有多个 Effects 和多张有明确语义的凭证；导出/查询层不得把事件、状态变化和会计事实混成一条含义模糊的流水。

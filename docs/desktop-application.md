@@ -2,7 +2,7 @@
 
 > 本文保留原规范章节编号，便于和既有讨论对应。首版实施基线以本文及 [实施路线](implementation-roadmap.md) 为准。
 
-> 本文保留早期 GPUI 产品构想，不是已确认的应用设计。当前尚未设计 CLI/GUI 工作流、controller、work unit、运行控制或多场景调度。所有页面和交互均须在应用阶段重新评估；Core 当前只提供同步计算模块。
+> 本文保留早期 GPUI 产品构想，不是已确认的应用设计。当前尚未设计 CLI/GUI 工作流或多场景调度。界面经 Application 调用用例；Application 负责通过 Data Access 读取输入、调用 M6 单月整合并持久化结果。所有页面和交互均须在界面阶段重新评估。
 
 ## 14. GPUI Desktop 产品设计
 
@@ -23,7 +23,7 @@
 - 每月显示 opening/closing balance、事件数和现金变化；
 - 高级概率参数放在可展开的技术面板；
 - 交互式决策、逐月停止、已保存结果编辑、分支和运行进度展示均未设计；本文件不设定这些行为。
-- Core 当前是同步、单线程计算模块，不管理场景集合。应用层是否以及如何并行处理多个场景，留待该层设计时决定（见 [ADR-26](adr/ADR-26-scenario-scoped-runtime-and-concurrency.md)）。
+- 当前 Core 与 M6 单月整合是同步计算模块，不管理场景集合。多场景和并行调度尚未纳入当前工作；若将来需要，由更高层设计（见 [ADR-26](adr/ADR-26-scenario-scoped-runtime-and-concurrency.md)）。
 
 ### 14.3 Scenario Builder 表单生成
 

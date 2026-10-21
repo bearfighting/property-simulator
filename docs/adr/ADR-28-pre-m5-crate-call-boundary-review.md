@@ -1,5 +1,7 @@
 # ADR-28: Pre-M5 crate call-boundary review
 
+> **Current scope clarification (ADR-29):** This review removed premature production run/coordinator composition. M5 completes independent Core modules; M6 adds stateless single-month integration. Application orchestration and Data Access remain later layers. The historical review findings below remain valid.
+
 - **Status:** Accepted
 - **Date:** 2026-10-21
 - **Related:** [roadmap](../implementation-roadmap.md), [architecture](../architecture.md), [ADR-05](ADR-05-slice-coordination.md), [ADR-27](ADR-27-current-month-runtime-and-database-owned-history.md)
