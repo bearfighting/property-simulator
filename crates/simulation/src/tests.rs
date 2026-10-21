@@ -346,6 +346,128 @@ fn calculate_monthly_result_settles_loan_and_returns_its_continuation() {
         loan_continuations: std::slice::from_ref(&continuation),
         opening_ledger: &ledger,
     };
+
+    struct CountingLoanCalculation<'a>(&'a std::cell::Cell<usize>);
+    impl LoanCalculation for CountingLoanCalculation<'_> {
+        fn validate(
+            &self,
+            loan: property_simulation_models::FixedRateLoan,
+        ) -> Result<(), property_simulation_models::LoanModelError> {
+            self.0.set(self.0.get() + 1);
+            TestLoanCalculation.validate(loan)
+        }
+        fn calculate_month(
+            &self,
+            loan: property_simulation_models::FixedRateLoan,
+        ) -> Result<property_simulation_models::LoanMonth, property_simulation_models::LoanModelError>
+        {
+            self.0.set(self.0.get() + 1);
+            TestLoanCalculation.calculate_month(loan)
+        }
+        fn derive_payment(
+            &self,
+            loan: property_simulation_models::FixedRateLoan,
+        ) -> Result<Money, property_simulation_models::LoanModelError> {
+            self.0.set(self.0.get() + 1);
+            TestLoanCalculation.derive_payment(loan)
+        }
+    }
+    struct CountingAdapter<'a> {
+        inner: &'a dyn MonthlySliceAdapter,
+        evaluations: &'a std::cell::Cell<usize>,
+    }
+    impl MonthlySliceAdapter for CountingAdapter<'_> {
+        fn instance(&self) -> &ActivityInstance {
+            self.inner.instance()
+        }
+        fn sample_kind(&self) -> ActivitySampleKind {
+            self.inner.sample_kind()
+        }
+        fn sample_record(
+            &self,
+            period: YearMonth,
+        ) -> Result<ActivitySample<ActivitySampleValue>, SimulationError> {
+            self.inner.sample_record(period)
+        }
+        fn evaluate(&self, validated: &ValidatedInput) -> Result<SliceOutput, SimulationError> {
+            self.evaluations.set(self.evaluations.get() + 1);
+            self.inner.evaluate(validated)
+        }
+    }
+
+    let loan_calculations = std::cell::Cell::new(0);
+    let slice_evaluations = std::cell::Cell::new(0);
+    let counting_loan = CountingLoanCalculation(&loan_calculations);
+    let counting_adapter = CountingAdapter {
+        inner: &rental_adapter,
+        evaluations: &slice_evaluations,
+    };
+    let mut invalid_frozen = frozen;
+    invalid_frozen.rent = money("-1");
+    let invalid_monthly = MonthlyInput {
+        frozen_input: &invalid_frozen,
+        ..monthly
+    };
+    let error = calculate_monthly_result(
+        &invalid_monthly,
+        &ledger,
+        &REPAIR_COST_RULES,
+        &[&counting_adapter],
+        std::slice::from_ref(&slice),
+        &counting_loan,
+        identity(),
+    )
+    .unwrap_err();
+    assert!(matches!(error, SimulationError::InputValidation(_)));
+    assert_eq!(loan_calculations.get(), 0);
+    assert_eq!(slice_evaluations.get(), 0);
+    assert_eq!(ledger.balance(liability).unwrap().1, money("100"));
+
+    let mismatched_slice = LoanSlice {
+        slice_id: SliceId::from_bytes([111; 16]),
+        ..slice.clone()
+    };
+    let error = calculate_monthly_result(
+        &monthly,
+        &ledger,
+        &REPAIR_COST_RULES,
+        &[&counting_adapter],
+        std::slice::from_ref(&mismatched_slice),
+        &counting_loan,
+        identity(),
+    )
+    .unwrap_err();
+    assert!(matches!(error, SimulationError::InvalidInput(_)));
+    assert_eq!(loan_calculations.get(), 0);
+    assert_eq!(slice_evaluations.get(), 0);
+
+    let invalid_loan = property_simulation_models::FixedRateLoan {
+        annual_rate: rust_decimal::Decimal::NEGATIVE_ONE,
+        ..loan
+    };
+    let invalid_continuation = LoanContinuation {
+        loan: Some(invalid_loan),
+        ..continuation.clone()
+    };
+    let invalid_loan_monthly = MonthlyInput {
+        loan_continuations: std::slice::from_ref(&invalid_continuation),
+        ..monthly
+    };
+    let error = calculate_monthly_result(
+        &invalid_loan_monthly,
+        &ledger,
+        &REPAIR_COST_RULES,
+        &[&counting_adapter],
+        std::slice::from_ref(&slice),
+        &counting_loan,
+        identity(),
+    )
+    .unwrap_err();
+    assert!(matches!(error, SimulationError::InvalidInput(_)));
+    assert_eq!(loan_calculations.get(), 1);
+    assert_eq!(slice_evaluations.get(), 0);
+    assert_eq!(ledger.balance(liability).unwrap().1, money("100"));
+
     let expected = loan.calculate_month().unwrap();
     let result = calculate_monthly_result(
         &monthly,

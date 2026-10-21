@@ -75,6 +75,29 @@ pub fn evaluate_monthly_slices(
     repair_validation: &dyn RepairCostValidation,
     adapters: &[&dyn MonthlySliceAdapter],
 ) -> Result<Vec<SliceOutput>, SimulationError> {
+    let prepared = prepare_monthly_slices(monthly_input, ledger_read, repair_validation, adapters)?;
+    evaluate_prepared_monthly_slices(prepared)
+}
+
+/// A fully preflighted ordinary-Slice call, ready for evaluation once monthly
+/// loan validation has also succeeded.
+pub(crate) struct PreparedMonthlySlices<'input, 'data: 'input, 'adapter> {
+    monthly_input: &'input MonthlyInput<'data>,
+    validated: ValidatedInput,
+    adapters: Vec<(
+        property_simulation_domain::ActivityInstanceId,
+        &'adapter dyn MonthlySliceAdapter,
+    )>,
+}
+
+/// Validate every correctable monthly input and adapter binding without
+/// invoking either loan mathematics or Slice transition logic.
+pub(crate) fn prepare_monthly_slices<'input, 'data: 'input, 'adapter>(
+    monthly_input: &'input MonthlyInput<'data>,
+    ledger_read: &impl LedgerRead,
+    repair_validation: &dyn RepairCostValidation,
+    adapters: &'adapter [&'adapter dyn MonthlySliceAdapter],
+) -> Result<PreparedMonthlySlices<'input, 'data, 'adapter>, SimulationError> {
     let mut validated = validate_input(
         monthly_input.frozen_input,
         monthly_input.repair_distribution,
@@ -213,14 +236,43 @@ pub fn evaluate_monthly_slices(
         ));
     }
 
-    let mut output = Vec::with_capacity(adapters_by_id.len());
+    Ok(PreparedMonthlySlices {
+        monthly_input,
+        validated,
+        adapters: adapters_by_id.into_iter().collect(),
+    })
+}
+
+pub(crate) fn evaluate_prepared_monthly_slices(
+    prepared: PreparedMonthlySlices<'_, '_, '_>,
+) -> Result<Vec<SliceOutput>, SimulationError> {
+    let monthly_input = prepared.monthly_input;
+    let activities_by_id = monthly_input
+        .activities
+        .iter()
+        .map(|activity| (activity.id, activity))
+        .collect::<BTreeMap<_, _>>();
+    let samples_by_id = monthly_input
+        .samples
+        .iter()
+        .map(|sample| (sample.instance_id, sample))
+        .collect::<BTreeMap<_, _>>();
+    let mut output = Vec::with_capacity(prepared.adapters.len());
     let mut output_ids = BTreeSet::new();
-    for (instance_id, adapter) in adapters_by_id {
-        let slice_output = adapter.evaluate(&validated)?;
-        let expected_instance = activities_by_id[&instance_id];
-        let expected_sample = samples_by_id[&instance_id];
-        if slice_output.instance() != expected_instance
-            || slice_output.sample() != expected_sample
+    for (instance_id, adapter) in prepared.adapters {
+        let slice_output = adapter.evaluate(&prepared.validated)?;
+        let Some(expected_instance) = activities_by_id.get(&instance_id) else {
+            return Err(SimulationError::InvalidInput(
+                "prepared Slice adapter no longer matches monthly input",
+            ));
+        };
+        let Some(expected_sample) = samples_by_id.get(&instance_id) else {
+            return Err(SimulationError::InvalidInput(
+                "prepared Slice sample no longer matches monthly input",
+            ));
+        };
+        if slice_output.instance() != *expected_instance
+            || slice_output.sample() != *expected_sample
             || slice_output.period() != monthly_input.frozen_input.period
             || slice_output.opening_state() != monthly_input.opening_state
             || slice_output.frozen_input() != monthly_input.frozen_input
@@ -246,7 +298,15 @@ pub fn compose_monthly_slices(
     adapters: &[&dyn MonthlySliceAdapter],
     ids: &dyn OutputIdFactory,
 ) -> Result<IdentifiedProposal, SimulationError> {
-    let outputs = evaluate_monthly_slices(monthly_input, ledger_read, repair_validation, adapters)?;
+    let prepared = prepare_monthly_slices(monthly_input, ledger_read, repair_validation, adapters)?;
+    compose_prepared_monthly_slices(prepared, ids)
+}
+
+pub(crate) fn compose_prepared_monthly_slices(
+    prepared: PreparedMonthlySlices<'_, '_, '_>,
+    ids: &dyn OutputIdFactory,
+) -> Result<IdentifiedProposal, SimulationError> {
+    let outputs = evaluate_prepared_monthly_slices(prepared)?;
     let mut resources = Vec::with_capacity(outputs.len());
     let mut proposals = Vec::with_capacity(outputs.len());
     for output in outputs {

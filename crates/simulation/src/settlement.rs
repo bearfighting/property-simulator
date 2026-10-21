@@ -9,7 +9,7 @@ use crate::{
     FatalSimulationFailure, FatalSimulationPhase, IdentifiedProposal, LoanCalculation,
     LoanContinuation, LoanEvent, LoanSlice, LoanStateEffect, MonthlyCashFlowContribution,
     MonthlyInput, MonthlyResult, MonthlySliceAdapter, OutputIdFactory, RepairCostValidation,
-    SimulationError, compose_monthly_slices,
+    SimulationError,
 };
 
 /// Calculate and settle one complete month against a private Ledger candidate.
@@ -29,16 +29,10 @@ pub fn calculate_monthly_result(
             "Ledger reader currency does not match opening Ledger",
         ));
     }
-    let mut activity_ids = BTreeSet::new();
-    if input
-        .activities
-        .iter()
-        .any(|activity| !activity_ids.insert(activity.id))
-    {
-        return Err(SimulationError::InvalidInput(
-            "duplicate activity instance in monthly input",
-        ));
-    }
+    // Complete the correctable monthly and adapter preflight before invoking
+    // loan mathematics or any Slice transition implementation.
+    let prepared =
+        crate::monthly::prepare_monthly_slices(input, ledger_read, repair_validation, adapters)?;
     let loan_activities = input
         .activities
         .iter()
@@ -86,8 +80,7 @@ pub fn calculate_monthly_result(
         crate::validate_loan_input(slice, continuation.loan, ledger_read, loan_calculation)?;
     }
 
-    let mut proposal =
-        compose_monthly_slices(input, ledger_read, repair_validation, adapters, ids)?;
+    let mut proposal = crate::monthly::compose_prepared_monthly_slices(prepared, ids)?;
 
     let mut loan_events = Vec::new();
     let mut loan_effects = Vec::new();
