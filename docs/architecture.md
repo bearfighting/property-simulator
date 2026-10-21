@@ -48,13 +48,13 @@
 
 输入验证器负责拒绝并报告用户可修正的结构问题，并产生满足不变量的冻结输入。该边界之后，状态转移、余额重算和投影不得因缺失引用、分类或投影前置条件而失败。金额采用有限 `i128` 表示；运行时 checked overflow 是显式失败，不能包装成经济结果，也不能静默夹值。未预见的不变量破坏、实现缺陷或基础设施故障由计算函数返回错误；错误调用不生成成功结果，调用方负责将 fatal 错误作为本次模拟失败处理。当前 Core 不定义失败运行恢复/重试或外部持久化一致性保证。
 
-当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数；M6.1 定义 `MonthlyInput`/`MonthlyResult` 契约，M6.2 增加异构适配器调用和期初准备。`MonthlyInput` 通过 `RepairCostDistribution` 支持显式维修样本校验；贷款延续仍以独立类型输入，因为贷款尚未实现 `SimulationSlice`。M6.2 每次调用要求非贷款活动、样本和适配器一一对应，并检查贷款活动与延续值的身份和币种；普通 Slice 以相同 `ValidatedInput` 独立评估，输出按活动 ID 排序。尚未提供提案组合、完整结果装配、账簿提交或 Ledger 投影计算。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `crates/simulation/src/test_support/`，由测试编译，其结果类型为测试专用 `TestMonthlyResult`。它们记录早期组合行为，不是生产调用边界。M6.3–M6.4 继续完成提案组合与结算。M6 不等同于 controller、运行控制或应用层调度。
+当前生产 API 提供独立的输入验证、样本生成/校验、Slice 提案和纯提案组合函数；M6.1 定义 `MonthlyInput`/`MonthlyResult` 契约，M6.2 增加异构适配器调用和期初准备，M6.3 通过 `compose_monthly_slices` 完成普通 Slice 的月度提案组合。`MonthlyInput` 通过 `RepairCostDistribution` 支持显式维修样本校验；贷款延续仍以独立类型输入，因为贷款尚未实现 `SimulationSlice`。每次调用要求非贷款活动、样本和适配器一一对应，并检查贷款活动与延续值的身份和币种；普通 Slice 以相同 `ValidatedInput` 独立评估，输出按活动 ID 排序。M6.3 使用调用方的 `OutputIdFactory` 识别输出，再按资源声明校验来源和写入，最后合并兼容提案；它不定义 Slice 间依赖或顺序。完整结果装配、账簿提交和 Ledger 投影计算仍待 M6.4。旧 `coordinate_month`、run control、archive 和贷款批次组合只保留在 `crates/simulation/src/test_support/`，由测试编译，其结果类型为测试专用 `TestMonthlyResult`。它们记录早期组合行为，不是生产调用边界。M6 不等同于 controller、运行控制或应用层调度。
 
 ### 6.2 当前 Rust 实现
 
 当前静态 Slice 契约定义在 [`activity.rs`](../crates/simulation/src/activity.rs)：每个实现声明类型化 `Sample`、`SAMPLE_KIND`、所属活动实例、资源声明和样本转换；`propose_slice` 校验样本实例/Slice/月份及配置类型，再把只读状态、冻结输入和不透明的已验证样本交给 Slice。Slice 返回提案，不能直接修改共享状态或 Ledger。资源与提案合并分别由 [`composition.rs`](../crates/simulation/src/composition.rs) 和 [`proposals.rs`](../crates/simulation/src/proposals.rs) 负责。
 
-`propose_slice` 只调用调用方传入的 `SimulationSlice` 接口并返回绑定来源的 `SliceOutput`。`evaluate_monthly_slices` 先通过调用方提供的 `LedgerRead`、`RepairCostValidation` 验证月度期初上下文，再通过对象安全的 `MonthlySliceAdapter` 调用异构 Slice；`BoundSliceAdapter<S>` 将具体 Slice 与其类型化样本绑定。适配器与输入样本必须按身份和值匹配，输出按活动身份排序。`identify_proposal`、`merge_proposals` 与 `validate_composition` 仍是独立函数，M6.2 不负责组合。输入验证依赖注入的 `LedgerRead`，贷款条款变换依赖注入的 `LoanCalculation`。随机源与采样器通过接口传入。实例顺序、分组和执行顺序不构成隐式依赖。
+`propose_slice` 只调用调用方传入的 `SimulationSlice` 接口并返回绑定来源的 `SliceOutput`。`evaluate_monthly_slices` 先通过调用方提供的 `LedgerRead`、`RepairCostValidation` 验证月度期初上下文，再通过对象安全的 `MonthlySliceAdapter` 调用异构 Slice；`BoundSliceAdapter<S>` 将具体 Slice 与其类型化样本绑定。适配器与输入样本必须按身份和值匹配，输出按活动身份排序。`compose_monthly_slices` 复用该验证和调用流程，为输出识别提案 ID，校验资源声明与来源后合并兼容提案；`identify_proposal`、`merge_proposals` 与 `validate_composition` 也可独立使用。输入验证依赖注入的 `LedgerRead`，贷款条款变换依赖注入的 `LoanCalculation`。随机源与采样器通过接口传入。实例顺序、分组和执行顺序不构成隐式依赖。
 
 ### 6.3 共享资源与冲突
 

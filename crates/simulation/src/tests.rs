@@ -397,6 +397,27 @@ fn monthly_slice_adapters_bind_heterogeneous_samples_and_ignore_adapter_order() 
     assert_eq!(first.len(), 2);
     assert!(first[0].instance().id < first[1].instance().id);
     assert_eq!(first[0].opening_state(), &opening);
+
+    let combined = compose_monthly_slices(
+        &monthly_input,
+        &ledger,
+        &crate::REPAIR_COST_RULES,
+        &adapters,
+        identity(),
+    )
+    .unwrap();
+    let combined_reversed = compose_monthly_slices(
+        &monthly_input,
+        &ledger,
+        &crate::REPAIR_COST_RULES,
+        &reversed_adapters,
+        identity(),
+    )
+    .unwrap();
+    assert_eq!(combined, combined_reversed);
+    assert_eq!(combined.events().len(), 2);
+    assert_eq!(combined.transactions().len(), 2);
+    assert_eq!(combined.period(), Some(frozen.period));
 }
 
 #[test]

@@ -3,8 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::activity::{
     ActivitySample, ActivitySampleValue, SimulationSlice, SliceOutput, propose_slice,
 };
+use crate::composition::validate_composition;
 use crate::error::SimulationError;
-use crate::types::{ActivityInstance, ActivitySampleKind, MonthlyInput};
+use crate::proposals::{identify_proposal, merge_proposals};
+use crate::types::{
+    ActivityInstance, ActivitySampleKind, IdentifiedProposal, MonthlyInput, OutputIdFactory,
+};
 use crate::validation::{LedgerRead, RepairCostValidation, ValidatedInput, validate_input};
 
 /// A concrete Slice bound to the explicitly supplied sample for one activity.
@@ -229,4 +233,26 @@ pub fn evaluate_monthly_slices(
         output.push(slice_output);
     }
     Ok(output)
+}
+
+/// Evaluate and combine all ordinary Slice outputs for one month. Every Slice
+/// sees the same validated opening context; declarations and identified
+/// proposal provenance are checked before compatible proposals are merged.
+/// Loan calculations remain outside this Slice-only composition boundary.
+pub fn compose_monthly_slices(
+    monthly_input: &MonthlyInput<'_>,
+    ledger_read: &impl LedgerRead,
+    repair_validation: &dyn RepairCostValidation,
+    adapters: &[&dyn MonthlySliceAdapter],
+    ids: &dyn OutputIdFactory,
+) -> Result<IdentifiedProposal, SimulationError> {
+    let outputs = evaluate_monthly_slices(monthly_input, ledger_read, repair_validation, adapters)?;
+    let mut resources = Vec::with_capacity(outputs.len());
+    let mut proposals = Vec::with_capacity(outputs.len());
+    for output in outputs {
+        resources.push(output.resources().clone());
+        proposals.push(identify_proposal(output, ids)?);
+    }
+    validate_composition(&resources, &proposals)?;
+    merge_proposals(proposals)
 }

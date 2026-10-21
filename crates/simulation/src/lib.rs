@@ -31,7 +31,9 @@ pub use composition::{SliceResources, validate_composition};
 #[cfg(test)]
 pub use coordinator::coordinate_month;
 pub use error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
-pub use monthly::{BoundSliceAdapter, MonthlySliceAdapter, evaluate_monthly_slices};
+pub use monthly::{
+    BoundSliceAdapter, MonthlySliceAdapter, compose_monthly_slices, evaluate_monthly_slices,
+};
 pub use proposals::{identify_proposal, merge_proposals};
 #[cfg(test)]
 pub use repair_validation_test_support::REPAIR_COST_RULES;
