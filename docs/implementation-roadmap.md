@@ -197,7 +197,7 @@ M6 在底层模块之上提供无持久化职责的单月计算入口。它以�
 - [x] **M6.3 — 单月 Slice 整合（2026-10-21）**：增加 `compose_monthly_slices`，在同一已验证期初上下文下调用异构普通 Slice，按调用方提供的 `OutputIdFactory` 识别输出，校验资源声明与提案来源/写入，再合并兼容提案。集合稳定排序，不建立 Slice 间依赖或阶段/顺序语义；输入、计算、资源校验或组合失败均只返回错误。贷款适配、结算及完整结果装配仍留待后续 M6 阶段；详见 [ADR-30](adr/ADR-30-monthly-integration-inputs-and-atomic-settlement.md)。
 - [x] **M6.4 — 月末结算与审计（2026-10-21）**：生产入口 `calculate_monthly_result` 组合普通 Slice 提案与逐活动贷款月供，在期初 Ledger 候选副本上一次性批量过账；贷款配置、活动和延续值按身份一一对应，并验证账户角色及期初负债余额。结果只含本月凭证增量及由这些新凭证投影的现金流，且由 `MonthlyResult` 内部校验后返回；候选 Ledger 不返回。期末现金从候选账簿读取，贷款负债余额与延续值逐笔对账，Effects 推导期末房况；失败返回阶段诊断且不改变调用方 Ledger。贷款条款月初更新、随机采样和跨月运行仍在范围外。详见 [ADR-30](adr/ADR-30-monthly-integration-inputs-and-atomic-settlement.md)。
 - [x] **M6.5 — 单月失败边界（2026-10-21）**：单月入口先完成冻结输入、活动/样本及适配器预检，再验证贷款身份、账户和模型，全部通过后才调用普通 Slice。前置输入或贷款身份/账户错误不会调用贷款模型或 Slice；模型校验拒绝时不再调用 Slice。计算、提案和结算故障以 `SimulationError`/fatal 阶段诊断返回，不产生部分成功结果或修改调用方 Ledger。沿用现有错误类型，不增加恢复、重试、checkpoint 或随机状态重放。
-- [ ] **M6.6 — 单月组合验收**：覆盖两个以上 Slice、Ledger 对账、来源追踪、现金流由 Ledger 推导、期初/期末状态一致、组合冲突拒绝及失败无成功结果。只在真实模块组合边界做集成测试。
+- [x] **M6.6 — 单月组合验收（2026-10-21）**：生产 `calculate_monthly_result` 集成测试组合真实 Rental/Repair Slice，核对期初/期末现金与房况、两笔平衡凭证、过账后的 Ledger 现金余额、逐交易 Ledger 派生现金流及凭证/活动/Slice/输出键/事件来源追踪；经营净现金流为 `$70`。另一生产入口测试组合真实 Repair Slice 与测试专用冲突 Effect Slice，确认返回 `InvalidProposal`、无成功结果且期初 Ledger 不变。详见 [M6.6 单月组合向量](test-vectors.md#m66-single-month-production-composition-vector)。
 - [ ] **M6.7 — 依赖与质量门槛**：确认 M6 仍是同步、无 IO 的计算整合模块，不引入 CLI/GUI、应用调度、数据访问、SQLite、分支或并行场景管理；同步文档与向量并运行质量门槛。
 
 **M6 完成条件：** 一个明确的单月调用接收完整参数并返回一致的月度结果；中间层负责单月模块整合，底层模块仍保持独立；没有数据库访问、跨月运行器或应用层职责。

@@ -256,6 +256,334 @@ fn calculate_monthly_result_accepts_an_empty_month_and_preserves_opening_ledger(
     assert_eq!(ledger, before);
 }
 
+struct ConflictingConditionSlice {
+    instance: ActivityInstance,
+}
+
+impl SimulationSlice for ConflictingConditionSlice {
+    type Sample = RepairSample;
+    const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Repair;
+
+    fn instance(&self) -> &ActivityInstance {
+        &self.instance
+    }
+
+    fn resources(&self, _input: &FrozenInput) -> crate::SliceResources {
+        crate::SliceResources {
+            instance_id: self.instance.id,
+            slice_id: self.instance.slice_id,
+            reads: Default::default(),
+            writes: [property_simulation_domain::ResourceKey::new("property.condition").unwrap()]
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn sample_value(&self, sample: &Self::Sample) -> ActivitySampleValue {
+        ActivitySampleValue::Repair(*sample)
+    }
+
+    fn propose_validated(
+        &self,
+        _state: &OpeningState,
+        input: &FrozenInput,
+        _sample: &crate::ValidatedActivitySample<'_, Self::Sample>,
+    ) -> Result<SliceProposal, SimulationError> {
+        Ok(SliceProposal {
+            effects: vec![EffectProposal {
+                period: input.period,
+                target: property_simulation_domain::ResourceKey::new("property.condition").unwrap(),
+                key: "condition".into(),
+                source_event_key: None,
+                condition: AssetCondition::NeedsRepair,
+            }],
+            ..Default::default()
+        })
+    }
+}
+
+#[test]
+fn production_monthly_entry_combines_rent_and_repair_with_ledger_provenance() {
+    let frozen = input();
+    let opening_state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let opening_ledger = ledger_for_cash(opening_state.cash);
+    let opening_copy = opening_ledger.clone();
+    let rental = rental_activity(71);
+    let repair = activity(72);
+    let rental_slice = RentalSlice {
+        instance: rental.clone(),
+    };
+    let repair_slice = RepairSlice {
+        instance: repair.clone(),
+        repair_validation: &REPAIR_COST_RULES,
+    };
+    let rental_sample = ActivitySample::new(&rental, frozen.period, ());
+    let repair_sample = ActivitySample::new(
+        &repair,
+        frozen.period,
+        RepairSample::Repair { cost: money("10") },
+    )
+    .with_purpose(Some(crate::REPAIR_SAMPLE_PURPOSE.into()));
+    let rental_record = ActivitySample::new(&rental, frozen.period, ActivitySampleValue::Rental);
+    let repair_record = ActivitySample::new(
+        &repair,
+        frozen.period,
+        ActivitySampleValue::Repair(RepairSample::Repair { cost: money("10") }),
+    )
+    .with_purpose(Some(crate::REPAIR_SAMPLE_PURPOSE.into()));
+    let rental_adapter = BoundSliceAdapter::new(&rental_slice, &rental_sample);
+    let repair_adapter = BoundSliceAdapter::new(&repair_slice, &repair_sample);
+    let adapters: [&dyn MonthlySliceAdapter; 2] = [&rental_adapter, &repair_adapter];
+    let distribution = RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    let monthly = MonthlyInput {
+        opening_state: &opening_state,
+        frozen_input: &frozen,
+        repair_distribution: &distribution,
+        activities: &[rental.clone(), repair.clone()],
+        samples: &[rental_record, repair_record],
+        loan_continuations: &[],
+        opening_ledger: &opening_ledger,
+    };
+
+    let result = calculate_monthly_result(
+        &monthly,
+        &opening_ledger,
+        &REPAIR_COST_RULES,
+        &adapters,
+        &[],
+        &TestLoanCalculation,
+        identity(),
+    )
+    .unwrap();
+
+    assert_eq!(result.opening_state(), &opening_state);
+    assert_eq!(result.closing_state().cash, money("170"));
+    assert_eq!(result.closing_state().condition, AssetCondition::Available);
+    assert_eq!(result.ledger_transactions().len(), 2);
+    assert_eq!(opening_ledger, opening_copy);
+
+    let mut settled = opening_ledger.clone();
+    settled
+        .post_batch(result.ledger_transactions().to_vec())
+        .unwrap();
+    assert_eq!(
+        settled.balance(frozen.cash_account).unwrap().1,
+        money("170")
+    );
+    assert_eq!(result.cash_flow_contributions().len(), 2);
+    let rent_flow = result
+        .cash_flow_contributions()
+        .iter()
+        .find(|flow| flow.instance_id == rental.id)
+        .unwrap();
+    let repair_flow = result
+        .cash_flow_contributions()
+        .iter()
+        .find(|flow| flow.instance_id == repair.id)
+        .unwrap();
+    assert_eq!(rent_flow.category, CashFlowCategory::Operating);
+    assert_eq!(rent_flow.amount, money("80"));
+    assert_eq!(repair_flow.category, CashFlowCategory::Operating);
+    assert_eq!(repair_flow.amount, money("-10"));
+    let operating_total = result
+        .cash_flow_contributions()
+        .iter()
+        .map(|flow| flow.amount)
+        .try_fold(money("0"), |sum, amount| sum.checked_add(amount))
+        .unwrap();
+    assert_eq!(operating_total, money("70"));
+
+    let projected_cash_flows = settled
+        .cash_flow_contributions(frozen.period, frozen.period)
+        .unwrap()
+        .into_iter()
+        .filter(|flow| {
+            result
+                .ledger_transactions()
+                .iter()
+                .any(|transaction| transaction.id() == flow.transaction_id)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        projected_cash_flows.len(),
+        result.cash_flow_contributions().len()
+    );
+
+    for transaction in result.ledger_transactions() {
+        let source = transaction.source().unwrap();
+        let debits = transaction
+            .entries()
+            .iter()
+            .filter(|entry| entry.side() == BalanceSide::Debit)
+            .map(|entry| entry.amount())
+            .try_fold(money("0"), |sum, amount| sum.checked_add(amount))
+            .unwrap();
+        let credits = transaction
+            .entries()
+            .iter()
+            .filter(|entry| entry.side() == BalanceSide::Credit)
+            .map(|entry| entry.amount())
+            .try_fold(money("0"), |sum, amount| sum.checked_add(amount))
+            .unwrap();
+        assert_eq!(debits, credits);
+        let contribution = result
+            .cash_flow_contributions()
+            .iter()
+            .find(|flow| flow.transaction_id == transaction.id())
+            .unwrap();
+        assert_eq!(contribution.instance_id, source.instance_id);
+        assert_eq!(contribution.slice_id, source.slice_id);
+        assert_eq!(contribution.output_key, source.output_key);
+        assert_eq!(contribution.period, transaction.period());
+        let ledger_flow = projected_cash_flows
+            .iter()
+            .find(|flow| flow.transaction_id == transaction.id())
+            .unwrap();
+        assert_eq!(contribution.category, ledger_flow.category);
+        assert_eq!(contribution.amount, ledger_flow.amount);
+        assert_eq!(contribution.category, CashFlowCategory::Operating);
+        let ledger_source = ledger_flow.source.as_ref().unwrap();
+        assert_eq!(contribution.instance_id, ledger_source.instance_id);
+        assert_eq!(contribution.slice_id, ledger_source.slice_id);
+        assert_eq!(contribution.output_key, ledger_source.output_key);
+        assert_eq!(ledger_source.source_event_id, source.source_event_id);
+        assert!(result.activities().iter().any(|activity| {
+            activity.id == source.instance_id && activity.slice_id == source.slice_id
+        }));
+    }
+    assert!(
+        result
+            .proposal()
+            .events()
+            .iter()
+            .any(|event| { event.key == "rent_collected" && event.instance_id == rental.id })
+    );
+    assert!(
+        result
+            .proposal()
+            .events()
+            .iter()
+            .any(|event| { event.key == "repair_performed" && event.instance_id == repair.id })
+    );
+    let rent_tx = result
+        .ledger_transactions()
+        .iter()
+        .find(|tx| tx.source().unwrap().instance_id == rental.id)
+        .unwrap();
+    let repair_tx = result
+        .ledger_transactions()
+        .iter()
+        .find(|tx| tx.source().unwrap().instance_id == repair.id)
+        .unwrap();
+    assert_eq!(rent_tx.source().unwrap().output_key, "rent");
+    assert_eq!(repair_tx.source().unwrap().output_key, "repair");
+    assert_eq!(
+        rent_tx.source().unwrap().source_event_id,
+        result
+            .proposal()
+            .events()
+            .iter()
+            .find(|event| event.key == "rent_collected")
+            .map(|event| event.id)
+    );
+    assert_eq!(
+        repair_tx.source().unwrap().source_event_id,
+        result
+            .proposal()
+            .events()
+            .iter()
+            .find(|event| event.key == "repair_performed")
+            .map(|event| event.id)
+    );
+    let repair_event_id = repair_tx.source().unwrap().source_event_id.unwrap();
+    assert!(result.proposal().effects().iter().any(|effect| {
+        effect.instance_id == repair.id
+            && effect.slice_id == repair.slice_id
+            && effect.target.as_str() == "property.condition"
+            && effect.condition == AssetCondition::Available
+            && effect.source_event_id == Some(repair_event_id)
+    }));
+}
+
+#[test]
+fn production_monthly_entry_rejects_conflicting_effects_without_ledger_changes() {
+    let frozen = input();
+    let opening_state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let opening_ledger = ledger_for_cash(opening_state.cash);
+    let before = opening_ledger.clone();
+    let repair = activity(73);
+    let conflicting = activity(74);
+    let repair_slice = RepairSlice {
+        instance: repair.clone(),
+        repair_validation: &REPAIR_COST_RULES,
+    };
+    let conflict_slice = ConflictingConditionSlice {
+        instance: conflicting.clone(),
+    };
+    let repair_sample = ActivitySample::new(
+        &repair,
+        frozen.period,
+        RepairSample::Repair { cost: money("10") },
+    )
+    .with_purpose(Some(crate::REPAIR_SAMPLE_PURPOSE.into()));
+    let conflict_sample = ActivitySample::new(&conflicting, frozen.period, RepairSample::NoRepair)
+        .with_purpose(Some(crate::REPAIR_SAMPLE_PURPOSE.into()));
+    let sample_records = [
+        ActivitySample::new(
+            &repair,
+            frozen.period,
+            ActivitySampleValue::Repair(RepairSample::Repair { cost: money("10") }),
+        )
+        .with_purpose(Some(crate::REPAIR_SAMPLE_PURPOSE.into())),
+        ActivitySample::new(
+            &conflicting,
+            frozen.period,
+            ActivitySampleValue::Repair(RepairSample::NoRepair),
+        )
+        .with_purpose(Some(crate::REPAIR_SAMPLE_PURPOSE.into())),
+    ];
+    let repair_adapter = BoundSliceAdapter::new(&repair_slice, &repair_sample);
+    let conflict_adapter = BoundSliceAdapter::new(&conflict_slice, &conflict_sample);
+    let adapters: [&dyn MonthlySliceAdapter; 2] = [&repair_adapter, &conflict_adapter];
+    let distribution = RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    let monthly = MonthlyInput {
+        opening_state: &opening_state,
+        frozen_input: &frozen,
+        repair_distribution: &distribution,
+        activities: &[repair, conflicting],
+        samples: &sample_records,
+        loan_continuations: &[],
+        opening_ledger: &opening_ledger,
+    };
+
+    let error = calculate_monthly_result(
+        &monthly,
+        &opening_ledger,
+        &REPAIR_COST_RULES,
+        &adapters,
+        &[],
+        &TestLoanCalculation,
+        identity(),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        SimulationError::InvalidProposal("conflicting state effects")
+    );
+    assert_eq!(opening_ledger, before);
+}
+
 #[test]
 fn calculate_monthly_result_settles_loan_and_returns_its_continuation() {
     use property_simulation_accounting::{

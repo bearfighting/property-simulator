@@ -275,6 +275,33 @@ by [ADR-19](adr/ADR-19-validation-only-domain-errors.md), [ADR-21](adr/ADR-21-m3
 input is rejected before calculation; a fatal calculation error returns no
 successful result for that call and stops the simulation.
 
+## M6.6 single-month production composition vector
+
+Call the production `calculate_monthly_result` boundary for January 2025 with
+opening cash CAD `$100`, opening property condition `NeedsRepair`, rent CAD `$80`,
+and a repair sample costing CAD `$10`. Use the real `RentalSlice` and
+`RepairSlice`, each with its own activity and Slice identity. The opening Ledger
+contains only the `$100` cash position and its balancing opening equity.
+
+The successful result preserves the opening state and closes with cash `$170`
+and condition `Available`. It contains exactly two balanced, separately sourced
+transactions: rental output key `rent` linked to event `rent_collected`, and
+repair output key `repair` linked to event `repair_performed`. Each transaction
+source and its Ledger-derived cash-flow contribution retain the matching
+activity instance and Slice IDs; each contribution refers to that transaction
+ID and output key. Rental contributes operating cash flow `+$80`; repair
+contributes operating cash flow `-$10`; their net operating cash flow is `$70`.
+Posting the returned transaction delta to a copy of the opening Ledger yields
+cash `$170`, and the caller's opening Ledger remains unchanged.
+
+For the failure case, compose the real `RepairSlice` with a minimal test-only
+Slice that writes `NeedsRepair` to `property.condition`, while the repair writes
+`Available`. The production entry returns
+`InvalidProposal("conflicting state effects")`, no `MonthlyResult`, and leaves
+the caller's opening Ledger equal to its pre-call value. The
+conflict is rejected during proposal composition before candidate Ledger
+settlement.
+
 ### Structural input errors
 
 Reject negative annual interest rate, non-positive principal on an active loan, non-positive remaining term, invalid currency precision, a derived payment that rounds to zero, and terms effective other than at a month start. Zero annual rate and an absent/paid-off loan are valid. These vectors define calculation expectations; Ledger vectors are implemented with M1, and mortgage vectors with the mortgage milestone, not as placeholder tests in M0.
