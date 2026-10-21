@@ -122,6 +122,8 @@ simulation (tests) ─────> randomness
 
 已按 [ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md) 完成生产边界整改。跨 crate 的共享值类型和窄接口依赖保留；Ledger 读取及贷款模型计算通过调用方注入接口。Infrastructure、CLI 和 GUI 暂不建 crate，待相应应用阶段职责明确后再决定。Rust workspace 使用 edition 2024、stable toolchain 和集中配置；本地与 CI 共用 `scripts/check.sh`。
 
+M5.6 于 2026-10-21 按当前源码复核了正常依赖图、生产导出及跨 crate 调用点：未发现需要整改的边界违规，生产 `simulation` 无 `randomness` 依赖；完整月度组合和运行/归档夹具仍仅在测试编译中。逐边调用分类及复核证据见 [ADR-28 的 M5.6 复核记录](adr/ADR-28-pre-m5-crate-call-boundary-review.md#m56-source-re-verification-2026-10-21)。
+
 目标调用流如下；这是职责/运行时交互图，不代表当前 crate 已实现：
 
 ```mermaid
