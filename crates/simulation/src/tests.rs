@@ -1769,6 +1769,65 @@ fn coordinator_rejects_unknown_effect_and_invalid_journal_without_partial_commit
 }
 
 #[test]
+fn coordinator_rejects_sample_from_unknown_activity_without_mutating_opening_ledger() {
+    use crate::{RepairSlice, SliceOutput, coordinate_month};
+
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let instance = activity(41);
+    let slice = RepairSlice {
+        instance: instance.clone(),
+    };
+    let wrong_source = ActivitySample::new(
+        &activity(42),
+        frozen.period,
+        ActivitySampleValue::Repair(RepairSample::NoRepair),
+    );
+    let output = SliceOutput {
+        proposal: Default::default(),
+        instance: instance.clone(),
+        period: frozen.period,
+        opening_state: state.clone(),
+        frozen_input: frozen,
+        resources: slice.resources(&input()),
+        sample: wrong_source.clone(),
+    };
+
+    assert!(matches!(
+        coordinate_month(
+            &validated,
+            &ledger,
+            vec![output],
+            vec![wrong_source],
+            TrialId::from_bytes([6; 16]),
+            BranchId::from_bytes([7; 16]),
+            &TestIds,
+        ),
+        Err(SimulationError::InvalidProposal(
+            "sample is missing, duplicated, or has an invalid source"
+        ))
+    ));
+    assert_eq!(ledger.transactions().count(), 0);
+    assert_eq!(
+        ledger.balance(input().cash_account).unwrap().1,
+        money("100")
+    );
+}
+
+#[test]
 fn slice_transition_errors_are_fatal_with_activity_and_month_diagnostics() {
     struct BrokenSlice(ActivityInstance);
     impl SimulationSlice for BrokenSlice {

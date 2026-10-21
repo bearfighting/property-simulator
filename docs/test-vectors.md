@@ -223,6 +223,21 @@ activity and loan input order; compare the successful monthly outputs, Ledger, a
 contributions. Compare each random sample under its semantic identity;
 equal numeric samples across different instances are allowed.
 
+## M4.7 failure and retry vectors
+
+| Boundary | Expected result |
+|---|---|
+| Correctable run update or executor sample/input rejection | Reject before commit. The run remains `Running` at the same next month; opening state, Ledger, update history, and latest snapshot remain unchanged. After correction, retry may succeed and creates one snapshot for that month. A retained random stream allocation is reused; the test does not require replay or recovery of unfinished random draws. |
+| Invalid sample source, unknown Effect, or rejected journal | The coordinator returns a validation error before returning a successful monthly result. The caller's opening Ledger remains unchanged, with no partial transaction batch. |
+| Duplicate output identity or conflicting state writes | Proposal merge rejects duplicate IDs and different values written to the same target before commit. These are merge-layer unit vectors; they do not claim a separate full-coordinator fixture. |
+| Fatal accepted-input transition or fatal run preflight | Mark the run `Failed`; do not create a snapshot for that month and reject subsequent continuation. Run-control tests assert that the in-memory state, Ledger, and update history remain at the last committed boundary. No recovery or persistent rollback guarantee is made for external infrastructure. |
+
+These are layered in-memory simulation boundaries. Under ADR-19, correctable validation
+errors remain retryable while unexpected runtime/invariant failures are fatal.
+Under ADR-21, retrying a failed or interrupted month is not a same-trial RNG
+checkpoint/replay contract; completed month-end snapshots are the continuation
+boundary, and a new run from one receives a new trial stream.
+
 ### Structural input errors
 
 Reject negative annual interest rate, non-positive principal on an active loan, non-positive remaining term, invalid currency precision, a derived payment that rounds to zero, and terms effective other than at a month start. Zero annual rate and an absent/paid-off loan are valid. These vectors define calculation expectations; Ledger vectors are implemented with M1, and mortgage vectors with the mortgage milestone, not as placeholder tests in M0.

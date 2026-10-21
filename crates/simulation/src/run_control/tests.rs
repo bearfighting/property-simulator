@@ -798,6 +798,8 @@ fn invalid_update_does_not_call_executor_or_change_run_state() {
 #[test]
 fn failed_month_has_no_successful_snapshot_and_run_cannot_continue() {
     let mut run = fixture(None, vec![]);
+    let committed_ledger = run.ledger().clone();
+    let committed_state = run.opening_state().clone();
     let mut executor = Executor {
         calls: 0,
         fail: true,
@@ -811,6 +813,9 @@ fn failed_month_has_no_successful_snapshot_and_run_cannot_continue() {
     ));
     assert_eq!(run.status(), &RunStatus::Failed);
     assert!(run.latest_snapshot().is_none());
+    assert!(run.history().is_empty());
+    assert_eq!(run.ledger(), &committed_ledger);
+    assert_eq!(run.opening_state(), &committed_state);
     assert_eq!(
         run.call(RunCommand::Continue, &[], &mut executor),
         Err(RunControlError::InvalidState)
@@ -946,6 +951,7 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
     }
 
     let (ledger, input, state) = make_fixture_ledger();
+    let opening_ledger = ledger.clone();
     let activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([7; 16]),
         slice_id: SliceId::from_bytes([8; 16]),
@@ -958,7 +964,7 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
             end: None,
             stop_conditions: vec![],
         },
-        state,
+        state.clone(),
         input,
         ledger,
         vec![activity.clone()],
@@ -991,6 +997,8 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
     );
     assert!(run.latest_snapshot().is_none());
     assert!(run.history().is_empty());
+    assert_eq!(run.ledger(), &opening_ledger);
+    assert_eq!(run.opening_state(), &state);
     assert_eq!(executor.stream_allocations, 1);
 
     assert!(
@@ -1000,6 +1008,14 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
             .is_some()
     );
     assert_eq!(run.latest_snapshot().unwrap().result().period(), month(1));
+    assert_eq!(
+        run.status(),
+        &RunStatus::Running {
+            next_month: month(2)
+        }
+    );
+    assert_eq!(executor.fallback.calls, 1);
+    assert_eq!(run.ledger(), &opening_ledger);
     assert_eq!(executor.stream_allocations, 1);
 }
 
@@ -1220,12 +1236,21 @@ fn fatal_executor_preflight_error_fails_the_run() {
     }
 
     let mut run = fixture(None, vec![]);
+    let committed_ledger = run.ledger().clone();
+    let committed_state = run.opening_state().clone();
     assert!(matches!(
         run.call(RunCommand::Continue, &[], &mut FatalPreflightExecutor),
         Err(RunControlError::Simulation(SimulationError::Fatal(_)))
     ));
     assert_eq!(run.status(), &RunStatus::Failed);
     assert!(run.latest_snapshot().is_none());
+    assert!(run.history().is_empty());
+    assert_eq!(run.ledger(), &committed_ledger);
+    assert_eq!(run.opening_state(), &committed_state);
+    assert_eq!(
+        run.call(RunCommand::Continue, &[], &mut FatalPreflightExecutor),
+        Err(RunControlError::InvalidState)
+    );
 }
 
 #[test]
