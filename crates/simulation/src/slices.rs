@@ -3,6 +3,7 @@ mod loan_coordinator;
 mod property_tax;
 mod rental;
 mod repair;
+mod utility;
 
 pub use loan::{
     LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanMonthCommand, LoanMonthInput,
@@ -13,3 +14,4 @@ pub use loan_coordinator::{coordinate_loan_month, coordinate_month_with_loans};
 pub use property_tax::PropertyTaxSlice;
 pub use rental::RentalSlice;
 pub use repair::RepairSlice;
+pub use utility::UtilitySlice;

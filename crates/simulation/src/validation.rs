@@ -36,6 +36,7 @@ pub struct ValidatedInput {
     frozen_input: FrozenInput,
     repair_distribution: RepairCostDistribution,
     opening_ledger: Ledger,
+    preflighted_activities: Option<Vec<ActivityInstance>>,
 }
 
 impl ValidatedInput {
@@ -54,6 +55,48 @@ impl ValidatedInput {
     pub(crate) fn opening_ledger(&self) -> &Ledger {
         &self.opening_ledger
     }
+
+    /// Validate the complete active activity set and its monthly cash-flow
+    /// support before any sampler is called. Random activity samplers require
+    /// this preflight record to ensure the whole month's bounds were checked.
+    pub fn validate_activities_before_sampling(
+        &mut self,
+        activities: &[ActivityInstance],
+        additional_support: impl IntoIterator<
+            Item = (
+                property_simulation_accounting::CashFlowCategory,
+                property_simulation_domain::Money,
+            ),
+        >,
+    ) -> Result<(), SimulationError> {
+        if self.preflighted_activities.is_some() {
+            return Err(SimulationError::InvalidInput(
+                "active activity set was already preflighted for this month",
+            ));
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        for activity in activities {
+            if !ids.insert(activity.id) {
+                return Err(SimulationError::InvalidInput(
+                    "duplicate activity instance in pre-sampling input",
+                ));
+            }
+            validate_activity_configuration(activity, &self.frozen_input, &self.opening_ledger)?;
+        }
+        validate_cashflow_support_with_additional(
+            &self.frozen_input,
+            activities,
+            additional_support,
+        )?;
+        self.preflighted_activities = Some(activities.to_vec());
+        Ok(())
+    }
+
+    pub(crate) fn has_preflighted_activity(&self, activity: &ActivityInstance) -> bool {
+        self.preflighted_activities
+            .as_ref()
+            .is_some_and(|activities| activities.iter().any(|candidate| candidate == activity))
+    }
 }
 
 pub(crate) fn validate_activity_configuration(
@@ -61,35 +104,46 @@ pub(crate) fn validate_activity_configuration(
     _input: &FrozenInput,
     ledger: &Ledger,
 ) -> Result<(), SimulationError> {
-    let crate::ActivityConfiguration::PropertyTax(config) = &activity.configuration else {
-        return Ok(());
+    let (cash_account, expense_account, amount_valid, error) = match &activity.configuration {
+        crate::ActivityConfiguration::PropertyTax(config) => (
+            config.cash_account,
+            config.expense_account,
+            !config.amount.is_negative()
+                && config.amount.currency() == ledger.currency()
+                && config
+                    .amount
+                    .rounded_for_posting(RoundingPolicy::HalfUp)
+                    .is_ok(),
+            "invalid property tax amount, currency, or account role",
+        ),
+        crate::ActivityConfiguration::Utility(config) => {
+            let maximum = config.rate_per_unit.checked_mul_u64(config.maximum_usage);
+            (
+                config.cash_account,
+                config.expense_account,
+                !config.usage_unit.trim().is_empty()
+                    && !config.rate_per_unit.is_negative()
+                    && config.rate_per_unit.currency() == ledger.currency()
+                    && maximum
+                        .and_then(|amount| amount.rounded_for_posting(RoundingPolicy::HalfUp))
+                        .is_ok(),
+                "invalid utility unit, maximum charge, currency, or account role",
+            )
+        }
+        _ => return Ok(()),
     };
-    let amount_valid = !config.amount.is_negative()
-        && config.amount.currency() == ledger.currency()
-        && config
-            .amount
-            .rounded_for_posting(RoundingPolicy::HalfUp)
-            .is_ok();
-    let cash_valid = ledger
-        .chart()
-        .get(config.cash_account)
-        .is_some_and(|account| {
-            account.category() == AccountCategory::Asset
-                && account.is_cash_position()
-                && !account.is_contra()
-        });
-    let expense_valid = ledger
-        .chart()
-        .get(config.expense_account)
-        .is_some_and(|account| {
-            account.category() == AccountCategory::Expense && !account.is_contra()
-        });
+    let cash_valid = ledger.chart().get(cash_account).is_some_and(|account| {
+        account.category() == AccountCategory::Asset
+            && account.is_cash_position()
+            && !account.is_contra()
+    });
+    let expense_valid = ledger.chart().get(expense_account).is_some_and(|account| {
+        account.category() == AccountCategory::Expense && !account.is_contra()
+    });
     if amount_valid && cash_valid && expense_valid {
         Ok(())
     } else {
-        Err(SimulationError::InvalidInput(
-            "invalid property tax amount, currency, or account role",
-        ))
+        Err(SimulationError::InvalidInput(error))
     }
 }
 
@@ -252,6 +306,7 @@ pub fn validate_input(
             frozen_input: *input,
             repair_distribution: *repair_distribution,
             opening_ledger: ledger.clone(),
+            preflighted_activities: None,
         })
     } else {
         Err(ValidationErrors(issues))
@@ -312,6 +367,23 @@ pub(crate) fn validate_cashflow_support_with_additional(
                 {
                     config.amount.rounded_for_posting(RoundingPolicy::HalfUp)?
                 }
+                _ => property_simulation_domain::Money::from_parts(0, 0, currency)?,
+            },
+            ActivitySampleKind::Utility => match &activity.configuration {
+                crate::ActivityConfiguration::Utility(config) => config
+                    .rate_per_unit
+                    .checked_mul_u64(config.maximum_usage)
+                    .map_err(|_| {
+                        SimulationError::InvalidInput(
+                            "utility maximum exact charge exceeds the representable Money range",
+                        )
+                    })?
+                    .rounded_for_posting(RoundingPolicy::HalfUp)
+                    .map_err(|_| {
+                        SimulationError::InvalidInput(
+                            "utility maximum charge cannot be rounded for posting",
+                        )
+                    })?,
                 _ => property_simulation_domain::Money::from_parts(0, 0, currency)?,
             },
         };

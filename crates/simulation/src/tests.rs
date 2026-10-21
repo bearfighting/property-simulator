@@ -6,7 +6,7 @@ use property_simulation_domain::{
 };
 use property_simulation_models::{
     RandomSource, RepairCostDistribution, RepairDistribution, RepairSample, RepairSampler,
-    SamplingError,
+    SamplingError, UtilityUsageDistribution, UtilityUsageSampler,
 };
 
 use crate::proposals::identify_proposal_for;
@@ -354,6 +354,7 @@ fn activity_with_kind(id: u8, sample_kind: ActivitySampleKind) -> ActivityInstan
             ActivitySampleKind::PropertyTax => {
                 panic!("property tax uses its explicit configuration")
             }
+            ActivitySampleKind::Utility => panic!("utility uses its explicit configuration"),
         },
     }
 }
@@ -409,6 +410,14 @@ fn chart() -> ChartOfAccounts {
             AccountCategory::Equity,
             false,
             "Opening equity",
+        )
+        .unwrap(),
+        Account::new(
+            AccountId::from_bytes([9; 16]),
+            AccountCode::new(5100).unwrap(),
+            AccountCategory::Expense,
+            false,
+            "Utilities",
         )
         .unwrap(),
     ])
@@ -987,6 +996,379 @@ fn property_tax_due_amount_is_in_the_operating_support_bound() {
     let mut non_due = input();
     non_due.period = YearMonth::new(2025, 2).unwrap();
     assert!(crate::validation::validate_cashflow_support(&non_due, &[first, second]).is_ok());
+}
+
+fn utility_activity(id: u8, maximum_usage: u64, rate: &str) -> ActivityInstance {
+    let mut instance = activity_with_kind(id, ActivitySampleKind::Rental);
+    instance.configuration = ActivityConfiguration::Utility(UtilityConfig {
+        usage_unit: "kWh".into(),
+        maximum_usage,
+        rate_per_unit: money(rate),
+        cash_account: input().cash_account,
+        expense_account: AccountId::from_bytes([9; 16]),
+    });
+    instance
+}
+
+#[test]
+fn utility_slice_posts_exact_usage_charge_and_retains_sample_provenance() {
+    let state = OpeningState {
+        cash: money("500"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let mut validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let instance = utility_activity(61, 100, "0.125");
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), [])
+        .unwrap();
+    let slice = UtilitySlice { instance };
+    let sample = ActivitySample::new(&slice.instance, frozen.period, 3_u64)
+        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into()));
+    let output = propose_slice(&slice, &validated, &sample).unwrap();
+    assert_eq!(output.transactions.len(), 1);
+    assert_eq!(output.transactions[0].key, "usage-charge");
+    assert_eq!(
+        output.transactions[0].source_event_key.as_deref(),
+        Some("utility.usage_charged")
+    );
+    assert_eq!(output.events[0].key, "utility.usage_charged");
+    assert_eq!(output.transactions[0].entries[0].amount(), money("0.38"));
+    assert_eq!(output.transactions[0].entries[1].amount(), money("0.38"));
+
+    let (result, committed) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![output],
+        vec![
+            ActivitySample::new(
+                &slice.instance,
+                frozen.period,
+                ActivitySampleValue::Utility(3),
+            )
+            .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())),
+        ],
+        identity().trial,
+        identity().branch,
+        identity().factory,
+    )
+    .unwrap();
+    assert_eq!(result.samples()[0].value, ActivitySampleValue::Utility(3));
+    assert_eq!(result.cash_flow_contributions().len(), 1);
+    assert_eq!(result.cash_flow_contributions()[0].amount, money("-0.38"));
+    assert_eq!(
+        committed.balance(input().cash_account).unwrap().1,
+        money("499.62")
+    );
+}
+
+#[test]
+fn utility_zero_and_rounded_zero_have_no_economic_outputs() {
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let mut validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let instances = [
+        utility_activity(62, 100, "2.50"),
+        utility_activity(63, 100, "0.001"),
+    ];
+    validated
+        .validate_activities_before_sampling(&instances, [])
+        .unwrap();
+    for (instance, usage) in instances.into_iter().zip([0, 3]) {
+        let slice = UtilitySlice { instance };
+        let sample = ActivitySample::new(&slice.instance, frozen.period, usage);
+        let output = propose_slice(&slice, &validated, &sample).unwrap();
+        assert!(output.events.is_empty());
+        assert!(output.transactions.is_empty());
+    }
+}
+
+#[test]
+fn utility_sample_and_configuration_boundaries_are_validated() {
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let mut validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let slice = UtilitySlice {
+        instance: utility_activity(64, 10, "1"),
+    };
+    assert!(
+        propose_slice(
+            &slice,
+            &validated,
+            &ActivitySample::new(&slice.instance, frozen.period, 0)
+        )
+        .is_err()
+    );
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&slice.instance), [])
+        .unwrap();
+    assert!(
+        propose_slice(
+            &slice,
+            &validated,
+            &ActivitySample::new(&slice.instance, frozen.period, 11)
+        )
+        .is_err()
+    );
+    assert!(
+        propose_slice(
+            &slice,
+            &validated,
+            &ActivitySample::new(&slice.instance, frozen.period, 1)
+                .with_purpose(Some("other".into()))
+        )
+        .is_err()
+    );
+    let mut unrepresentable = utility_activity(65, 2, "1");
+    if let ActivityConfiguration::Utility(config) = &mut unrepresentable.configuration {
+        config.rate_per_unit =
+            Money::from_parts(i128::MAX, 0, config.rate_per_unit.currency()).unwrap();
+    }
+    let invalid = UtilitySlice {
+        instance: unrepresentable,
+    };
+    assert!(
+        crate::validation::validate_activity_configuration(&invalid.instance, &frozen, &ledger)
+            .is_err()
+    );
+    assert!(crate::validation::validate_cashflow_support(&frozen, &[invalid.instance]).is_err());
+
+    let mut large_a = utility_activity(70, 1, "1");
+    let mut large_b = utility_activity(71, 1, "1");
+    let large_rate =
+        Money::from_parts(i128::MAX / 2 + 1, 0, Currency::from_code("CAD").unwrap()).unwrap();
+    for activity in [&mut large_a, &mut large_b] {
+        if let ActivityConfiguration::Utility(config) = &mut activity.configuration {
+            config.rate_per_unit = large_rate;
+        }
+    }
+    assert!(crate::validation::validate_activity_configuration(&large_a, &frozen, &ledger).is_ok());
+    assert!(crate::validation::validate_activity_configuration(&large_b, &frozen, &ledger).is_ok());
+    assert!(crate::validation::validate_cashflow_support(&frozen, &[large_a, large_b]).is_err());
+}
+
+#[test]
+fn utility_sampling_uses_required_semantic_identity_and_checks_trial() {
+    let frozen = input();
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let distribution_for_repairs = RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    let instance = utility_activity(66, 100, "1");
+    let wide_instance = utility_activity(73, u64::MAX, "1");
+    let other_instance = utility_activity(72, u64::MAX, "1");
+    let all_activities = [
+        instance.clone(),
+        wide_instance.clone(),
+        other_instance.clone(),
+    ];
+    let mut validated =
+        validate_input(&frozen, &distribution_for_repairs, &ledger, &state).unwrap();
+    let streams = property_simulation_randomness::RunKeyFactory::new(
+        property_simulation_randomness::RootKey::from_seed([11; 32]),
+    )
+    .run_streams(TrialId::from_bytes([6; 16]))
+    .unwrap();
+    assert!(matches!(
+        sample_utility_from_streams(
+            &validated,
+            &streams,
+            TrialId::from_bytes([6; 16]),
+            &instance,
+            frozen.period,
+            &UtilityUsageDistribution { maximum: 100 },
+            &mut UtilityUsageSampler,
+        ),
+        Err(UtilitySamplingError::ActivitySetNotPreflighted)
+    ));
+    validated
+        .validate_activities_before_sampling(&all_activities, [])
+        .unwrap();
+    let distribution = UtilityUsageDistribution { maximum: 100 };
+    let sample = sample_utility_from_streams(
+        &validated,
+        &streams,
+        TrialId::from_bytes([6; 16]),
+        &instance,
+        input().period,
+        &distribution,
+        &mut UtilityUsageSampler,
+    )
+    .unwrap();
+    assert!(sample.value <= 100);
+    assert_eq!(sample.purpose.as_deref(), Some(UTILITY_SAMPLE_PURPOSE));
+    let february = FrozenInput {
+        period: YearMonth::new(2025, 2).unwrap(),
+        ..frozen
+    };
+    let mut validated_february =
+        validate_input(&february, &distribution_for_repairs, &ledger, &state).unwrap();
+    validated_february
+        .validate_activities_before_sampling(&all_activities, [])
+        .unwrap();
+    let unrestricted = UtilityUsageDistribution { maximum: u64::MAX };
+    let draw = |validated: &ValidatedInput, instance: &ActivityInstance, period| {
+        sample_utility_from_streams(
+            validated,
+            &streams,
+            TrialId::from_bytes([6; 16]),
+            instance,
+            period,
+            &unrestricted,
+            &mut UtilityUsageSampler,
+        )
+        .unwrap()
+        .value
+    };
+    assert_eq!(
+        draw(&validated, &wide_instance, frozen.period),
+        draw(&validated, &wide_instance, frozen.period)
+    );
+    assert_ne!(
+        draw(&validated, &wide_instance, frozen.period),
+        draw(&validated, &other_instance, frozen.period)
+    );
+    assert_ne!(
+        draw(&validated, &wide_instance, frozen.period),
+        draw(
+            &validated_february,
+            &wide_instance,
+            YearMonth::new(2025, 2).unwrap()
+        )
+    );
+    assert!(matches!(
+        sample_utility_from_streams(
+            &validated,
+            &streams,
+            TrialId::from_bytes([7; 16]),
+            &instance,
+            frozen.period,
+            &distribution,
+            &mut UtilityUsageSampler,
+        ),
+        Err(UtilitySamplingError::Randomness(
+            property_simulation_randomness::RandomnessError::TrialIdentityMismatch
+        ))
+    ));
+}
+
+#[test]
+fn utility_and_rental_composition_is_permutation_invariant() {
+    let state = OpeningState {
+        cash: money("500"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let mut validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let utility_a = UtilitySlice {
+        instance: utility_activity(67, 20, "2"),
+    };
+    let utility_b = UtilitySlice {
+        instance: utility_activity(68, 20, "3"),
+    };
+    let rental = RentalSlice {
+        instance: rental_activity(69),
+    };
+    validated
+        .validate_activities_before_sampling(
+            &[
+                utility_a.instance.clone(),
+                utility_b.instance.clone(),
+                rental.instance.clone(),
+            ],
+            [],
+        )
+        .unwrap();
+    let ua = ActivitySample::new(&utility_a.instance, frozen.period, 2_u64)
+        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into()));
+    let ub = ActivitySample::new(&utility_b.instance, frozen.period, 3_u64)
+        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into()));
+    let rent = ActivitySample::new(&rental.instance, frozen.period, ());
+    let out_ua = propose_slice(&utility_a, &validated, &ua).unwrap();
+    let out_ub = propose_slice(&utility_b, &validated, &ub).unwrap();
+    let out_rent = propose_slice(&rental, &validated, &rent).unwrap();
+    let samples = vec![
+        ActivitySample::new(
+            &utility_a.instance,
+            frozen.period,
+            ActivitySampleValue::Utility(2),
+        )
+        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())),
+        ActivitySample::new(
+            &utility_b.instance,
+            frozen.period,
+            ActivitySampleValue::Utility(3),
+        )
+        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())),
+        ActivitySample::new(&rental.instance, frozen.period, ActivitySampleValue::Rental),
+    ];
+    let left = coordinate_month(
+        &validated,
+        &ledger,
+        vec![out_ua.clone(), out_ub.clone(), out_rent.clone()],
+        samples.clone(),
+        identity().trial,
+        identity().branch,
+        identity().factory,
+    )
+    .unwrap();
+    let right = coordinate_month(
+        &validated,
+        &ledger,
+        vec![out_rent, out_ub, out_ua],
+        samples.into_iter().rev().collect(),
+        identity().trial,
+        identity().branch,
+        identity().factory,
+    )
+    .unwrap();
+    assert_eq!(left, right);
 }
 
 #[test]

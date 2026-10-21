@@ -168,6 +168,47 @@ impl Money {
             self.currency,
         )
     }
+
+    /// Multiply a non-negative amount by an integer quantity without changing
+    /// its decimal scale or currency.
+    pub fn checked_mul_u64(self, multiplier: u64) -> Result<Self, DomainError> {
+        if self.is_negative() {
+            return Err(DomainError::NegativePostingAmount);
+        }
+        if self.is_zero() || multiplier == 0 {
+            return Self::from_parts(0, 0, self.currency);
+        }
+
+        // Cancel factors from the numerator against the decimal denominator
+        // before multiplying. This keeps exact products representable when
+        // the unreduced coefficient product alone would overflow.
+        let mut coefficient = self.coefficient;
+        let mut multiplier = multiplier;
+        let mut scale = self.scale;
+        while scale > 0 {
+            let has_two = coefficient % 2 == 0 || multiplier % 2 == 0;
+            let has_five = coefficient % 5 == 0 || multiplier % 5 == 0;
+            if !has_two || !has_five {
+                break;
+            }
+            if coefficient % 2 == 0 {
+                coefficient /= 2;
+            } else {
+                multiplier /= 2;
+            }
+            if coefficient % 5 == 0 {
+                coefficient /= 5;
+            } else {
+                multiplier /= 5;
+            }
+            scale -= 1;
+        }
+
+        let product = coefficient
+            .checked_mul(i128::from(multiplier))
+            .ok_or(DomainError::ArithmeticOverflow)?;
+        Self::from_parts(product, scale, self.currency)
+    }
     pub fn checked_cmp(self, other: Self) -> Result<std::cmp::Ordering, DomainError> {
         self.ensure_currency(other)?;
         let self_sign = self.coefficient.signum();
@@ -326,6 +367,33 @@ mod tests {
                 .checked_add(Money::parse("1", cad).unwrap())
                 .unwrap(),
             Money::parse("1.005", cad).unwrap()
+        );
+        assert_eq!(
+            Money::parse("0.125", cad)
+                .unwrap()
+                .checked_mul_u64(3)
+                .unwrap(),
+            Money::parse("0.375", cad).unwrap()
+        );
+        assert!(
+            Money::from_parts(i128::MAX, 0, cad)
+                .unwrap()
+                .checked_mul_u64(2)
+                .is_err()
+        );
+        assert_eq!(
+            Money::from_parts(i128::MAX, 1, cad)
+                .unwrap()
+                .checked_mul_u64(10)
+                .unwrap(),
+            Money::from_parts(i128::MAX, 0, cad).unwrap()
+        );
+        assert_eq!(
+            Money::from_parts(i128::MAX / 5 * 5, 1, cad)
+                .unwrap()
+                .checked_mul_u64(2)
+                .unwrap(),
+            Money::from_parts(i128::MAX / 5, 0, cad).unwrap()
         );
         assert_eq!(
             half_cent.checked_add(Money::parse("1", jpy).unwrap()),

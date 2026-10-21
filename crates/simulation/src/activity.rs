@@ -15,6 +15,7 @@ use property_simulation_models::{
 pub enum ActivitySampleValue {
     Rental,
     Repair(RepairSample),
+    Utility(u64),
     Loan(Option<property_simulation_models::FixedRateLoan>),
     PropertyTax,
 }
@@ -155,12 +156,83 @@ pub struct ActivitySample<T> {
 }
 
 pub const REPAIR_SAMPLE_PURPOSE: &str = "repair.sample";
+pub const UTILITY_SAMPLE_PURPOSE: &str = "utility.usage";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairSamplingError {
     InvalidDistribution,
     Randomness(property_simulation_randomness::RandomnessError),
     Sampler(SamplingError<std::convert::Infallible>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UtilitySamplingError {
+    InvalidDistribution,
+    ActivitySetNotPreflighted,
+    PeriodMismatch,
+    InvalidMaximumCharge,
+    Randomness(property_simulation_randomness::RandomnessError),
+    Sampler(SamplingError<std::convert::Infallible>),
+}
+
+/// Draw utility usage from its fixed occupancy/operations semantic substream.
+/// The supplied input must have preflighted the complete active activity set
+/// for this month before any random sampler is called.
+pub fn sample_utility_from_streams<S>(
+    validated: &ValidatedInput,
+    streams: &property_simulation_randomness::RandomStreams,
+    trial_id: property_simulation_domain::TrialId,
+    instance: &ActivityInstance,
+    period: YearMonth,
+    distribution: &property_simulation_models::UtilityUsageDistribution,
+    sampler: &mut S,
+) -> Result<ActivitySample<u64>, UtilitySamplingError>
+where
+    S: Sampler<property_simulation_models::UtilityUsageDistribution>,
+{
+    let utility_config = match &instance.configuration {
+        crate::types::ActivityConfiguration::Utility(config)
+            if distribution.maximum == config.maximum_usage =>
+        {
+            config
+        }
+        _ => return Err(UtilitySamplingError::InvalidDistribution),
+    };
+    if !validated.has_preflighted_activity(instance) {
+        return Err(UtilitySamplingError::ActivitySetNotPreflighted);
+    }
+    if validated.frozen_input().period != period {
+        return Err(UtilitySamplingError::PeriodMismatch);
+    }
+    if !distribution.validate() {
+        return Err(UtilitySamplingError::InvalidDistribution);
+    }
+    if utility_config
+        .rate_per_unit
+        .checked_mul_u64(utility_config.maximum_usage)
+        .and_then(|maximum| {
+            maximum.rounded_for_posting(property_simulation_domain::RoundingPolicy::HalfUp)
+        })
+        .is_err()
+    {
+        return Err(UtilitySamplingError::InvalidMaximumCharge);
+    }
+    let mut random = streams
+        .stream(&property_simulation_randomness::SemanticIdentity {
+            trial_id,
+            category: property_simulation_randomness::RandomCategory::OccupancyOperations,
+            slice_id: instance.slice_id,
+            activity_id: instance.id,
+            period,
+            model_version: instance.version,
+            purpose: UTILITY_SAMPLE_PURPOSE.into(),
+        })
+        .map_err(UtilitySamplingError::Randomness)?;
+    let value = sampler
+        .sample(distribution, &mut random)
+        .map_err(UtilitySamplingError::Sampler)?;
+    Ok(ActivitySample::new(instance, period, value)
+        .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())))
 }
 
 /// Composition boundary for the repair model: validates distribution/Slice
@@ -258,6 +330,16 @@ impl<T> ActivitySample<T> {
         {
             return Err(SimulationError::InvalidInput(
                 "repair sample purpose does not match the repair sampling contract",
+            ));
+        }
+        if instance.configuration.sample_kind() == ActivitySampleKind::Utility
+            && self
+                .purpose
+                .as_deref()
+                .is_some_and(|purpose| purpose != UTILITY_SAMPLE_PURPOSE)
+        {
+            return Err(SimulationError::InvalidInput(
+                "utility sample purpose does not match the utility sampling contract",
             ));
         }
         Ok(())

@@ -229,6 +229,9 @@ fn validate_sample_set(
                 ) | (
                     ActivitySampleValue::PropertyTax,
                     crate::types::ActivitySampleKind::PropertyTax
+                ) | (
+                    ActivitySampleValue::Utility(_),
+                    crate::types::ActivitySampleKind::Utility
                 )
             )
         {

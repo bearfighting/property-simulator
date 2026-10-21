@@ -27,8 +27,8 @@ pub use run_control::{
 pub use slices::{
     LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanMonthCommand, LoanMonthInput,
     LoanMonthOutput, LoanRunUpdate, LoanSlice, LoanStateEffect, LoanStateEffectProposal,
-    LoanTermsUpdate, PropertyTaxSlice, RentalSlice, RepairSlice, apply_loan_terms_update,
-    coordinate_loan_month, coordinate_month_with_loans,
+    LoanTermsUpdate, PropertyTaxSlice, RentalSlice, RepairSlice, UtilitySlice,
+    apply_loan_terms_update, coordinate_loan_month, coordinate_month_with_loans,
 };
 pub use types::*;
 pub use validation::{

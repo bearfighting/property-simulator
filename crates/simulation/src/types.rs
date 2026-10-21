@@ -48,6 +48,7 @@ pub enum ActivityConfiguration {
     Repair,
     Loan,
     PropertyTax(PropertyTaxConfig),
+    Utility(UtilityConfig),
 }
 impl ActivityConfiguration {
     pub const fn sample_kind(&self) -> ActivitySampleKind {
@@ -56,6 +57,7 @@ impl ActivityConfiguration {
             Self::Repair => ActivitySampleKind::Repair,
             Self::Loan => ActivitySampleKind::Loan,
             Self::PropertyTax(_) => ActivitySampleKind::PropertyTax,
+            Self::Utility(_) => ActivitySampleKind::Utility,
         }
     }
 }
@@ -82,12 +84,21 @@ pub struct PropertyTaxConfig {
     pub cash_account: AccountId,
     pub expense_account: AccountId,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UtilityConfig {
+    pub usage_unit: String,
+    pub maximum_usage: u64,
+    pub rate_per_unit: Money,
+    pub cash_account: AccountId,
+    pub expense_account: AccountId,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySampleKind {
     Rental,
     Repair,
     Loan,
     PropertyTax,
+    Utility,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventProposal {
@@ -368,6 +379,7 @@ impl MonthlyResult {
                                 ActivitySampleValue::PropertyTax,
                                 ActivitySampleKind::PropertyTax
                             )
+                            | (ActivitySampleValue::Utility(_), ActivitySampleKind::Utility)
                     )
                 })
         };
@@ -465,6 +477,12 @@ impl MonthlyResult {
                         if crate::validation::tax_due(period, config.first_due, config.cadence) =>
                     {
                         config.amount
+                    }
+                    _ => Money::from_parts(0, 0, opening_state.cash.currency())?,
+                },
+                ActivitySampleKind::Utility => match &activity.configuration {
+                    ActivityConfiguration::Utility(config) => {
+                        config.rate_per_unit.checked_mul_u64(config.maximum_usage)?
                     }
                     _ => Money::from_parts(0, 0, opening_state.cash.currency())?,
                 },

@@ -40,6 +40,7 @@ fn activity(value: u8, kind: ActivitySampleKind) -> ActivityInstance {
             ActivitySampleKind::Repair => ActivityConfiguration::Repair,
             ActivitySampleKind::Loan => ActivityConfiguration::Loan,
             ActivitySampleKind::PropertyTax => panic!("tax test helper requires configuration"),
+            ActivitySampleKind::Utility => panic!("utility test helper requires configuration"),
         },
     }
 }

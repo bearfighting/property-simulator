@@ -187,6 +187,7 @@ impl SingleMonthExecutor for Executor {
                     }
                     crate::ActivitySampleKind::Loan => ActivitySampleValue::Loan(None),
                     crate::ActivitySampleKind::PropertyTax => ActivitySampleValue::PropertyTax,
+                    crate::ActivitySampleKind::Utility => ActivitySampleValue::Utility(0),
                 };
                 ActivitySample::new(activity, input.frozen_input().period, value)
             })

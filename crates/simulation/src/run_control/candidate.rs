@@ -1,6 +1,6 @@
 use super::validation::{additional_cash_flow_support, has_duplicate_activity_ids};
 use super::*;
-use crate::{validate_input, validation::validate_cashflow_support_with_additional};
+use crate::validate_input;
 use property_simulation_accounting::BalanceSide;
 use property_simulation_domain::EffectId;
 use property_simulation_models::RepairCostDistribution;
@@ -144,12 +144,8 @@ pub(super) fn prepare_month(
     let distribution = RepairCostDistribution {
         maximum: input.repair_cost_limit,
     };
-    let validated = validate_input(&input, &distribution, &candidate_ledger, &state)
+    let mut validated = validate_input(&input, &distribution, &candidate_ledger, &state)
         .map_err(RunControlError::Input)?;
-    for activity in &activities {
-        crate::validation::validate_activity_configuration(activity, &input, &candidate_ledger)
-            .map_err(RunControlError::InvalidExecutionInput)?;
-    }
     let additional_support = additional_cash_flow_support(
         &candidate_loans,
         &loan_updates,
@@ -157,7 +153,8 @@ pub(super) fn prepare_month(
         candidate_ledger.currency(),
     )
     .map_err(RunControlError::InvalidExecutionInput)?;
-    validate_cashflow_support_with_additional(&input, &activities, additional_support)
+    validated
+        .validate_activities_before_sampling(&activities, additional_support)
         .map_err(RunControlError::InvalidExecutionInput)?;
     Ok(PreparedMonth {
         input,
