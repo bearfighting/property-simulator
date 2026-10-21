@@ -40,6 +40,26 @@ pub trait LedgerRead {
     ) -> Result<property_simulation_domain::Money, AccountError>;
 }
 
+/// Repair model rules needed by simulation input and sample validation.
+/// Implementations are supplied by the caller that connects the model crate.
+pub trait RepairCostValidation {
+    fn validate_support(
+        &self,
+        distribution: &RepairCostDistribution,
+    ) -> Result<(), property_simulation_domain::DomainError>;
+
+    fn maximum_minor_units(
+        &self,
+        distribution: &RepairCostDistribution,
+    ) -> Result<u64, property_simulation_domain::DomainError>;
+
+    fn validate_sample(
+        &self,
+        distribution: &RepairCostDistribution,
+        value: property_simulation_domain::Money,
+    ) -> Result<(), property_simulation_domain::DomainError>;
+}
+
 /// A transaction error found while preflighting an identified proposal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg(test)]
@@ -164,18 +184,24 @@ pub(crate) fn validate_activity_configuration(
 pub fn validate_input(
     input: &FrozenInput,
     repair_distribution: &RepairCostDistribution,
+    repair_validation: &dyn RepairCostValidation,
     ledger: &impl LedgerRead,
     state: &OpeningState,
 ) -> Result<ValidatedInput, ValidationErrors> {
     let mut issues = Vec::new();
-    if repair_distribution.validate_support().is_err() {
+    let repair_support_valid = repair_validation
+        .validate_support(repair_distribution)
+        .is_ok();
+    if !repair_support_valid {
         issues.push(ValidationIssue {
             field: "repair_distribution.maximum",
             message: "repair distribution support must be non-negative",
         });
     }
-    if repair_distribution.validate_support().is_ok()
-        && repair_distribution.maximum_minor_units().is_err()
+    if repair_support_valid
+        && repair_validation
+            .maximum_minor_units(repair_distribution)
+            .is_err()
     {
         issues.push(ValidationIssue {
             field: "repair_distribution.maximum",

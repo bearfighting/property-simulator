@@ -133,7 +133,14 @@ fn property_tax_composes_with_a_loan_in_the_same_month() {
     let distribution = property_simulation_models::RepairCostDistribution {
         maximum: frozen.repair_cost_limit,
     };
-    let mut input = crate::validate_input(&frozen, &distribution, &ledger, &state).unwrap();
+    let mut input = crate::validate_input(
+        &frozen,
+        &distribution,
+        &crate::REPAIR_COST_RULES,
+        &ledger,
+        &state,
+    )
+    .unwrap();
     let tax = ActivityInstance {
         id: ActivityInstanceId::from_bytes([40; 16]),
         slice_id: SliceId::from_bytes([41; 16]),
@@ -193,7 +200,14 @@ fn loan_aware_coordinator_accepts_a_month_with_no_active_activities() {
     let distribution = property_simulation_models::RepairCostDistribution {
         maximum: frozen.repair_cost_limit,
     };
-    let input = crate::validate_input(&frozen, &distribution, &ledger, &state).unwrap();
+    let input = crate::validate_input(
+        &frozen,
+        &distribution,
+        &crate::REPAIR_COST_RULES,
+        &ledger,
+        &state,
+    )
+    .unwrap();
     let (result, unchanged) = coordinate_month_with_loans(
         &input,
         &ledger,
@@ -564,7 +578,14 @@ fn loan_composition_is_retained_in_month_result_and_snapshot_payload() {
     let distribution = property_simulation_models::RepairCostDistribution {
         maximum: frozen.repair_cost_limit,
     };
-    let input = crate::validate_input(&frozen, &distribution, &ledger, &state).unwrap();
+    let input = crate::validate_input(
+        &frozen,
+        &distribution,
+        &crate::REPAIR_COST_RULES,
+        &ledger,
+        &state,
+    )
+    .unwrap();
     let (result, committed) = coordinate_month_with_loans(
         &input,
         &ledger,

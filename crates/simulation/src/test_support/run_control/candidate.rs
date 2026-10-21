@@ -144,8 +144,14 @@ pub(super) fn prepare_month(
     let distribution = RepairCostDistribution {
         maximum: input.repair_cost_limit,
     };
-    let mut validated = validate_input(&input, &distribution, &candidate_ledger, &state)
-        .map_err(RunControlError::Input)?;
+    let mut validated = validate_input(
+        &input,
+        &distribution,
+        &crate::REPAIR_COST_RULES,
+        &candidate_ledger,
+        &state,
+    )
+    .map_err(RunControlError::Input)?;
     let additional_support = additional_cash_flow_support(
         &candidate_loans,
         &loan_updates,

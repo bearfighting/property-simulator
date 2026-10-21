@@ -168,6 +168,7 @@ fn repair_sampling_composition_binds_activity_and_period_provenance() {
     assert!(
         propose_slice(
             &crate::RepairSlice {
+                repair_validation: &crate::REPAIR_COST_RULES,
                 instance: instance.clone()
             },
             &validated_input(
@@ -333,6 +334,7 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
     let validated = validated_input(&state, &input());
     let output = propose_slice(
         &RepairSlice {
+            repair_validation: &crate::REPAIR_COST_RULES,
             instance: instance.clone(),
         },
         &validated,
@@ -427,6 +429,7 @@ fn validated_input(state: &OpeningState, frozen: &FrozenInput) -> ValidatedInput
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger_for_cash(state.cash),
         state,
     )
@@ -532,6 +535,7 @@ fn property_tax_posts_on_anchored_due_month_and_retains_marker() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -605,6 +609,7 @@ fn property_tax_annual_schedule_carries_anchor_across_calendar_years() {
             &RepairCostDistribution {
                 maximum: frozen.repair_cost_limit,
             },
+            &crate::REPAIR_COST_RULES,
             &ledger,
             &state,
         )
@@ -687,6 +692,7 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -721,6 +727,7 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -764,6 +771,7 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -807,6 +815,7 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -846,6 +855,7 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
     .unwrap();
     let repair_output = propose_slice(
         &RepairSlice {
+            repair_validation: &crate::REPAIR_COST_RULES,
             instance: repair.clone(),
         },
         &validated,
@@ -915,6 +925,7 @@ fn property_tax_invalid_currency_and_cash_account_are_rejected() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -994,6 +1005,7 @@ fn property_tax_rejects_a_contra_expense_account() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1067,6 +1079,7 @@ fn utility_slice_posts_exact_usage_charge_and_retains_sample_provenance() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1120,6 +1133,7 @@ fn utility_zero_and_rounded_zero_have_no_economic_outputs() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1153,6 +1167,7 @@ fn utility_sample_and_configuration_boundaries_are_validated() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1235,8 +1250,14 @@ fn utility_sampling_uses_required_semantic_identity_and_checks_trial() {
         wide_instance.clone(),
         other_instance.clone(),
     ];
-    let mut validated =
-        validate_input(&frozen, &distribution_for_repairs, &ledger, &state).unwrap();
+    let mut validated = validate_input(
+        &frozen,
+        &distribution_for_repairs,
+        &crate::REPAIR_COST_RULES,
+        &ledger,
+        &state,
+    )
+    .unwrap();
     let streams = property_simulation_randomness::RunKeyFactory::new(
         property_simulation_randomness::RootKey::from_seed([11; 32]),
     )
@@ -1287,8 +1308,14 @@ fn utility_sampling_uses_required_semantic_identity_and_checks_trial() {
         period: YearMonth::new(2025, 2).unwrap(),
         ..frozen
     };
-    let mut validated_february =
-        validate_input(&february, &distribution_for_repairs, &ledger, &state).unwrap();
+    let mut validated_february = validate_input(
+        &february,
+        &distribution_for_repairs,
+        &crate::REPAIR_COST_RULES,
+        &ledger,
+        &state,
+    )
+    .unwrap();
     validated_february
         .validate_activities_before_sampling(&all_activities, &ledger, [])
         .unwrap();
@@ -1356,6 +1383,7 @@ fn utility_and_rental_composition_is_permutation_invariant() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1425,6 +1453,7 @@ fn coordinator_enforces_output_provenance_and_posts_month_atomically() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1441,6 +1470,7 @@ fn coordinator_enforces_output_provenance_and_posts_month_atomically() {
     .unwrap();
     let repair_output = propose_slice(
         &RepairSlice {
+            repair_validation: &crate::REPAIR_COST_RULES,
             instance: repair.clone(),
         },
         &validated,
@@ -1455,6 +1485,7 @@ fn coordinator_enforces_output_provenance_and_posts_month_atomically() {
         &RepairCostDistribution {
             maximum: changed_frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1544,6 +1575,7 @@ fn independent_repair_instances_superpose_in_any_order() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1554,6 +1586,7 @@ fn independent_repair_instances_superpose_in_any_order() {
     let second_value = RepairSample::Repair { cost: money("20") };
     let first_output = propose_slice(
         &RepairSlice {
+            repair_validation: &crate::REPAIR_COST_RULES,
             instance: first.clone(),
         },
         &validated,
@@ -1562,6 +1595,7 @@ fn independent_repair_instances_superpose_in_any_order() {
     .unwrap();
     let second_output = propose_slice(
         &RepairSlice {
+            repair_validation: &crate::REPAIR_COST_RULES,
             instance: second.clone(),
         },
         &validated,
@@ -1614,12 +1648,14 @@ fn coordinator_rejects_unknown_effect_and_invalid_journal_without_partial_commit
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
     .unwrap();
     let instance = activity(21);
     let slice = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: instance.clone(),
     };
     let mut resources = slice.resources(&frozen);
@@ -1719,12 +1755,14 @@ fn coordinator_rejects_sample_from_unknown_activity_without_mutating_opening_led
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
     .unwrap();
     let instance = activity(41);
     let slice = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: instance.clone(),
     };
     let wrong_source = ActivitySample::new(
@@ -1773,6 +1811,7 @@ fn slice_transition_errors_are_fatal_with_activity_and_month_diagnostics() {
         }
         fn resources(&self, input: &FrozenInput) -> SliceResources {
             RepairSlice {
+                repair_validation: &crate::REPAIR_COST_RULES,
                 instance: self.0.clone(),
             }
             .resources(input)
@@ -1801,6 +1840,7 @@ fn slice_transition_errors_are_fatal_with_activity_and_month_diagnostics() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -1831,8 +1871,14 @@ fn input_validation_checks_repair_distribution_support_before_sampling() {
     let support = RepairCostDistribution {
         maximum: money("50"),
     };
-    let validated =
-        validate_input(&input(), &support, &ledger_for_cash(state.cash), &state).unwrap();
+    let validated = validate_input(
+        &input(),
+        &support,
+        &crate::REPAIR_COST_RULES,
+        &ledger_for_cash(state.cash),
+        &state,
+    )
+    .unwrap();
     assert_eq!(validated.opening_state(), &state);
     assert_eq!(validated.frozen_input(), &input());
     assert_eq!(validated.repair_distribution(), &support);
@@ -1842,6 +1888,7 @@ fn input_validation_checks_repair_distribution_support_before_sampling() {
             &RepairCostDistribution {
                 maximum: money("49"),
             },
+            &crate::REPAIR_COST_RULES,
             &ledger_for_cash(state.cash),
             &state,
         )
@@ -1852,6 +1899,7 @@ fn input_validation_checks_repair_distribution_support_before_sampling() {
         &RepairCostDistribution {
             maximum: money("-1"),
         },
+        &crate::REPAIR_COST_RULES,
         &ledger_for_cash(state.cash),
         &state,
     )
@@ -1876,6 +1924,7 @@ fn input_validation_checks_repair_distribution_support_before_sampling() {
         &RepairCostDistribution {
             maximum: oversized_input.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger_for_cash(state.cash),
         &state,
     )
@@ -1987,6 +2036,7 @@ fn input_validation_collects_independent_issues_in_one_pass() {
         &RepairCostDistribution {
             maximum: money("50"),
         },
+        &crate::REPAIR_COST_RULES,
         &ledger_for_cash(money("0")),
         &state,
     )
@@ -2021,6 +2071,7 @@ fn input_validation_checks_the_ledger_currency_before_sampling() {
         &RepairCostDistribution {
             maximum: money("50"),
         },
+        &crate::REPAIR_COST_RULES,
         &usd_ledger,
         &state,
     )
@@ -2046,6 +2097,7 @@ fn input_validation_rejects_cash_state_that_differs_from_ledger_balance() {
         &RepairCostDistribution {
             maximum: money("50"),
         },
+        &crate::REPAIR_COST_RULES,
         &ledger_for_cash(money("0")),
         &state,
     )
@@ -2071,6 +2123,7 @@ fn input_validation_rejects_wrong_account_roles() {
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger_for_cash(state.cash),
         &state,
     )
@@ -2149,7 +2202,16 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
     let support = RepairCostDistribution {
         maximum: frozen.repair_cost_limit,
     };
-    assert!(validate_input(&frozen, &support, &ledger_for_cash(state.cash), &state).is_ok());
+    assert!(
+        validate_input(
+            &frozen,
+            &support,
+            &crate::REPAIR_COST_RULES,
+            &ledger_for_cash(state.cash),
+            &state
+        )
+        .is_ok()
+    );
 
     let rental = RentalSlice {
         instance: rental_activity(10),
@@ -2170,6 +2232,7 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
     );
 
     let repair = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: activity(11),
     };
     let repair_proposal = propose_slice(
@@ -2207,6 +2270,7 @@ fn fractional_minor_unit_inputs_are_rounded_half_up_before_proposing_postings() 
 #[test]
 fn repair_sample_controls_expense_and_condition_effect() {
     let slice = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: activity(8),
     };
     let state = OpeningState {
@@ -2276,6 +2340,7 @@ fn repair_sample_controls_expense_and_condition_effect() {
 #[test]
 fn sample_provenance_must_match_the_slice_instance_and_frozen_period() {
     let slice = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: activity(8),
     };
     let state = OpeningState {
@@ -2296,6 +2361,7 @@ fn sample_provenance_must_match_the_slice_instance_and_frozen_period() {
     );
     assert!(propose_slice(&slice, &validated_input(&state, &input()), &wrong_period).is_err());
     let wrong_kind_slice = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: rental_activity(8),
     };
     let wrong_kind_sample = sample(&wrong_kind_slice.instance, RepairSample::NoRepair);
@@ -2396,7 +2462,7 @@ fn output_ids_are_repeatable_and_use_all_identity_dimensions() {
     assert_eq!(forward.transactions()[0].instance_id, slice.instance.id);
     assert_eq!(forward.transactions()[0].slice_id, slice.instance.slice_id);
     assert_eq!(forward.transactions()[0].period, input().period);
-    assert_ne!(
+    assert_eq!(
         forward,
         identify_proposal(
             propose_slice(

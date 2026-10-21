@@ -80,7 +80,7 @@ impl OutputIdFactory for Ids {
 struct CompositionExecutor {
     key_factory: RunKeyFactory,
     rental: RentalSlice,
-    repair: RepairSlice,
+    repair: RepairSlice<'static>,
     loans: Vec<LoanSlice>,
     distribution: RepairDistribution,
     sampler: RepairSampler,
@@ -426,6 +426,7 @@ fn fixture() -> (
         instance: activity(1, ActivitySampleKind::Rental),
     };
     let repair = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: activity(2, ActivitySampleKind::Repair),
     };
     let loans = vec![
@@ -783,6 +784,7 @@ fn operating_slices_and_multiple_loans_share_one_monthly_batch() {
         &property_simulation_models::RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
         },
+        &crate::REPAIR_COST_RULES,
         &ledger,
         &state,
     )
@@ -832,6 +834,7 @@ fn operating_slices_and_multiple_loans_share_one_monthly_batch() {
         instance: utility_b.clone(),
     };
     let repair_b_slice = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: repair_b.clone(),
     };
     let active_instances = vec![
@@ -1188,10 +1191,16 @@ fn mixed_slice_batch_checks_only_the_month_end_cash_balance() {
     let distribution = property_simulation_models::RepairCostDistribution {
         maximum: money("100"),
     };
-    let input =
-        property_simulation_simulation::validate_input(&frozen, &distribution, &ledger, &state)
-            .unwrap();
+    let input = property_simulation_simulation::validate_input(
+        &frozen,
+        &distribution,
+        &crate::REPAIR_COST_RULES,
+        &ledger,
+        &state,
+    )
+    .unwrap();
     let repair = RepairSlice {
+        repair_validation: &crate::REPAIR_COST_RULES,
         instance: activity(81, ActivitySampleKind::Repair),
     };
     let repair_sample = property_simulation_simulation::RepairSample::Repair { cost: money("100") };

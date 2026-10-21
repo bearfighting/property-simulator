@@ -931,6 +931,7 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
                     },
                 );
                 let slice = crate::RepairSlice {
+                    repair_validation: &crate::REPAIR_COST_RULES,
                     instance: self.activity.clone(),
                 };
                 return Err(crate::propose_slice(&slice, input, &invalid).unwrap_err());

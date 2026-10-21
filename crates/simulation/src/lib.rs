@@ -11,6 +11,9 @@ mod coordinator;
 mod error;
 mod proposals;
 #[cfg(test)]
+#[path = "test_support/repair_validation.rs"]
+mod repair_validation_test_support;
+#[cfg(test)]
 #[path = "test_support/run_control/mod.rs"]
 mod run_control;
 mod slices;
@@ -28,6 +31,8 @@ pub use composition::{SliceResources, validate_composition};
 pub use coordinator::coordinate_month;
 pub use error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 pub use proposals::{identify_proposal, merge_proposals};
+#[cfg(test)]
+pub use repair_validation_test_support::REPAIR_COST_RULES;
 #[cfg(test)]
 pub use run_control::{
     MonthSnapshot, RunCallResult, RunCommand, RunConfig, RunControlError, RunIdentity, RunStatus,
@@ -48,7 +53,8 @@ pub use types::*;
 #[cfg(test)]
 pub use validation::validate_proposal_transactions;
 pub use validation::{
-    AccountFacts, LedgerRead, ValidatedInput, ValidationErrors, ValidationIssue, validate_input,
+    AccountFacts, LedgerRead, RepairCostValidation, ValidatedInput, ValidationErrors,
+    ValidationIssue, validate_input,
 };
 #[cfg(test)]
 pub use validation::{ProposalValidationErrors, ProposalValidationIssue};

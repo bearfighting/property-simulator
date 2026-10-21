@@ -10,12 +10,13 @@ use crate::types::{
     ActivityInstance, ActivitySampleKind, AssetCondition, EffectProposal, EventProposal,
     FrozenInput, OpeningState, RepairSample, SliceProposal, TransactionProposal,
 };
-use crate::validation::ValidatedInput;
+use crate::validation::{RepairCostValidation, ValidatedInput};
 
-pub struct RepairSlice {
+pub struct RepairSlice<'a> {
     pub instance: ActivityInstance,
+    pub repair_validation: &'a dyn RepairCostValidation,
 }
-impl SimulationSlice for RepairSlice {
+impl SimulationSlice for RepairSlice<'_> {
     type Sample = RepairSample;
     const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Repair;
     fn instance(&self) -> &ActivityInstance {
@@ -45,9 +46,8 @@ impl SimulationSlice for RepairSlice {
         sample: &Self::Sample,
     ) -> Result<(), SimulationError> {
         if let RepairSample::Repair { cost } = sample {
-            input
-                .repair_distribution()
-                .validate_sample(*cost)
+            self.repair_validation
+                .validate_sample(input.repair_distribution(), *cost)
                 .map_err(|_| SimulationError::InvalidInput("repair sample outside support"))?;
         }
         Ok(())
