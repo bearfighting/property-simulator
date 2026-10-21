@@ -76,10 +76,10 @@ M0-B 建立了当前 workspace 编译边界，代码位于 `crates/`。下表描
 | `property-simulation-domain` (`domain`) | 领域值、实体、不变量与纯领域规则 | 无 workspace crate 依赖 |
 | `property-simulation-accounting` (`accounting`) | 科目、凭证、分录、余额和报表投影 | `domain` |
 | `property-simulation-models` (`models`) | 领域模型策略与概率分布 | `domain` |
-| `property-simulation-simulation` (`simulation`) | 输入验证、类型化活动、独立 Slice 计算、来源识别及提案组合函数 | `domain`、`accounting`（值类型/注入接口）、`models`（模型值/注入接口）；`randomness` 仅为开发测试依赖 |
+| `property-simulation-simulation` (`simulation`) | 输入验证、类型化活动、独立 Slice 计算、提案组合及无 IO 的单月整合/结算 | `domain`、`accounting`（值类型/注入接口）、`models`（模型值/注入接口）；`randomness` 仅为开发测试依赖 |
 | `property-simulation-randomness` (`randomness`) | OS 熵适配、短期运行密钥与语义 ChaCha12 子流 | `domain`、`models` |
 
-生产 `simulation` 不依赖 `randomness`。Slice 采样函数接收调用方提供的 `RandomSource` 和 `Sampler`；OS 熵读取与语义流分配由调用方负责。测试夹具使用 randomness crate 验证采样隔离。
+生产 `simulation` 不依赖 `randomness`。M6 的 `calculate_monthly_result` 是同步、无 IO 的单月计算整合入口；随机采样仍由调用方完成。Slice 采样函数接收调用方提供的 `RandomSource` 和 `Sampler`；OS 熵读取与语义流分配由调用方负责。测试夹具使用 randomness crate 验证采样隔离。运行控制、归档及旧月度协调流程只在测试构建中提供。
 
 Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出当前公开 API；`error` 保存输入、提案和计算错误，`types` 保存共享状态、类型化活动配置和提案数据（历史月度结果类型仅在测试编译），`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束；`slices::rental`、`slices::repair` 与 `slices::property_tax` 分别实现相应活动规则。物业税 Slice 只读取活动配置和冻结月份，并通过共享提案契约输出经营费用凭证。所有 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 定义账簿计算值，并提供交易验证、批次过账和余额推导操作，账簿值由调用方在计算中传入和接收，不是全局或跨调用驻留状态。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
 

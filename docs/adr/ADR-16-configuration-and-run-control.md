@@ -9,7 +9,7 @@
 Initial facts, run bounds, and changing monthly assumptions have different lifetimes and provenance.
 
 ## Current boundary
-The M3 run-control behavior below is historical and remains only in test support. The production core has no `SimulationRun`, update-command loop, stop-condition evaluator, snapshot, or archive API. It currently exposes independent input/Slice calculations. M5 completes the independent Core modules; M6 defines the stateless monthly input/output calculation. Application orchestration and CLI/GUI are later work (ADR-29).
+The M3 run-control behavior below is historical and remains only in test support. The production core has no `SimulationRun`, update-command loop, stop-condition evaluator, snapshot, or archive API. At the time this ADR was superseded, production exposed independent input/Slice calculations; M5 and M6 have since completed the independent Core modules and stateless monthly input/output calculation. Current monthly integration is defined by ADR-29/30. Application orchestration and CLI/GUI remain later work.
 
 ## Decision
 

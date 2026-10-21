@@ -8,11 +8,11 @@
 ## Context
 Multiple slices can affect shared state and accounts in the same month.
 
-## Current status
-The shared monthly coordinator described below was implemented for M3/M4 behavior and remains only as a test fixture under `crates/simulation/src/test_support/`. It is not part of the production simulation API. The current production boundary returns independently calculated Slice outputs; combining them, committing a Ledger batch, and retaining a run or history are not responsibilities implemented by the current core. ADR-28 records the replacement boundary.
+## Historical implementation status
+At the time this ADR was superseded, the shared monthly coordinator described below had been moved to `crates/simulation/src/test_support/`; the production API exposed independently calculated Slice outputs and did not combine them or commit a Ledger batch. That was the pre-M6 boundary, not the current production contract. ADR-29 later assigned stateless single-month integration to M6, and ADR-30 defines its input, settlement, and result-audit contract. The old M3/M4 coordinator remains test-only.
 
 ## Decision
-The following paragraph records the former M3/M4 coordinator behavior and its test vectors. It is not the current production module contract; see ADR-28.
+The following paragraph records the former M3/M4 coordinator behavior and its test vectors. It is not the current production module contract; the current M6 integration boundary is defined by ADR-29 and ADR-30.
 
 Each Slice instance reads the same immutable opening context and proposes changes independently; it cannot read another instance's result. The shared coordinator accepts only combinations whose result merge is associative and commutative with an identity, rejecting incompatible shared writes before returning a result as specified in [ADR-20](ADR-20-composable-slices-and-random-sampling.md). It validates and reduces the proposals, then returns the complete successful-period result and updated Ledger without mutating caller-owned input. A fatal failure produces no successful result and stops the simulation. Core does not retain a prior boundary or promise failed-run recovery/retry or external persistence behavior (ADR-27).
 

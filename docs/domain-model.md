@@ -36,7 +36,7 @@
 4. **Resolve**：按交换律、结合律及空结果单位元合并同月提案。组合边界拒绝不兼容状态写入和其他不满足组合契约的结果；不以执行顺序或跨实例读取来消解冲突。
 5. **返回计算结果**：月度结果包含当期 Effects、Ledger 更新、事件、从 Ledger 推导的现金流视图和完整期末状态。Ledger 交易是会计记录，现金流是这些记录的派生视图，不是另一份独立生成的事实。期末快照是月度结果中的期末状态部分。数据库如何存放结果、快照和 Ledger 记录，及其排序与历史查询，不在 M6/Core 的职责内；后续由应用层把计算结果交给数据访问层。
 
-当前代码尚未把这些责任整合成完整月度调用。M6 会定义并实现无 IO 的单月输入/输出计算；重复调用、数据访问和停止条件属于后续 Application。
+当前生产代码通过 `calculate_monthly_result` 将这些责任整合为无 IO 的单月输入/输出计算，返回完整月度结果或错误。重复调用、数据访问和停止条件属于后续 Application。
 
 **组合约定：** 所有被接受的 Slice 实例结果组合都必须满足交换律和结合律，并具有空结果作为单位元；交换实例顺序或改变分组不能改变结果。该代数性质不代表当前实现并行执行。组合器只能合并兼容的结果；无法满足该约定的状态写入在组合边界拒绝，不通过先后执行或读取其他实例结果来解决。
 
@@ -294,7 +294,7 @@ struct WorldState {
 - 月度结果包含从 Ledger 现金分录推导的现金流序列，按交易来源归属到活动实例；其他事件/Effect 按计算结果契约返回。现金流序列是 Ledger 投影，不是独立记录的第二套事实。
 - 如果本月输入包含经济状态调整，结果记录前后状态 Effect，并关联对应的平衡 Ledger 交易；其现金流影响从 Ledger 交易推导，并保留本月输入来源。
 - 本次计算返回从该状态继续计算所需的充分期末状态。连续月份由调用方把期末状态传给下一次计算。
-- 当前生产 Core 尚未实现完整月度装配，也不持有历史/分支/SQLite，详见 [ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md)、[ADR-28](adr/ADR-28-pre-m5-crate-call-boundary-review.md) 和 [ADR-29](adr/ADR-29-layered-calculation-and-application-boundaries.md)。
+- 当前生产 Core 已由 M6 完成单月装配，并返回事件、状态变化、Ledger 凭证增量、Ledger 派生现金流和充分期末状态；它不持有跨月历史、分支或 SQLite。月度整合边界见 [ADR-29](adr/ADR-29-layered-calculation-and-application-boundaries.md) 和 [ADR-30](adr/ADR-30-monthly-integration-inputs-and-atomic-settlement.md)，Core 历史/持久化边界见 [ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md)。
 
 Core 不管理历史存储，也不恢复失败计算。后续 Application 通过 Data Access 保存结果的职责已由 ADR-29 确定；SQLite 的表结构、历史排序和查询方式仍留待该阶段设计。
 
@@ -412,7 +412,7 @@ struct JournalTransaction {
 
 ### 20.6 月度生命周期与 Slice 组合
 
-目标单月计算是“期初状态 + 当期冻结输入 + 显式样本 → 完整月度结果”，期末状态包含在结果中。当前生产代码只提供输入验证、单个 Slice 输出和独立提案组合函数，尚未实现完整月份的装配、Ledger 提交或结果构造；早期协调器与运行控制仅保留在测试支持目录。M5 完成底层模块，M6 确定单月纯输入/输出整合；Application 后续通过 Data Access 读写。此边界不增加常驻运行对象、历史/分支管理或未完成运行恢复。
+当前生产单月计算遵循“期初状态 + 当期冻结输入 + 显式样本 → 完整月度结果”，并在 `calculate_monthly_result` 中完成 Slice/贷款提案整合、候选 Ledger 批量结算、Ledger 派生现金流及结果构造；失败不返回部分成功结果，也不修改调用方 Ledger。早期协调器与运行控制仅保留在测试支持目录。M5 提供独立底层模块，M6 提供单月纯输入/输出整合；Application 后续通过 Data Access 负责多次调用和读写。此边界不增加常驻运行对象、历史/分支管理或未完成运行恢复。
 
 Slice 契约至少声明 ID、所需输入、读取/写入资源、配置校验和提案函数，不声明其他实例依赖。输入边界校验实例自身配置；所有被接受的实例结果组合必须具有交换律、结合律和单位元，事件、Effects 与 Ledger 交易均遵守该组合约定。现金流结果在 Ledger 过账后按交易来源推导，不作为 Slice 合并的独立账务事实。相同状态写入可幂等合并，不同写入值拒绝；不能把资源冲突作为顺序处理或同月跨 Slice 传值的理由。
 
