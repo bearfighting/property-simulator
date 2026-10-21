@@ -9,11 +9,8 @@ use crate::validation::ProposalValidationErrors;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FatalSimulationPhase {
     SliceTransition,
-    #[cfg(test)]
     LedgerCommit,
-    #[cfg(test)]
     ClosingStateDerivation,
-    #[cfg(test)]
     MonthlyResultConstruction,
 }
 

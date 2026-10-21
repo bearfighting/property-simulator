@@ -5,7 +5,9 @@ use property_simulation_domain::YearMonth;
 use property_simulation_models::{FixedRateLoan, LoanModelError};
 
 /// Loan mathematics supplied by the caller that connects this input transformation
-/// to the loan model implementation.
+/// to the loan model implementation. Implementations must be deterministic and
+/// side-effect free for a given loan value; validation and proposal verification
+/// can invoke the same calculation more than once.
 pub trait LoanCalculation {
     fn validate(&self, loan: FixedRateLoan) -> Result<(), LoanModelError>;
     fn calculate_month(
@@ -18,7 +20,7 @@ pub trait LoanCalculation {
     ) -> Result<property_simulation_domain::Money, LoanModelError>;
 }
 
-pub(in crate::slices) fn map_model_error(error: LoanModelError) -> SimulationError {
+pub(crate) fn map_model_error(error: LoanModelError) -> SimulationError {
     match error {
         LoanModelError::Arithmetic => {
             SimulationError::InvalidInput("loan calculation exceeds supported decimal precision")

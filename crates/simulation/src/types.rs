@@ -51,8 +51,9 @@ pub struct MonthlyCashFlowContribution {
     pub amount: Money,
 }
 
-/// Complete successful output contract for one month. M6.2–M6.4 will construct
-/// this after invoking Slice adapters and settling a candidate Ledger.
+/// Complete successful output contract for one month. The production monthly
+/// entry point constructs this after invoking Slice adapters and settling a
+/// candidate Ledger.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonthlyResult {
     period: YearMonth,
@@ -72,8 +73,6 @@ pub struct MonthlyResult {
 }
 
 impl MonthlyResult {
-    // M6.2 will consume this crate-private factory when the monthly entry point is added.
-    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_settled_parts(
         period: YearMonth,
@@ -158,10 +157,32 @@ impl MonthlyResult {
             | ActivityConfiguration::Repair
             | ActivityConfiguration::Loan => true,
         };
+        let cash_changes = ledger_transactions
+            .iter()
+            .flat_map(LedgerTransaction::entries)
+            .filter(|entry| entry.account_id() == frozen_input.cash_account)
+            .map(|entry| match entry.side() {
+                property_simulation_accounting::BalanceSide::Debit => Ok(entry.amount()),
+                property_simulation_accounting::BalanceSide::Credit => {
+                    entry.amount().checked_neg().map_err(SimulationError::from)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let expected_closing_cash = opening_state.cash.checked_add(exact_signed_sum(
+            cash_changes,
+            opening_state.cash.currency(),
+        )?)?;
+        let effects_match_closing_state = proposal.effects().iter().all(|effect| {
+            effect.target.as_str() == "property.condition"
+                && effect.condition == closing_state.condition
+        }) && (!proposal.effects().is_empty()
+            || opening_state.condition == closing_state.condition);
         if frozen_input.period != period
             || opening_state.cash.currency() != frozen_input.rent.currency()
             || !money_matches(frozen_input.repair_cost_limit)
             || closing_state.cash.currency() != opening_state.cash.currency()
+            || closing_state.cash != expected_closing_cash
+            || !effects_match_closing_state
             || activity_ids.len() != activities.len()
             || sample_ids.len() != samples.len()
             || samples.len() != slice_activity_count
@@ -395,6 +416,42 @@ impl MonthlyResult {
                         && event.instance_id == effect.instance_id
                         && event.slice_id == effect.slice_id
                 })
+            })
+            || loan_events.iter().any(|event| {
+                let sourced_transactions = proposal
+                    .transactions()
+                    .iter()
+                    .filter(|transaction| {
+                        transaction.source_event_id == Some(event.id)
+                            && transaction.instance_id == event.instance_id
+                            && transaction.slice_id == event.slice_id
+                            && transaction.key == event.key
+                    })
+                    .count();
+                sourced_transactions != 1
+            })
+            || loan_events.len() != loan_effects.len()
+            || loan_events.iter().any(|event| {
+                let opening = opening_loan_continuations
+                    .iter()
+                    .find(|loan| loan.instance_id == event.instance_id);
+                let closing = closing_loan_continuations
+                    .iter()
+                    .find(|loan| loan.instance_id == event.instance_id);
+                let opening_loan = opening.and_then(|loan| loan.loan);
+                let closing_loan = closing.and_then(|loan| loan.loan);
+                event.previous_balance != opening_loan.map(|loan| loan.opening_balance)
+                    || event.previous_remaining_months
+                        != opening_loan.map(|loan| loan.remaining_months)
+                    || event.previous_annual_rate != opening_loan.map(|loan| loan.annual_rate)
+                    || event.updated_balance
+                        != Some(closing_loan.map_or_else(
+                            || Money::new(0.into(), opening_state.cash.currency()),
+                            |loan| loan.opening_balance,
+                        ))
+                    || event.updated_remaining_months
+                        != Some(closing_loan.map_or(0, |loan| loan.remaining_months))
+                    || event.updated_annual_rate != closing_loan.map(|loan| loan.annual_rate)
             })
             || loan_effects.iter().any(|effect| {
                 let opening = opening_loan_continuations

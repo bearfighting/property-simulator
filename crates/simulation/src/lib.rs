@@ -17,6 +17,7 @@ mod repair_validation_test_support;
 #[cfg(test)]
 #[path = "test_support/run_control/mod.rs"]
 mod run_control;
+mod settlement;
 mod slices;
 mod types;
 mod validation;
@@ -42,6 +43,7 @@ pub use run_control::{
     MonthSnapshot, RunCallResult, RunCommand, RunConfig, RunControlError, RunIdentity, RunStatus,
     RunUpdate, RunUpdateValue, SimulationRun, SingleMonthExecutor, StopCondition, StopReason,
 };
+pub use settlement::calculate_monthly_result;
 #[cfg(test)]
 pub use slices::LoanCoordinatedMonth;
 #[cfg(test)]

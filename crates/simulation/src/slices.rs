@@ -13,6 +13,7 @@ pub use loan::LoanCoordinatedMonth;
 pub use loan::LoanMonthCommand;
 #[cfg(test)]
 pub use loan::LoanRunUpdate;
+pub(crate) use loan::map_model_error;
 pub use loan::{
     LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanSlice,
     LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, apply_loan_terms_update,

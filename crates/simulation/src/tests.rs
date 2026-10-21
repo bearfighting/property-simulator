@@ -152,6 +152,27 @@ fn production_monthly_result_validates_month_currency_and_activity_identities() 
     };
     assert!(result(period, Vec::new(), Vec::new()).is_ok());
     assert!(
+        crate::MonthlyResult::from_settled_parts(
+            period,
+            opening.clone(),
+            frozen,
+            Vec::new(),
+            Vec::new(),
+            OpeningState {
+                cash: money("101"),
+                condition: AssetCondition::Available,
+            },
+            IdentifiedProposal::default(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .is_err()
+    );
+    assert!(
         result(
             period.checked_add_months(1).unwrap(),
             Vec::new(),
@@ -198,6 +219,200 @@ fn production_monthly_result_validates_month_currency_and_activity_identities() 
 }
 
 #[test]
+fn calculate_monthly_result_accepts_an_empty_month_and_preserves_opening_ledger() {
+    let frozen = input();
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    let before = ledger.clone();
+    let distribution = RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    let monthly = MonthlyInput {
+        opening_state: &state,
+        frozen_input: &frozen,
+        repair_distribution: &distribution,
+        activities: &[],
+        samples: &[],
+        loan_continuations: &[],
+        opening_ledger: &ledger,
+    };
+    let result = calculate_monthly_result(
+        &monthly,
+        &ledger,
+        &REPAIR_COST_RULES,
+        &[],
+        &[],
+        &TestLoanCalculation,
+        identity(),
+    )
+    .unwrap();
+    assert_eq!(result.period(), frozen.period);
+    assert_eq!(result.closing_state(), &state);
+    assert!(result.ledger_transactions().is_empty());
+    assert!(result.cash_flow_contributions().is_empty());
+    assert_eq!(ledger, before);
+}
+
+#[test]
+fn calculate_monthly_result_settles_loan_and_returns_its_continuation() {
+    use property_simulation_accounting::{
+        Account, AccountCategory, AccountCode, OpeningBalance, OpeningBalances,
+    };
+    let frozen = input();
+    let cash = frozen.cash_account;
+    let liability = AccountId::from_bytes([7; 16]);
+    let interest = frozen.repair_expense_account;
+    let chart = ChartOfAccounts::new([
+        Account::new_cash_position(cash, AccountCode::new(1000).unwrap(), "Cash").unwrap(),
+        Account::new(
+            frozen.rent_account,
+            AccountCode::new(4000).unwrap(),
+            AccountCategory::Income,
+            false,
+            "Rent",
+        )
+        .unwrap(),
+        Account::new(
+            interest,
+            AccountCode::new(5000).unwrap(),
+            AccountCategory::Expense,
+            false,
+            "Interest",
+        )
+        .unwrap(),
+        Account::new(
+            liability,
+            AccountCode::new(2000).unwrap(),
+            AccountCategory::Liability,
+            false,
+            "Loan",
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let opening = OpeningBalances::new(
+        &chart,
+        [
+            OpeningBalance::new(cash, BalanceSide::Debit, money("100")).unwrap(),
+            OpeningBalance::new(liability, BalanceSide::Credit, money("100")).unwrap(),
+        ],
+        None,
+    )
+    .unwrap();
+    let ledger = property_simulation_accounting::Ledger::new(chart, opening).unwrap();
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let activity = activity_with_kind(98, ActivitySampleKind::Loan);
+    let loan = property_simulation_models::FixedRateLoan {
+        opening_balance: money("100"),
+        remaining_months: 12,
+        annual_rate: rust_decimal::Decimal::ZERO,
+        scheduled_payment: None,
+    };
+    let continuation = LoanContinuation {
+        instance_id: activity.id,
+        slice_id: activity.slice_id,
+        loan: Some(loan),
+    };
+    let rental = rental_activity(99);
+    let rental_slice = RentalSlice {
+        instance: rental.clone(),
+    };
+    let typed_rental_sample = ActivitySample::new(&rental, frozen.period, ());
+    let recorded_rental_sample =
+        ActivitySample::new(&rental, frozen.period, ActivitySampleValue::Rental);
+    let rental_adapter = BoundSliceAdapter::new(&rental_slice, &typed_rental_sample);
+    let slice = LoanSlice {
+        instance_id: activity.id,
+        slice_id: activity.slice_id,
+        liability_account: liability,
+        interest_expense_account: interest,
+        cash_account: cash,
+    };
+    let distribution = RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    let monthly = MonthlyInput {
+        opening_state: &state,
+        frozen_input: &frozen,
+        repair_distribution: &distribution,
+        activities: &[activity.clone(), rental.clone()],
+        samples: std::slice::from_ref(&recorded_rental_sample),
+        loan_continuations: std::slice::from_ref(&continuation),
+        opening_ledger: &ledger,
+    };
+    let expected = loan.calculate_month().unwrap();
+    let result = calculate_monthly_result(
+        &monthly,
+        &ledger,
+        &REPAIR_COST_RULES,
+        &[&rental_adapter],
+        std::slice::from_ref(&slice),
+        &TestLoanCalculation,
+        identity(),
+    )
+    .unwrap();
+    assert_eq!(result.ledger_transactions().len(), 2);
+    assert_eq!(
+        result.closing_state().cash,
+        money("180").checked_sub(expected.payment).unwrap()
+    );
+    assert_eq!(
+        result.closing_loan_continuations()[0]
+            .loan
+            .unwrap()
+            .opening_balance,
+        expected.closing_balance
+    );
+    assert_eq!(ledger.balance(liability).unwrap().1, money("100"));
+    assert_eq!(result.cash_flow_contributions().len(), 3);
+
+    // A pre-existing posting in this same month with the rent transaction ID
+    // makes Ledger batch posting fail; the caller's Ledger must remain intact.
+    let mut collision_ledger = ledger.clone();
+    let collision = property_simulation_accounting::LedgerTransaction::new(
+        identity().transaction_id(frozen.period, rental.id, "rent"),
+        frozen.period,
+        [
+            LedgerEntry::new(interest, BalanceSide::Debit, money("1")),
+            LedgerEntry::new(frozen.rent_account, BalanceSide::Credit, money("1")),
+        ],
+    );
+    collision_ledger.post(collision).unwrap();
+    let before_failure = collision_ledger.clone();
+    let failed_month = MonthlyInput {
+        opening_state: &state,
+        frozen_input: &frozen,
+        repair_distribution: &distribution,
+        activities: &[activity.clone(), rental.clone()],
+        samples: std::slice::from_ref(&recorded_rental_sample),
+        loan_continuations: std::slice::from_ref(&continuation),
+        opening_ledger: &collision_ledger,
+    };
+    let error = calculate_monthly_result(
+        &failed_month,
+        &collision_ledger,
+        &REPAIR_COST_RULES,
+        &[&rental_adapter],
+        std::slice::from_ref(&slice),
+        &TestLoanCalculation,
+        identity(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SimulationError::Fatal(ref failure)
+            if failure.phase == FatalSimulationPhase::LedgerCommit
+    ));
+    assert_eq!(collision_ledger, before_failure);
+}
+
+#[test]
 fn production_monthly_result_keeps_both_loan_states() {
     let period = input().period;
     let opening = OpeningState {
@@ -234,6 +449,134 @@ fn production_monthly_result_keeps_both_loan_states() {
         result.opening_loan_continuations(),
         result.closing_loan_continuations()
     );
+}
+
+#[test]
+fn production_monthly_result_audits_loan_events_against_continuations() {
+    let period = input().period;
+    let activity = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([61; 16]),
+        slice_id: SliceId::from_bytes([62; 16]),
+        configuration: ActivityConfiguration::Loan,
+    };
+    let opening_loan = property_simulation_models::FixedRateLoan {
+        opening_balance: money("100"),
+        remaining_months: 12,
+        annual_rate: rust_decimal::Decimal::ZERO,
+        scheduled_payment: None,
+    };
+    let closing_loan = property_simulation_models::FixedRateLoan {
+        opening_balance: money("90"),
+        remaining_months: 11,
+        annual_rate: rust_decimal::Decimal::ZERO,
+        scheduled_payment: None,
+    };
+    let event_id = identity().event_id(period, activity.id, "loan_payment");
+    let event = LoanEvent {
+        id: event_id,
+        instance_id: activity.id,
+        slice_id: activity.slice_id,
+        period,
+        key: "loan_payment".into(),
+        previous_balance: Some(money("100")),
+        updated_balance: Some(money("90")),
+        previous_remaining_months: Some(12),
+        updated_remaining_months: Some(11),
+        previous_annual_rate: Some(rust_decimal::Decimal::ZERO),
+        updated_annual_rate: Some(rust_decimal::Decimal::ZERO),
+    };
+    let effect = LoanStateEffect {
+        id: identity().effect_id(period, activity.id, "loan_payment"),
+        instance_id: activity.id,
+        slice_id: activity.slice_id,
+        period,
+        previous: Some(opening_loan),
+        updated: Some(closing_loan),
+        source_event_id: event_id,
+    };
+    let opening = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let make_result = |event: LoanEvent, link_transaction: bool| {
+        let proposal = identify_proposal_for(
+            SliceProposal {
+                events: link_transaction
+                    .then(|| EventProposal {
+                        period,
+                        key: "loan_payment".into(),
+                    })
+                    .into_iter()
+                    .collect(),
+                transactions: vec![TransactionProposal {
+                    key: "loan_payment".into(),
+                    period,
+                    entries: vec![
+                        LedgerEntry::new(
+                            AccountId::from_bytes([7; 16]),
+                            BalanceSide::Debit,
+                            money("10"),
+                        ),
+                        LedgerEntry::new(input().cash_account, BalanceSide::Credit, money("10"))
+                            .with_cash_flow_category(CashFlowCategory::Financing),
+                    ],
+                    source_event_key: link_transaction.then(|| "loan_payment".into()),
+                }],
+                ..Default::default()
+            },
+            identity(),
+            &activity,
+            period,
+        );
+        let mut proposal = match proposal {
+            Ok(proposal) => proposal,
+            Err(error) => return Err(error),
+        };
+        // The production settlement path keeps loan events in their typed
+        // result field and removes them from the generic proposal event list.
+        proposal.events.retain(|proposed| proposed.id != event_id);
+        let journal = proposal.transactions()[0].clone().into_ledger_transaction();
+        let contribution = MonthlyCashFlowContribution {
+            period,
+            instance_id: activity.id,
+            slice_id: activity.slice_id,
+            output_key: "loan_payment".into(),
+            transaction_id: journal.id(),
+            category: CashFlowCategory::Financing,
+            amount: money("-10"),
+        };
+        crate::MonthlyResult::from_settled_parts(
+            period,
+            opening.clone(),
+            input(),
+            vec![activity.clone()],
+            Vec::new(),
+            OpeningState {
+                cash: money("90"),
+                condition: AssetCondition::Available,
+            },
+            proposal,
+            vec![journal],
+            vec![contribution],
+            vec![LoanContinuation {
+                instance_id: activity.id,
+                slice_id: activity.slice_id,
+                loan: Some(opening_loan),
+            }],
+            vec![LoanContinuation {
+                instance_id: activity.id,
+                slice_id: activity.slice_id,
+                loan: Some(closing_loan),
+            }],
+            vec![event],
+            vec![effect.clone()],
+        )
+    };
+    assert!(make_result(event.clone(), true).is_ok());
+    assert!(make_result(event.clone(), false).is_err());
+    let mut inconsistent = event;
+    inconsistent.updated_balance = Some(money("91"));
+    assert!(make_result(inconsistent, true).is_err());
 }
 
 #[test]
