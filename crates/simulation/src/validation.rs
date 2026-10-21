@@ -51,6 +51,46 @@ impl ValidatedInput {
     pub(crate) fn matches_opening_ledger(&self, ledger: &Ledger) -> bool {
         self.opening_ledger == *ledger
     }
+    pub(crate) fn opening_ledger(&self) -> &Ledger {
+        &self.opening_ledger
+    }
+}
+
+pub(crate) fn validate_activity_configuration(
+    activity: &ActivityInstance,
+    _input: &FrozenInput,
+    ledger: &Ledger,
+) -> Result<(), SimulationError> {
+    let crate::ActivityConfiguration::PropertyTax(config) = &activity.configuration else {
+        return Ok(());
+    };
+    let amount_valid = !config.amount.is_negative()
+        && config.amount.currency() == ledger.currency()
+        && config
+            .amount
+            .rounded_for_posting(RoundingPolicy::HalfUp)
+            .is_ok();
+    let cash_valid = ledger
+        .chart()
+        .get(config.cash_account)
+        .is_some_and(|account| {
+            account.category() == AccountCategory::Asset
+                && account.is_cash_position()
+                && !account.is_contra()
+        });
+    let expense_valid = ledger
+        .chart()
+        .get(config.expense_account)
+        .is_some_and(|account| {
+            account.category() == AccountCategory::Expense && !account.is_contra()
+        });
+    if amount_valid && cash_valid && expense_valid {
+        Ok(())
+    } else {
+        Err(SimulationError::InvalidInput(
+            "invalid property tax amount, currency, or account role",
+        ))
+    }
 }
 
 /// Validate frozen values and collect every independent issue discoverable at this boundary.
@@ -260,12 +300,20 @@ pub(crate) fn validate_cashflow_support_with_additional(
         ),
     ]);
     for activity in activities {
-        let bound = match activity.sample_kind {
+        let bound = match activity.configuration.sample_kind() {
             ActivitySampleKind::Rental => rent,
             ActivitySampleKind::Repair => repair,
             ActivitySampleKind::Loan => {
                 property_simulation_domain::Money::from_parts(0, 0, currency)?
             }
+            ActivitySampleKind::PropertyTax => match &activity.configuration {
+                crate::ActivityConfiguration::PropertyTax(config)
+                    if tax_due(input.period, config.first_due, config.cadence) =>
+                {
+                    config.amount.rounded_for_posting(RoundingPolicy::HalfUp)?
+                }
+                _ => property_simulation_domain::Money::from_parts(0, 0, currency)?,
+            },
         };
         let total = absolute_support
             .get_mut(&property_simulation_accounting::CashFlowCategory::Operating)
@@ -292,6 +340,19 @@ pub(crate) fn validate_cashflow_support_with_additional(
         })?;
     }
     Ok(())
+}
+
+pub(crate) fn tax_due(
+    period: property_simulation_domain::YearMonth,
+    first: property_simulation_domain::YearMonth,
+    cadence: crate::PropertyTaxCadence,
+) -> bool {
+    if period < first {
+        return false;
+    }
+    let months = i64::from(period.year()) * 12 + i64::from(period.month())
+        - (i64::from(first.year()) * 12 + i64::from(first.month()));
+    months % i64::from(cadence.months()) == 0
 }
 
 /// Check all proposed transactions against a candidate ledger without mutating the caller's

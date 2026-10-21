@@ -9,13 +9,13 @@ use property_simulation_domain::{
 use property_simulation_models::{FixedRateLoan, RepairDistribution, RepairSampler};
 use property_simulation_randomness::{RootKey, RunKeyFactory};
 use property_simulation_simulation::{
-    ActivityInstance, ActivitySample, ActivitySampleKind, ActivitySampleValue, AssetCondition,
-    BranchRecord, CashFlowContributionTotals, FrozenInput, LoanContinuation, LoanMonthInput,
-    LoanRunUpdate, LoanSlice, MonthlyResult, OpeningState, OutputIdFactory, RentalSlice,
-    RepairSlice, RunCommand, RunConfig, RunIdentity, RunUpdate, RunUpdateValue, SimulationArchive,
-    SimulationError, SimulationRun, SimulationSlice, SingleMonthExecutor, StopCondition,
-    StopReason, ValidatedInput, coordinate_month_with_loans, propose_slice,
-    sample_repair_from_streams, saved_month,
+    ActivityConfiguration, ActivityInstance, ActivitySample, ActivitySampleKind,
+    ActivitySampleValue, AssetCondition, BranchRecord, CashFlowContributionTotals, FrozenInput,
+    LoanContinuation, LoanMonthInput, LoanRunUpdate, LoanSlice, MonthlyResult, OpeningState,
+    OutputIdFactory, RentalSlice, RepairSlice, RunCommand, RunConfig, RunIdentity, RunUpdate,
+    RunUpdateValue, SimulationArchive, SimulationError, SimulationRun, SimulationSlice,
+    SingleMonthExecutor, StopCondition, StopReason, ValidatedInput, coordinate_month_with_loans,
+    propose_slice, sample_repair_from_streams, saved_month,
 };
 
 fn month(number: u8) -> YearMonth {
@@ -35,7 +35,12 @@ fn activity(value: u8, kind: ActivitySampleKind) -> ActivityInstance {
         id: ActivityInstanceId::from_bytes([value; 16]),
         slice_id: SliceId::from_bytes([value + 10; 16]),
         version: ModelVersionId::from_bytes([value + 20; 16]),
-        sample_kind: kind,
+        configuration: match kind {
+            ActivitySampleKind::Rental => ActivityConfiguration::Rental,
+            ActivitySampleKind::Repair => ActivityConfiguration::Repair,
+            ActivitySampleKind::Loan => ActivityConfiguration::Loan,
+            ActivitySampleKind::PropertyTax => panic!("tax test helper requires configuration"),
+        },
     }
 }
 

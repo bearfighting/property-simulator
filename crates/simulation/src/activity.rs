@@ -16,6 +16,7 @@ pub enum ActivitySampleValue {
     Rental,
     Repair(RepairSample),
     Loan(Option<property_simulation_models::FixedRateLoan>),
+    PropertyTax,
 }
 
 /// An opaque sample token created only by `propose_slice` after provenance checks.
@@ -92,7 +93,7 @@ pub fn propose_slice<S: SimulationSlice>(
     let state = input.opening_state();
     let frozen_input = input.frozen_input();
     sample.validate_for(slice.instance(), frozen_input.period)?;
-    if slice.instance().sample_kind != S::SAMPLE_KIND {
+    if slice.instance().configuration.sample_kind() != S::SAMPLE_KIND {
         return Err(SimulationError::InvalidInput(
             "activity sample kind does not match Slice",
         ));
@@ -175,7 +176,9 @@ where
     R: RandomSource,
     S: Sampler<RepairDistribution>,
 {
-    if instance.sample_kind != ActivitySampleKind::Repair || !distribution.validate() {
+    if instance.configuration.sample_kind() != ActivitySampleKind::Repair
+        || !distribution.validate()
+    {
         return Err(SamplingError::InvalidDistribution);
     }
     let value = sampler.sample(distribution, random)?;
@@ -194,7 +197,9 @@ pub fn sample_repair_from_streams<S>(
 where
     S: Sampler<RepairDistribution>,
 {
-    if instance.sample_kind != ActivitySampleKind::Repair || !distribution.validate() {
+    if instance.configuration.sample_kind() != ActivitySampleKind::Repair
+        || !distribution.validate()
+    {
         return Err(RepairSamplingError::InvalidDistribution);
     }
     let mut random = streams
@@ -245,7 +250,7 @@ impl<T> ActivitySample<T> {
                 "sample provenance does not match activity instance or period",
             ));
         }
-        if instance.sample_kind == ActivitySampleKind::Repair
+        if instance.configuration.sample_kind() == ActivitySampleKind::Repair
             && self
                 .purpose
                 .as_deref()

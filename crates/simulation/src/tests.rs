@@ -347,7 +347,14 @@ fn activity_with_kind(id: u8, sample_kind: ActivitySampleKind) -> ActivityInstan
         id: ActivityInstanceId::from_bytes(b),
         slice_id: SliceId::from_bytes([1; 16]),
         version: ModelVersionId::from_bytes([2; 16]),
-        sample_kind,
+        configuration: match sample_kind {
+            ActivitySampleKind::Rental => ActivityConfiguration::Rental,
+            ActivitySampleKind::Repair => ActivityConfiguration::Repair,
+            ActivitySampleKind::Loan => ActivityConfiguration::Loan,
+            ActivitySampleKind::PropertyTax => {
+                panic!("property tax uses its explicit configuration")
+            }
+        },
     }
 }
 fn input() -> FrozenInput {
@@ -438,6 +445,548 @@ fn ledger_for_cash(cash: Money) -> property_simulation_accounting::Ledger {
 }
 fn sample<T>(instance: &ActivityInstance, value: T) -> ActivitySample<T> {
     ActivitySample::new(instance, input().period, value)
+}
+
+#[test]
+fn property_tax_posts_on_anchored_due_month_and_retains_marker() {
+    let config = PropertyTaxConfig {
+        amount: money("100.004"),
+        cadence: PropertyTaxCadence::Quarterly,
+        first_due: YearMonth::new(2025, 1).unwrap(),
+        cash_account: AccountId::from_bytes([4; 16]),
+        expense_account: AccountId::from_bytes([5; 16]),
+    };
+    let mut instance = activity_with_kind(12, ActivitySampleKind::Rental);
+    instance.configuration = ActivityConfiguration::PropertyTax(config);
+    let state = OpeningState {
+        cash: money("500"),
+        condition: AssetCondition::Available,
+    };
+    let mut frozen = input();
+    frozen.period = YearMonth::new(2025, 4).unwrap();
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let slice = PropertyTaxSlice {
+        instance: instance.clone(),
+    };
+    let output = propose_slice(
+        &slice,
+        &validated,
+        &ActivitySample::new(&instance, frozen.period, ()),
+    )
+    .unwrap();
+    assert_eq!(output.events.len(), 1);
+    assert_eq!(output.events[0].key, "property_tax.payment");
+    assert_eq!(output.transactions[0].key, "payment");
+    let (result, posted) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![output],
+        vec![ActivitySample::new(
+            &instance,
+            frozen.period,
+            ActivitySampleValue::PropertyTax,
+        )],
+        TrialId::from_bytes([1; 16]),
+        BranchId::from_bytes([2; 16]),
+        &TestIds,
+    )
+    .unwrap();
+    assert_eq!(
+        result.activities()[0].configuration,
+        ActivityConfiguration::PropertyTax(config)
+    );
+    assert_eq!(result.samples()[0].value, ActivitySampleValue::PropertyTax);
+    assert_eq!(result.proposal().events()[0].key, "property_tax.payment");
+    assert_eq!(result.proposal().transactions()[0].key, "payment");
+    assert_eq!(
+        result.proposal().transactions()[0].source_event_id,
+        Some(result.proposal().events()[0].id)
+    );
+    assert_eq!(
+        result.cash_flow_contributions()[0].transaction_id,
+        result.proposal().transactions()[0].id
+    );
+    assert_eq!(result.cash_flow_contributions()[0].amount, money("-100"));
+    assert_eq!(posted.balance(config.cash_account).unwrap().1, money("400"));
+}
+
+#[test]
+fn property_tax_annual_schedule_carries_anchor_across_calendar_years() {
+    let mut instance = activity_with_kind(26, ActivitySampleKind::Rental);
+    instance.configuration = ActivityConfiguration::PropertyTax(PropertyTaxConfig {
+        amount: money("1200"),
+        cadence: PropertyTaxCadence::Annual,
+        first_due: YearMonth::new(2026, 12).unwrap(),
+        cash_account: AccountId::from_bytes([4; 16]),
+        expense_account: AccountId::from_bytes([5; 16]),
+    });
+    let state = OpeningState {
+        cash: money("2000"),
+        condition: AssetCondition::Available,
+    };
+    let ledger = ledger_for_cash(state.cash);
+    for (period, expected_due) in [
+        (YearMonth::new(2027, 12).unwrap(), true),
+        (YearMonth::new(2028, 1).unwrap(), false),
+    ] {
+        let mut frozen = input();
+        frozen.period = period;
+        let validated = validate_input(
+            &frozen,
+            &RepairCostDistribution {
+                maximum: frozen.repair_cost_limit,
+            },
+            &ledger,
+            &state,
+        )
+        .unwrap();
+        let output = propose_slice(
+            &PropertyTaxSlice {
+                instance: instance.clone(),
+            },
+            &validated,
+            &ActivitySample::new(&instance, period, ()),
+        )
+        .unwrap();
+        assert_eq!(!output.events.is_empty(), expected_due);
+        assert_eq!(!output.transactions.is_empty(), expected_due);
+    }
+}
+
+#[test]
+fn property_tax_cadences_use_the_first_due_month_as_the_schedule_anchor() {
+    let anchor = YearMonth::new(2026, 12).unwrap();
+    assert!(crate::validation::tax_due(
+        anchor,
+        anchor,
+        PropertyTaxCadence::Monthly
+    ));
+    assert!(!crate::validation::tax_due(
+        YearMonth::new(2026, 11).unwrap(),
+        anchor,
+        PropertyTaxCadence::Annual
+    ));
+    assert!(crate::validation::tax_due(
+        YearMonth::new(2027, 1).unwrap(),
+        anchor,
+        PropertyTaxCadence::Monthly
+    ));
+    assert!(!crate::validation::tax_due(
+        YearMonth::new(2027, 2).unwrap(),
+        anchor,
+        PropertyTaxCadence::Quarterly
+    ));
+    assert!(crate::validation::tax_due(
+        YearMonth::new(2027, 3).unwrap(),
+        anchor,
+        PropertyTaxCadence::Quarterly
+    ));
+    assert!(!crate::validation::tax_due(
+        YearMonth::new(2027, 11).unwrap(),
+        anchor,
+        PropertyTaxCadence::Annual
+    ));
+    assert!(crate::validation::tax_due(
+        YearMonth::new(2027, 12).unwrap(),
+        anchor,
+        PropertyTaxCadence::Annual
+    ));
+}
+
+#[test]
+fn property_tax_non_due_zero_and_empty_months_are_identity() {
+    let mut instance = activity_with_kind(13, ActivitySampleKind::Rental);
+    instance.configuration = ActivityConfiguration::PropertyTax(PropertyTaxConfig {
+        amount: money("0.004"),
+        cadence: PropertyTaxCadence::Annual,
+        first_due: YearMonth::new(2025, 12).unwrap(),
+        cash_account: AccountId::from_bytes([4; 16]),
+        expense_account: AccountId::from_bytes([5; 16]),
+    });
+    let state = OpeningState {
+        cash: money("500"),
+        condition: AssetCondition::Available,
+    };
+    let mut frozen = input();
+    frozen.period = YearMonth::new(2026, 1).unwrap();
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let output = propose_slice(
+        &PropertyTaxSlice {
+            instance: instance.clone(),
+        },
+        &validated,
+        &ActivitySample::new(&instance, frozen.period, ()),
+    )
+    .unwrap();
+    assert!(output.events.is_empty() && output.transactions.is_empty());
+    let (non_due, still_open) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![output],
+        vec![ActivitySample::new(
+            &instance,
+            frozen.period,
+            ActivitySampleValue::PropertyTax,
+        )],
+        TrialId::from_bytes([1; 16]),
+        BranchId::from_bytes([2; 16]),
+        &TestIds,
+    )
+    .unwrap();
+    assert_eq!(non_due.samples()[0].value, ActivitySampleValue::PropertyTax);
+    assert!(non_due.proposal().events().is_empty() && non_due.proposal().transactions().is_empty());
+    assert_eq!(still_open, ledger);
+    frozen.period = YearMonth::new(2025, 12).unwrap();
+    let december_input = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let output = propose_slice(
+        &PropertyTaxSlice {
+            instance: instance.clone(),
+        },
+        &december_input,
+        &ActivitySample::new(&instance, frozen.period, ()),
+    )
+    .unwrap();
+    assert!(output.events.is_empty() && output.transactions.is_empty());
+    let (rounded_zero, unchanged) = coordinate_month(
+        &december_input,
+        &ledger,
+        vec![output],
+        vec![ActivitySample::new(
+            &instance,
+            frozen.period,
+            ActivitySampleValue::PropertyTax,
+        )],
+        TrialId::from_bytes([1; 16]),
+        BranchId::from_bytes([2; 16]),
+        &TestIds,
+    )
+    .unwrap();
+    assert_eq!(
+        rounded_zero.samples()[0].value,
+        ActivitySampleValue::PropertyTax
+    );
+    assert!(
+        rounded_zero.proposal().events().is_empty()
+            && rounded_zero.cash_flow_contributions().is_empty()
+    );
+    assert_eq!(unchanged, ledger);
+    let mut exact_zero = instance.clone();
+    if let ActivityConfiguration::PropertyTax(config) = &mut exact_zero.configuration {
+        config.amount = money("0");
+    }
+    let exact_zero_input = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let zero_output = propose_slice(
+        &PropertyTaxSlice {
+            instance: exact_zero.clone(),
+        },
+        &exact_zero_input,
+        &ActivitySample::new(&exact_zero, frozen.period, ()),
+    )
+    .unwrap();
+    assert!(zero_output.events.is_empty() && zero_output.transactions.is_empty());
+    let empty_input = validated_input(&state, &input());
+    let (empty_result, unchanged) = coordinate_month(
+        &empty_input,
+        &ledger_for_cash(state.cash),
+        vec![],
+        vec![],
+        TrialId::from_bytes([1; 16]),
+        BranchId::from_bytes([2; 16]),
+        &TestIds,
+    )
+    .unwrap();
+    assert!(empty_result.activities().is_empty());
+    assert_eq!(unchanged, ledger_for_cash(state.cash));
+}
+
+#[test]
+fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
+    let state = OpeningState {
+        cash: money("500"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let rent = rental_activity(20);
+    let repair = activity(25);
+    let mut tax = activity_with_kind(21, ActivitySampleKind::Rental);
+    tax.configuration = ActivityConfiguration::PropertyTax(PropertyTaxConfig {
+        amount: money("100"),
+        cadence: PropertyTaxCadence::Quarterly,
+        first_due: frozen.period,
+        cash_account: frozen.cash_account,
+        expense_account: frozen.repair_expense_account,
+    });
+    let rent_output = propose_slice(
+        &RentalSlice {
+            instance: rent.clone(),
+        },
+        &validated,
+        &ActivitySample::new(&rent, frozen.period, ()),
+    )
+    .unwrap();
+    let tax_output = propose_slice(
+        &PropertyTaxSlice {
+            instance: tax.clone(),
+        },
+        &validated,
+        &ActivitySample::new(&tax, frozen.period, ()),
+    )
+    .unwrap();
+    let repair_output = propose_slice(
+        &RepairSlice {
+            instance: repair.clone(),
+        },
+        &validated,
+        &ActivitySample::new(
+            &repair,
+            frozen.period,
+            RepairSample::Repair { cost: money("10") },
+        ),
+    )
+    .unwrap();
+    let samples = vec![
+        ActivitySample::new(&rent, frozen.period, ActivitySampleValue::Rental),
+        ActivitySample::new(&tax, frozen.period, ActivitySampleValue::PropertyTax),
+        ActivitySample::new(
+            &repair,
+            frozen.period,
+            ActivitySampleValue::Repair(RepairSample::Repair { cost: money("10") }),
+        ),
+    ];
+    let args = (TrialId::from_bytes([1; 16]), BranchId::from_bytes([2; 16]));
+    assert!(
+        coordinate_month(
+            &validated,
+            &ledger,
+            vec![tax_output.clone(), tax_output.clone()],
+            vec![ActivitySample::new(
+                &tax,
+                frozen.period,
+                ActivitySampleValue::PropertyTax
+            )],
+            args.0,
+            args.1,
+            &TestIds,
+        )
+        .is_err()
+    );
+    let (forward, forward_ledger) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![
+            rent_output.clone(),
+            tax_output.clone(),
+            repair_output.clone(),
+        ],
+        samples.clone(),
+        args.0,
+        args.1,
+        &TestIds,
+    )
+    .unwrap();
+    let (reverse, reverse_ledger) = coordinate_month(
+        &validated,
+        &ledger,
+        vec![repair_output, tax_output, rent_output],
+        samples.into_iter().rev().collect(),
+        args.0,
+        args.1,
+        &TestIds,
+    )
+    .unwrap();
+    assert_eq!(forward, reverse);
+    assert_eq!(forward_ledger, reverse_ledger);
+    assert_eq!(
+        forward_ledger.balance(frozen.cash_account).unwrap().1,
+        money("470")
+    );
+    assert_eq!(forward.cash_flow_totals().unwrap().operating, money("-30"));
+    assert_eq!(forward.proposal().events().len(), 3);
+    assert_eq!(forward.proposal().transactions().len(), 3);
+}
+
+#[test]
+fn property_tax_invalid_currency_and_cash_account_are_rejected() {
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let frozen = input();
+    let ledger = ledger_for_cash(state.cash);
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    for config in [
+        PropertyTaxConfig {
+            amount: Money::parse("10", Currency::from_code("USD").unwrap()).unwrap(),
+            cadence: PropertyTaxCadence::Monthly,
+            first_due: frozen.period,
+            cash_account: frozen.cash_account,
+            expense_account: frozen.repair_expense_account,
+        },
+        PropertyTaxConfig {
+            amount: money("10"),
+            cadence: PropertyTaxCadence::Monthly,
+            first_due: frozen.period,
+            cash_account: frozen.rent_account,
+            expense_account: frozen.repair_expense_account,
+        },
+    ] {
+        let mut instance = activity_with_kind(22, ActivitySampleKind::Rental);
+        instance.configuration = ActivityConfiguration::PropertyTax(config);
+        assert!(
+            propose_slice(
+                &PropertyTaxSlice {
+                    instance: instance.clone()
+                },
+                &validated,
+                &ActivitySample::new(&instance, frozen.period, ())
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn property_tax_rejects_a_contra_expense_account() {
+    use property_simulation_accounting::{
+        Account, AccountCategory, AccountCode, BalanceSide, Ledger, OpeningBalance, OpeningBalances,
+    };
+    let mut chart = chart();
+    let contra_expense = AccountId::from_bytes([7; 16]);
+    chart
+        .insert(
+            Account::new(
+                contra_expense,
+                AccountCode::new(5001).unwrap(),
+                AccountCategory::Expense,
+                true,
+                "Contra expense",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let state = OpeningState {
+        cash: money("100"),
+        condition: AssetCondition::Available,
+    };
+    let opening = OpeningBalances::new(
+        &chart,
+        [
+            OpeningBalance::new(input().cash_account, BalanceSide::Debit, money("100")).unwrap(),
+            OpeningBalance::new(
+                AccountId::from_bytes([6; 16]),
+                BalanceSide::Credit,
+                money("100"),
+            )
+            .unwrap(),
+        ],
+        Some(state.cash),
+    )
+    .unwrap();
+    let ledger = Ledger::new(chart, opening).unwrap();
+    let frozen = input();
+    let validated = validate_input(
+        &frozen,
+        &RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+    let mut instance = activity_with_kind(27, ActivitySampleKind::Rental);
+    instance.configuration = ActivityConfiguration::PropertyTax(PropertyTaxConfig {
+        amount: money("10"),
+        cadence: PropertyTaxCadence::Monthly,
+        first_due: frozen.period,
+        cash_account: frozen.cash_account,
+        expense_account: contra_expense,
+    });
+    assert!(
+        propose_slice(
+            &PropertyTaxSlice {
+                instance: instance.clone()
+            },
+            &validated,
+            &ActivitySample::new(&instance, frozen.period, ())
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn property_tax_due_amount_is_in_the_operating_support_bound() {
+    let mut first = activity_with_kind(23, ActivitySampleKind::Rental);
+    let mut second = activity_with_kind(24, ActivitySampleKind::Rental);
+    let large =
+        Money::from_parts(i128::MAX / 4 * 3, 2, Currency::from_code("CAD").unwrap()).unwrap();
+    let config = |amount| PropertyTaxConfig {
+        amount,
+        cadence: PropertyTaxCadence::Quarterly,
+        first_due: input().period,
+        cash_account: input().cash_account,
+        expense_account: input().repair_expense_account,
+    };
+    first.configuration = ActivityConfiguration::PropertyTax(config(large));
+    second.configuration = ActivityConfiguration::PropertyTax(config(large));
+    assert!(
+        crate::validation::validate_cashflow_support(&input(), &[first.clone(), second.clone()])
+            .is_err()
+    );
+    let mut non_due = input();
+    non_due.period = YearMonth::new(2025, 2).unwrap();
+    assert!(crate::validation::validate_cashflow_support(&non_due, &[first, second]).is_ok());
 }
 
 #[test]
@@ -980,7 +1529,7 @@ fn active_cashflow_support_includes_context_bound_contributions() {
         id: ActivityInstanceId::from_bytes([61; 16]),
         slice_id: SliceId::from_bytes([62; 16]),
         version: ModelVersionId::from_bytes([63; 16]),
-        sample_kind: ActivitySampleKind::Loan,
+        configuration: ActivityConfiguration::Loan,
     };
     assert!(
         crate::validation::validate_cashflow_support_with_additional(

@@ -110,7 +110,7 @@ pub(super) fn prepare_month(
     }
     let loan_activity_map: std::collections::BTreeMap<_, _> = activities
         .iter()
-        .filter(|activity| activity.sample_kind == crate::ActivitySampleKind::Loan)
+        .filter(|activity| activity.configuration.sample_kind() == crate::ActivitySampleKind::Loan)
         .map(|activity| (activity.id, (activity.slice_id, activity.version)))
         .collect();
     let prior_loans: std::collections::BTreeMap<_, _> = run
@@ -146,6 +146,10 @@ pub(super) fn prepare_month(
     };
     let validated = validate_input(&input, &distribution, &candidate_ledger, &state)
         .map_err(RunControlError::Input)?;
+    for activity in &activities {
+        crate::validation::validate_activity_configuration(activity, &input, &candidate_ledger)
+            .map_err(RunControlError::InvalidExecutionInput)?;
+    }
     let additional_support = additional_cash_flow_support(
         &candidate_loans,
         &loan_updates,

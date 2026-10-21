@@ -180,12 +180,13 @@ impl SingleMonthExecutor for Executor {
         let samples = activities
             .iter()
             .map(|activity| {
-                let value = match activity.sample_kind {
+                let value = match activity.configuration.sample_kind() {
                     crate::ActivitySampleKind::Rental => ActivitySampleValue::Rental,
                     crate::ActivitySampleKind::Repair => {
                         ActivitySampleValue::Repair(crate::RepairSample::NoRepair)
                     }
                     crate::ActivitySampleKind::Loan => ActivitySampleValue::Loan(None),
+                    crate::ActivitySampleKind::PropertyTax => ActivitySampleValue::PropertyTax,
                 };
                 ActivitySample::new(activity, input.frozen_input().period, value)
             })
@@ -431,7 +432,7 @@ fn activity_updates_are_passed_to_executor_and_recorded() {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
         version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
-        sample_kind: crate::ActivitySampleKind::Rental,
+        configuration: crate::ActivityConfiguration::Rental,
     };
     let update = RunUpdate {
         effective_month: month(1),
@@ -456,7 +457,7 @@ fn loan_run_requires_a_continuation_for_each_loan_activity() {
         id: ActivityInstanceId::from_bytes([31; 16]),
         slice_id: SliceId::from_bytes([32; 16]),
         version: ModelVersionId::from_bytes([33; 16]),
-        sample_kind: crate::ActivitySampleKind::Loan,
+        configuration: crate::ActivityConfiguration::Loan,
     };
     let config = RunConfig {
         start: month(1),
@@ -565,7 +566,7 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
                 id: instance_id,
                 slice_id,
                 version,
-                sample_kind: crate::ActivitySampleKind::Repair,
+                configuration: crate::ActivityConfiguration::Repair,
             };
             if activities != [activity.clone()] {
                 return Err(SimulationError::InvalidInput(
@@ -617,7 +618,7 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
         version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
-        sample_kind: crate::ActivitySampleKind::Repair,
+        configuration: crate::ActivityConfiguration::Repair,
     };
     let mut run = SimulationRun::new_with_activities(
         RunConfig {
@@ -822,7 +823,7 @@ fn rejects_duplicate_activity_updates_before_execution() {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
         version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
-        sample_kind: crate::ActivitySampleKind::Rental,
+        configuration: crate::ActivityConfiguration::Rental,
     };
     let update = RunUpdate {
         effective_month: month(1),
@@ -948,7 +949,7 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
         id: ActivityInstanceId::from_bytes([7; 16]),
         slice_id: SliceId::from_bytes([8; 16]),
         version: ModelVersionId::from_bytes([9; 16]),
-        sample_kind: crate::ActivitySampleKind::Repair,
+        configuration: crate::ActivityConfiguration::Repair,
     };
     let mut run = SimulationRun::new_with_activities(
         RunConfig {
@@ -1115,7 +1116,7 @@ fn unrepresentable_loan_and_input_cashflow_support_rejects_before_executor() {
         id: ActivityInstanceId::from_bytes([46; 16]),
         slice_id: SliceId::from_bytes([47; 16]),
         version: ModelVersionId::from_bytes([48; 16]),
-        sample_kind: crate::ActivitySampleKind::Loan,
+        configuration: crate::ActivityConfiguration::Loan,
     };
     let continuation = LoanContinuation {
         instance_id: loan_activity.id,
@@ -1268,7 +1269,7 @@ fn inconsistent_executor_output_fails_without_committing_a_snapshot() {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
         version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
-        sample_kind: crate::ActivitySampleKind::Repair,
+        configuration: crate::ActivityConfiguration::Repair,
     };
     let mut run = SimulationRun::new_with_activities(
         RunConfig {
@@ -1372,14 +1373,14 @@ fn rejects_ledger_postings_that_disagree_with_monthly_result() {
                     id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
                     slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
                     version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
-                    sample_kind: crate::ActivitySampleKind::Rental,
+                    configuration: crate::ActivityConfiguration::Rental,
                 }],
                 vec![ActivitySample::new(
                     &crate::ActivityInstance {
                         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
                         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
                         version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
-                        sample_kind: crate::ActivitySampleKind::Rental,
+                        configuration: crate::ActivityConfiguration::Rental,
                     },
                     input.frozen_input().period,
                     crate::ActivitySampleValue::Rental,
@@ -1418,7 +1419,7 @@ fn rejects_ledger_postings_that_disagree_with_monthly_result() {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
         version: property_simulation_domain::ModelVersionId::from_bytes([9; 16]),
-        sample_kind: crate::ActivitySampleKind::Rental,
+        configuration: crate::ActivityConfiguration::Rental,
     };
     let (ledger, mut input, state) = make_fixture_ledger();
     input.rent = Money::new(1.into(), input.rent.currency());
@@ -1624,7 +1625,7 @@ fn archive_cashflow_summary_derives_nonzero_month_activity_and_run_totals() {
         id: ActivityInstanceId::from_bytes([21; 16]),
         slice_id: SliceId::from_bytes([22; 16]),
         version: ModelVersionId::from_bytes([23; 16]),
-        sample_kind: crate::ActivitySampleKind::Rental,
+        configuration: crate::ActivityConfiguration::Rental,
     };
     let trial = TrialId::from_bytes([24; 16]);
     let branch = BranchId::from_bytes([25; 16]);

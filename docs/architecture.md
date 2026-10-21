@@ -100,7 +100,7 @@ M0-B 已选定最小 workspace 边界，当前实现位于 `crates/`：
 
 `simulation` depends on `randomness` only for its explicit executor stream hook. Domain Slice implementations still receive caller-provided model `RandomSource` values and do not access operating-system entropy.
 
-Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出公开 API；`error` 统一模拟错误，`types` 保存共享状态、活动身份、提案数据与单期结果类型，`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束，`slices::rental` 与 `slices::repair` 分别实现示例活动规则。示例 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 持有账簿状态并负责交易验证、原子过账和余额推导，避免把依赖账簿上下文的不变量分散给独立服务。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
+Crate 内部保持小而明确的模块边界。`simulation::lib.rs` 只声明模块并重导出公开 API；`error` 统一模拟错误，`types` 保存共享状态、类型化活动配置、提案数据与单期结果类型，`activity` 负责样本来源校验及 Slice 调用契约，`proposals` 负责稳定 ID 识别、来源链接和提案合并，`validation` 负责输入约束；`slices::rental`、`slices::repair` 与 `slices::property_tax` 分别实现相应活动规则。物业税 Slice 只读取活动配置和冻结月份，以确定性 `()` 样本保留输入标记，并通过共享提案契约输出经营费用凭证；活动配置与实例共同保存在月度结果中。所有 Slice 依赖共享契约及领域/账务值，不由通用协调代码反向依赖具体 Slice。`accounting::transaction` 定义不可变凭证/分录及来源数据契约；`accounting::ledger` 持有账簿状态并负责交易验证、原子过账和余额推导，避免把依赖账簿上下文的不变量分散给独立服务。`models::lib.rs` 同样只聚合模块；`repair_cost` 管理维修成本支持范围，`sampling` 定义采样器接口。新增 Slice 应放在独立模块，并通过既有契约接入。
 
 当前 M2.5 单期协调器位于 `simulation::coordinator`：它只协调已评估输出，不依赖或分派具体 Slice；Slice 输出在评估时绑定资源声明。协调器验证声明与来源后，在账簿副本上提交，并用显式 reducer 生成当前支持的期末状态。该模块依赖 simulation 契约及 accounting Ledger，不把业务转移逻辑放入 CLI/GUI 或账务层。
 

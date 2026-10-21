@@ -263,7 +263,9 @@ impl SimulationRun {
         }
         let loan_activities: std::collections::BTreeMap<_, _> = activities
             .iter()
-            .filter(|activity| activity.sample_kind == crate::ActivitySampleKind::Loan)
+            .filter(|activity| {
+                activity.configuration.sample_kind() == crate::ActivitySampleKind::Loan
+            })
             .map(|activity| (activity.id, activity))
             .collect();
         let mut loan_ids = std::collections::BTreeSet::new();

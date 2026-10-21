@@ -22,11 +22,6 @@ pub fn coordinate_month_with_loans(
     ids: &dyn OutputIdFactory,
     loans: Vec<LoanMonthInput>,
 ) -> Result<(MonthlyResult, property_simulation_accounting::Ledger), SimulationError> {
-    if outputs.is_empty() && loans.is_empty() {
-        return Err(SimulationError::InvalidProposal(
-            "monthly coordination requires at least one active output",
-        ));
-    }
     let mut seen = std::collections::BTreeSet::new();
     let mut liability_accounts = std::collections::BTreeSet::new();
     let mut loan_outputs = Vec::with_capacity(loans.len());

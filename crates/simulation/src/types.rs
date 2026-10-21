@@ -38,13 +38,56 @@ pub struct ActivityInstance {
     pub id: ActivityInstanceId,
     pub slice_id: SliceId,
     pub version: ModelVersionId,
-    pub sample_kind: ActivitySampleKind,
+    pub configuration: ActivityConfiguration,
+}
+/// Per-instance model configuration. The variant is the activity/sample kind,
+/// so it cannot disagree with the configuration carried into snapshots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivityConfiguration {
+    Rental,
+    Repair,
+    Loan,
+    PropertyTax(PropertyTaxConfig),
+}
+impl ActivityConfiguration {
+    pub const fn sample_kind(&self) -> ActivitySampleKind {
+        match self {
+            Self::Rental => ActivitySampleKind::Rental,
+            Self::Repair => ActivitySampleKind::Repair,
+            Self::Loan => ActivitySampleKind::Loan,
+            Self::PropertyTax(_) => ActivitySampleKind::PropertyTax,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropertyTaxCadence {
+    Monthly,
+    Quarterly,
+    Annual,
+}
+impl PropertyTaxCadence {
+    pub const fn months(self) -> i32 {
+        match self {
+            Self::Monthly => 1,
+            Self::Quarterly => 3,
+            Self::Annual => 12,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropertyTaxConfig {
+    pub amount: Money,
+    pub cadence: PropertyTaxCadence,
+    pub first_due: YearMonth,
+    pub cash_account: AccountId,
+    pub expense_account: AccountId,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySampleKind {
     Rental,
     Repair,
     Loan,
+    PropertyTax,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventProposal {
@@ -317,10 +360,14 @@ impl MonthlyResult {
                 .get(&sample.instance_id)
                 .is_some_and(|activity| {
                     matches!(
-                        (&sample.value, activity.sample_kind),
+                        (&sample.value, activity.configuration.sample_kind()),
                         (ActivitySampleValue::Rental, ActivitySampleKind::Rental)
                             | (ActivitySampleValue::Repair(_), ActivitySampleKind::Repair)
                             | (ActivitySampleValue::Loan(_), ActivitySampleKind::Loan)
+                            | (
+                                ActivitySampleValue::PropertyTax,
+                                ActivitySampleKind::PropertyTax
+                            )
                     )
                 })
         };
@@ -409,10 +456,18 @@ impl MonthlyResult {
             *total = total.checked_add(amount)?;
         }
         for activity in &activities {
-            let bound = match activity.sample_kind {
+            let bound = match activity.configuration.sample_kind() {
                 ActivitySampleKind::Rental => frozen_input.rent,
                 ActivitySampleKind::Repair => frozen_input.repair_cost_limit,
                 ActivitySampleKind::Loan => continue,
+                ActivitySampleKind::PropertyTax => match &activity.configuration {
+                    ActivityConfiguration::PropertyTax(config)
+                        if crate::validation::tax_due(period, config.first_due, config.cadence) =>
+                    {
+                        config.amount
+                    }
+                    _ => Money::from_parts(0, 0, opening_state.cash.currency())?,
+                },
             }
             .rounded_for_posting(property_simulation_domain::RoundingPolicy::HalfUp)?;
             if actual_support
@@ -642,7 +697,7 @@ impl MonthlyResult {
             id: output.instance_id,
             slice_id: output.slice_id,
             version: output.model_version,
-            sample_kind: ActivitySampleKind::Loan,
+            configuration: ActivityConfiguration::Loan,
         };
         if activities
             .iter()

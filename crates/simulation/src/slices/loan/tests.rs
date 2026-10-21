@@ -1,5 +1,9 @@
 use crate::slices::loan::*;
-use crate::{AssetCondition, FrozenInput, OpeningState};
+use crate::{
+    ActivityConfiguration, ActivityInstance, ActivitySample, ActivitySampleValue, AssetCondition,
+    FrozenInput, OpeningState, PropertyTaxCadence, PropertyTaxConfig, PropertyTaxSlice,
+    propose_slice,
+};
 use crate::{OutputIdFactory, coordinate_month_with_loans};
 use property_simulation_accounting::{
     Account, AccountCategory, AccountCode, ChartOfAccounts, OpeningBalance, OpeningBalances,
@@ -106,6 +110,104 @@ fn loan(balance: &str, months: u32) -> FixedRateLoan {
         annual_rate: rust_decimal::Decimal::new(12, 2),
         scheduled_payment: None,
     }
+}
+
+#[test]
+fn property_tax_composes_with_a_loan_in_the_same_month() {
+    let (loan_slice, ledger) = fixture("10000");
+    let currency = Currency::from_code("CAD").unwrap();
+    let period = YearMonth::new(2026, 1).unwrap();
+    let frozen = FrozenInput {
+        period,
+        rent: Money::parse("0", currency).unwrap(),
+        rent_account: AccountId::from_bytes([5; 16]),
+        cash_account: loan_slice.cash_account,
+        repair_expense_account: loan_slice.interest_expense_account,
+        repair_cost_limit: Money::parse("0", currency).unwrap(),
+    };
+    let state = OpeningState {
+        cash: Money::parse("0", currency).unwrap(),
+        condition: AssetCondition::Available,
+    };
+    let distribution = property_simulation_models::RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    let input = crate::validate_input(&frozen, &distribution, &ledger, &state).unwrap();
+    let tax = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([40; 16]),
+        slice_id: SliceId::from_bytes([41; 16]),
+        version: ModelVersionId::from_bytes([42; 16]),
+        configuration: ActivityConfiguration::PropertyTax(PropertyTaxConfig {
+            amount: Money::parse("25", currency).unwrap(),
+            cadence: PropertyTaxCadence::Monthly,
+            first_due: period,
+            cash_account: loan_slice.cash_account,
+            expense_account: loan_slice.interest_expense_account,
+        }),
+    };
+    let slice = PropertyTaxSlice {
+        instance: tax.clone(),
+    };
+    let output = propose_slice(&slice, &input, &ActivitySample::new(&tax, period, ())).unwrap();
+    let sample = ActivitySample::new(&tax, period, ActivitySampleValue::PropertyTax);
+    let (result, committed) = coordinate_month_with_loans(
+        &input,
+        &ledger,
+        vec![output],
+        vec![sample],
+        TrialId::from_bytes([10; 16]),
+        BranchId::from_bytes([11; 16]),
+        &Ids,
+        vec![LoanMonthInput {
+            slice: loan_slice.clone(),
+            loan: Some(loan("10000", 12)),
+            update: None,
+        }],
+    )
+    .unwrap();
+    assert_eq!(result.activities().len(), 2);
+    assert_eq!(result.proposal().transactions().len(), 2);
+    assert_eq!(result.cash_flow_contributions().len(), 3);
+    assert!(committed.transactions().count() >= 2);
+}
+
+#[test]
+fn loan_aware_coordinator_accepts_a_month_with_no_active_activities() {
+    let (slice, ledger) = fixture("10000");
+    let currency = Currency::from_code("CAD").unwrap();
+    let period = YearMonth::new(2026, 1).unwrap();
+    let frozen = FrozenInput {
+        period,
+        rent: Money::parse("0", currency).unwrap(),
+        rent_account: AccountId::from_bytes([5; 16]),
+        cash_account: slice.cash_account,
+        repair_expense_account: slice.interest_expense_account,
+        repair_cost_limit: Money::parse("0", currency).unwrap(),
+    };
+    let state = OpeningState {
+        cash: Money::parse("0", currency).unwrap(),
+        condition: AssetCondition::Available,
+    };
+    let distribution = property_simulation_models::RepairCostDistribution {
+        maximum: frozen.repair_cost_limit,
+    };
+    let input = crate::validate_input(&frozen, &distribution, &ledger, &state).unwrap();
+    let (result, unchanged) = coordinate_month_with_loans(
+        &input,
+        &ledger,
+        vec![],
+        vec![],
+        TrialId::from_bytes([10; 16]),
+        BranchId::from_bytes([11; 16]),
+        &Ids,
+        vec![],
+    )
+    .unwrap();
+    assert!(result.activities().is_empty());
+    assert!(result.proposal().events().is_empty());
+    assert!(result.proposal().transactions().is_empty());
+    assert!(result.cash_flow_contributions().is_empty());
+    assert_eq!(unchanged, ledger);
 }
 
 fn balance_transaction(

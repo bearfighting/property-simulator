@@ -30,7 +30,6 @@ pub fn coordinate_month(
         trial_id,
         branch_id,
         ids,
-        false,
         &[],
     )
 }
@@ -54,7 +53,6 @@ pub(crate) fn coordinate_month_allow_empty_with_transactions(
         trial_id,
         branch_id,
         ids,
-        true,
         additional_transactions,
     )
 }
@@ -68,7 +66,6 @@ fn coordinate_month_inner(
     trial_id: TrialId,
     branch_id: BranchId,
     ids: &dyn OutputIdFactory,
-    allow_empty: bool,
     additional_transactions: &[property_simulation_accounting::LedgerTransaction],
 ) -> Result<(MonthlyResult, Ledger), SimulationError> {
     if !input.matches_opening_ledger(opening_ledger) {
@@ -76,17 +73,11 @@ fn coordinate_month_inner(
             "opening ledger differs from the ledger used to validate monthly input",
         ));
     }
-    if outputs.is_empty() && !allow_empty {
-        return Err(SimulationError::InvalidProposal(
-            "monthly coordination requires at least one active output",
-        ));
-    }
-    if outputs
+    if outputs.iter().any(|output| {
+        output.instance.configuration.sample_kind() == crate::types::ActivitySampleKind::Loan
+    }) || samples
         .iter()
-        .any(|output| output.instance.sample_kind == crate::types::ActivitySampleKind::Loan)
-        || samples
-            .iter()
-            .any(|sample| matches!(&sample.value, ActivitySampleValue::Loan(_)))
+        .any(|sample| matches!(&sample.value, ActivitySampleValue::Loan(_)))
     {
         return Err(SimulationError::InvalidProposal(
             "loan activities must be coordinated through coordinate_month_with_loans",
@@ -225,7 +216,7 @@ fn validate_sample_set(
         if sample.slice_id != activity.slice_id
             || sample.version != activity.version
             || !matches!(
-                (&sample.value, activity.sample_kind),
+                (&sample.value, activity.configuration.sample_kind()),
                 (
                     ActivitySampleValue::Rental,
                     crate::types::ActivitySampleKind::Rental
@@ -235,6 +226,9 @@ fn validate_sample_set(
                 ) | (
                     ActivitySampleValue::Loan(_),
                     crate::types::ActivitySampleKind::Loan
+                ) | (
+                    ActivitySampleValue::PropertyTax,
+                    crate::types::ActivitySampleKind::PropertyTax
                 )
             )
         {

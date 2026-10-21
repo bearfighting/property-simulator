@@ -99,7 +99,7 @@ pub(super) fn loan_output_matches(
 ) -> bool {
     let expected: std::collections::BTreeMap<_, _> = activities
         .iter()
-        .filter(|activity| activity.sample_kind == crate::ActivitySampleKind::Loan)
+        .filter(|activity| activity.configuration.sample_kind() == crate::ActivitySampleKind::Loan)
         .map(|activity| (activity.id, (activity.slice_id, activity.version)))
         .collect();
     let actual: std::collections::BTreeMap<_, _> = result
