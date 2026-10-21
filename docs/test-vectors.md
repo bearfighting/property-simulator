@@ -28,7 +28,7 @@ test-owned; M3 does not add a production scheduler.
 | Case | Expected acceptance |
 |---|---|
 | Inclusive two-month run ending at February | Each `Continue` commits exactly one month. The February snapshot is retained before end/condition evaluation; status reports the configured stop reason. A between-month `Stop` preserves the latest completed snapshot and does not invoke the executor. |
-| Month-start input update | A valid update effective in the next period is validated and retained in both run history and the completed result with its source and effective month. An invalid update or executor input/sample/proposal preflight rejection occurs before commit: no new snapshot or history mutation, and run status stays retryable; corrected input can be retried. Fatal transition/commit errors fail the run. |
+| Month-start input update | A valid update effective in the next period is validated and retained in both run history and the completed result with its source and effective month. An invalid update or executor input/sample/proposal preflight rejection occurs before commit: no new snapshot or history mutation, and run status stays retryable; corrected input can be retried. Fatal failures during an accepted transition or commit fail the run. |
 | Balanced month-start state adjustment | Its transaction is retained in the completed result with the update source and transaction ID. A separate run-input Effect records prior/updated state and links to that transaction. Cash entries produce input cash-flow contributions that aggregate with Slice contributions and reconcile to the period Ledger projection; no fabricated Slice/activity identity is used. |
 | Fatal monthly transition | A fatal executor/Slice transition marks the run failed and returns a diagnostic carrying phase and month. The failed month has no snapshot, is not reported as a normal stop, and continuation is rejected. No recovery promise is made for external persistence. |
 | Repair + rent + two loans in one period | A single `SimulationRun` test executor draws a semantic repair sample, proposes rent and repair outputs, and calls the real loan coordinator for two independent loans. Every transaction is balanced and source-linked to its event/activity. Events, Effects, samples, transactions and contributions carry the same trial, branch, month, Slice and activity identity; output IDs are unique. Rent/repair contributions and loan interest/principal contributions sum by category to the Ledger direct cash-flow projection. Each loan continuation equals its own liability account balance. |
@@ -230,13 +230,14 @@ equal numeric samples across different instances are allowed.
 | Correctable run update or executor sample/input rejection | Reject before commit. The run remains `Running` at the same next month; opening state, Ledger, update history, and latest snapshot remain unchanged. After correction, retry may succeed and creates one snapshot for that month. A retained random stream allocation is reused; the test does not require replay or recovery of unfinished random draws. |
 | Invalid sample source, unknown Effect, or rejected journal | The coordinator returns a validation error before returning a successful monthly result. The caller's opening Ledger remains unchanged, with no partial transaction batch. |
 | Duplicate output identity or conflicting state writes | Proposal merge rejects duplicate IDs and different values written to the same target before commit. These are merge-layer unit vectors; they do not claim a separate full-coordinator fixture. |
-| Fatal accepted-input transition or fatal run preflight | Mark the run `Failed`; do not create a snapshot for that month and reject subsequent continuation. Run-control tests assert that the in-memory state, Ledger, and update history remain at the last committed boundary. No recovery or persistent rollback guarantee is made for external infrastructure. |
+| Fatal executor preflight defect or accepted-input transition | Mark the run `Failed`; do not create a snapshot for that month and reject subsequent continuation. Run-control tests assert that the in-memory state, Ledger, and update history remain at the last committed boundary. No recovery or persistent rollback guarantee is made for external infrastructure. |
 
-These are layered in-memory simulation boundaries. Under ADR-19, correctable validation
-errors remain retryable while unexpected runtime/invariant failures are fatal.
-Under ADR-21, retrying a failed or interrupted month is not a same-trial RNG
-checkpoint/replay contract; completed month-end snapshots are the continuation
-boundary, and a new run from one receives a new trial stream.
+These are layered in-memory simulation boundaries. Under ADR-19, correctable
+pre-commit validation errors remain retryable, while unexpected runtime/invariant
+failures mark the run failed and cannot be retried in place. Under ADR-21, retrying
+a correctable error does not promise recovery or replay of consumed random draws;
+completed month-end snapshots are the continuation boundary, and a new run from one
+receives a new trial stream.
 
 ### Structural input errors
 

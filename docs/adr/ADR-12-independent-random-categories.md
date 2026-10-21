@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-19
 - **Related:** [domain model](../domain-model.md), [ADR-15](ADR-15-random-streams-and-branches.md)
-- **Test vectors:** M3 tests verify category stream separation; no correlation fixture in v1.
+- **Test vectors:** M3 tests verify category stream separation; the current model has no cross-category correlation fixture.
 
 ## Context
 Random models span distinct property and operating domains, but no correlation model is specified.

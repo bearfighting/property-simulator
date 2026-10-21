@@ -2,16 +2,16 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-19
-- **Related:** [domain model](../domain-model.md), [roadmap](../implementation-roadmap.md), [ADR-15](ADR-15-random-streams-and-branches.md), [ADR-16](ADR-16-configuration-and-run-control.md), [ADR-20](ADR-20-composable-slices-and-random-sampling.md)
+- **Related:** [domain model](../domain-model.md), [roadmap](../implementation-roadmap.md), [ADR-15](ADR-15-random-streams-and-branches.md), [ADR-16](ADR-16-configuration-and-run-control.md), [ADR-20](ADR-20-composable-slices-and-random-sampling.md), [ADR-26](ADR-26-scenario-scoped-runtime-and-concurrency.md)
 - **Test vectors:** M3 tests cover keyed substream isolation, per-period random input independence, proposal composition, run stopping, and saved snapshot/settings boundaries.
 
 ## Context
 
-The earlier M3 outline required recovery of an unfinished run with the same random stream, and described storing random continuation state. Discussion before M3 clarified that the product saves completed simulation snapshots and the latest user settings; it does not need to resume an unfinished simulation as the same trial. Random outcomes need not be unique, and replaying the same configuration is not required to reproduce or differ from a prior trajectory. The outline also treated loan proceeds as a special funds-allocation case, despite loans being ordinary Slice-driven opening facts and monthly effects.
+The earlier M3 outline required recovery of an unfinished run with the same random stream, and described storing random continuation state. Discussion before M3 clarified that each scenario's runtime data retains its completed simulation snapshots and latest user settings; it does not need to resume an unfinished simulation as the same trial. SQLite persistence is a later application-layer concern. Random outcomes need not be unique, and replaying the same configuration is not required to reproduce or differ from a prior trajectory. The outline also treated loan proceeds as a special funds-allocation case, despite loans being ordinary Slice-driven opening facts and monthly effects.
 
 ## Decision
 
-- Persist completed monthly snapshots/results and the latest user settings needed to continue or branch. Do not persist random seeds, generator state, or draws for an unfinished month as recovery state. Do not persist additional system-generated runtime values solely to enable replay; retain only what is part of the completed result contract.
+- Retain each scenario's completed monthly snapshots/results and that scenario's latest user settings in its runtime archive. If a later persistence layer stores these records, it does not store random seeds, generator state, or unfinished-month draws as recovery state. Do not persist additional system-generated runtime values solely to enable replay; retain only what is part of the completed result contract. Management of multiple scenario archives and their execution schedule belongs to the application layer (ADR-26).
 - Do not promise recovery of an unfinished run as the same trial, exact replay from identical settings, or different results from identical settings. A run started from a saved completed month is a new run/trial. Preserve the saved completed history.
 - At application startup, read a 32-byte root key from the operating system and keep it in memory. Failure to obtain system entropy prevents simulation startup; wall-clock time is not a fallback. Derive a fresh 32-byte run key for each simulation with BLAKE3 keyed hashing over the run's `trial_id` and a process-local run sequence. Do not persist the root key, run keys, or generator state.
 - Use `ChaCha12Rng` as the PRNG. Derive a 32-byte key for each semantic substream with BLAKE3 keyed hashing. The keyed message uses an unambiguous canonical encoding of the tuple: trial ID, random category, Slice ID, activity/entity ID, `YearMonth`, and sample purpose/key. Each distinct sample must have a distinct purpose/key; a sampler may consume multiple values from its own substream. Substreams therefore do not depend on Slice execution order or draws consumed by unrelated Slices.
@@ -32,7 +32,7 @@ The earlier M3 outline required recovery of an unfinished run with the same rand
 
 ## Consequences
 
-M3 does not implement unfinished-run checkpoint recovery or RNG-state persistence. A crash can lose work in the unfinished month; continuation starts from the latest completed snapshot as a new run. Completed generated outcomes remain part of saved history. Storage distinguishes completed simulation data from latest user settings. Random key material remains ephemeral. A change to the PRNG or stream derivation is an application change; it does not create a separately versioned random-stream contract or stored-state migration.
+M3 does not implement unfinished-run checkpoint recovery or RNG-state persistence. A crash can lose work in the unfinished month; continuation starts from the latest completed snapshot as a new run. Completed generated outcomes remain part of the in-memory scenario history. A future storage layer distinguishes completed simulation data from latest user settings. Random key material remains ephemeral. A change to the PRNG or stream derivation is an application change; it does not create a separately versioned random-stream contract or stored-state migration.
 
 ## M3.4 implementation contract (2026-10-20)
 

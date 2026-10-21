@@ -9,7 +9,7 @@
 Random outputs must be auditable while allowing new branches to explore different outcomes.
 
 ## Decision
-Record trial identity, active rules/models, and completed results. Re-simulation from a saved completed snapshot creates a new trial and may resample; exact repeated output is not a product requirement, and identical settings are not promised either to reproduce or to differ from a prior run. Fixed seeds may be supplied in tests/diagnostics; a system-generated run seed is not a user setting or required recovery state. See [ADR-21](ADR-21-m3-run-randomness-and-persistence.md).
+Record trial identity, the active rule/model configuration, and completed results. This records which inputs and behavior produced the run; it does not assign independent versions to rules or models. Re-simulation from a saved completed snapshot creates a new trial and may resample; exact repeated output is not a product requirement, and identical settings are not promised either to reproduce or to differ from a prior run. Fixed seeds may be supplied in tests/diagnostics; a system-generated run seed is not a user setting or required recovery state. See [ADR-21](ADR-21-m3-run-randomness-and-persistence.md).
 
 ## Alternatives considered
 - Requiring identical reruns: would constrain ordinary branch semantics and conflate recovery with resimulation.

@@ -43,3 +43,4 @@ Copy [`TEMPLATE.md`](TEMPLATE.md) for new records.
 | [23](ADR-23-loan-ledger-account-granularity.md) | Loan Ledger account granularity | Accepted |
 | [24](ADR-24-m4-operating-activity-contracts.md) | M4 operating activity contracts | Accepted |
 | [25](ADR-25-m5-in-memory-core-contract.md) | M5 in-memory core data contract | Accepted |
+| [26](ADR-26-scenario-scoped-runtime-and-concurrency.md) | Scenario-scoped runtime state and application-owned concurrency | Accepted |

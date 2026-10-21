@@ -9,7 +9,7 @@
 The project needs a staged path that protects domain correctness from early UI and persistence coupling.
 
 ## Decision
-Deliver the core in M0–M5, then application/persistence including CLI and storage, then the GPUI desktop application. Follow roadmap ordering; v1 does not pause for interactive domain decisions.
+Deliver the core in M0–M5, then application/persistence including CLI and storage, then the GPUI desktop application. Follow roadmap ordering; interactive domain decisions and pauses are outside the current product scope.
 
 ## Alternatives considered
 - Starting with desktop workflows: creates presentation dependencies before core behavior is stable.

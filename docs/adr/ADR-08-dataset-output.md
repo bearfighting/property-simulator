@@ -9,7 +9,7 @@
 Core results need to remain analyzable and usable by multiple future interfaces.
 
 ## Decision
-The core product is a complete in-memory dataset of configuration, provenance, completed results, snapshots, and branch relationships. M5 stabilizes this runtime data contract only. JSON is a possible full exchange representation; CSV/XLSX may provide flattened exports in Phase II. These internal project formats do not define a general external schema or cross-upgrade compatibility contract. Do not generate investment recommendations or prebuilt investment reports.
+The core product is a complete in-memory dataset of configuration, provenance, completed results, snapshots, and branch relationships. M5 defines this runtime data contract only; it does not promise cross-upgrade API compatibility. JSON is a possible full exchange representation; CSV/XLSX may provide flattened exports in Phase II. These internal project formats do not define a general external schema or cross-upgrade compatibility contract. Do not generate investment recommendations or prebuilt investment reports.
 
 ## Alternatives considered
 - UI-specific result objects or report-first output: couples the core to presentation and interpretation.
