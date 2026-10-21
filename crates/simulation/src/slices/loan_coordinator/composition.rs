@@ -20,8 +20,9 @@ pub fn coordinate_month_with_loans(
     trial_id: property_simulation_domain::TrialId,
     branch_id: property_simulation_domain::BranchId,
     ids: &dyn OutputIdFactory,
-    loans: Vec<LoanMonthInput>,
+    mut loans: Vec<LoanMonthInput>,
 ) -> Result<(MonthlyResult, property_simulation_accounting::Ledger), SimulationError> {
+    loans.sort_by_key(|loan| loan.slice.instance_id);
     let mut seen = std::collections::BTreeSet::new();
     let mut liability_accounts = std::collections::BTreeSet::new();
     let mut loan_outputs = Vec::with_capacity(loans.len());

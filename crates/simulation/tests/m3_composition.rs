@@ -6,15 +6,16 @@ use property_simulation_domain::{
     AccountId, ActivityInstanceId, BranchId, Currency, EffectId, EventId, LedgerTransactionId,
     ModelVersionId, Money, RunId, SliceId, SnapshotId, TrialId, YearMonth,
 };
-use property_simulation_models::{FixedRateLoan, RepairDistribution, RepairSampler};
+use property_simulation_models::{FixedRateLoan, RepairDistribution, RepairSample, RepairSampler};
 use property_simulation_randomness::{RootKey, RunKeyFactory};
 use property_simulation_simulation::{
     ActivityConfiguration, ActivityInstance, ActivitySample, ActivitySampleKind,
     ActivitySampleValue, AssetCondition, BranchRecord, CashFlowContributionTotals, FrozenInput,
     LoanContinuation, LoanMonthInput, LoanRunUpdate, LoanSlice, MonthlyResult, OpeningState,
-    OutputIdFactory, RentalSlice, RepairSlice, RunCommand, RunConfig, RunIdentity, RunUpdate,
-    RunUpdateValue, SimulationArchive, SimulationError, SimulationRun, SimulationSlice,
-    SingleMonthExecutor, StopCondition, StopReason, ValidatedInput, coordinate_month_with_loans,
+    OutputIdFactory, PropertyTaxCadence, PropertyTaxConfig, PropertyTaxSlice, RentalSlice,
+    RepairSlice, RunCommand, RunConfig, RunIdentity, RunUpdate, RunUpdateValue, SimulationArchive,
+    SimulationError, SimulationRun, SimulationSlice, SingleMonthExecutor, StopCondition,
+    StopReason, UtilityConfig, UtilitySlice, ValidatedInput, coordinate_month_with_loans,
     propose_slice, sample_repair_from_streams, saved_month,
 };
 
@@ -448,6 +449,214 @@ fn fixture() -> (
         ids: Ids,
     };
     (run, executor, ledger, continuations)
+}
+
+#[test]
+fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
+    let (_run, executor, ledger, continuations) = fixture();
+    let period = YearMonth::new(u32::MAX, 12).unwrap();
+    let state = OpeningState {
+        cash: money("0"),
+        condition: AssetCondition::NeedsRepair,
+    };
+    let frozen = FrozenInput {
+        period,
+        rent: money("80"),
+        rent_account: account_id(2),
+        cash_account: account_id(1),
+        repair_expense_account: account_id(3),
+        repair_cost_limit: money("10"),
+    };
+    let mut validated = property_simulation_simulation::validate_input(
+        &frozen,
+        &property_simulation_models::RepairCostDistribution {
+            maximum: frozen.repair_cost_limit,
+        },
+        &ledger,
+        &state,
+    )
+    .unwrap();
+
+    let tax = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([6; 16]),
+        slice_id: SliceId::from_bytes([16; 16]),
+        version: ModelVersionId::from_bytes([26; 16]),
+        configuration: ActivityConfiguration::PropertyTax(PropertyTaxConfig {
+            amount: money("25"),
+            cadence: PropertyTaxCadence::Monthly,
+            first_due: period,
+            cash_account: account_id(1),
+            expense_account: account_id(3),
+        }),
+    };
+    let utility_a = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([7; 16]),
+        slice_id: SliceId::from_bytes([17; 16]),
+        version: ModelVersionId::from_bytes([27; 16]),
+        configuration: ActivityConfiguration::Utility(UtilityConfig {
+            usage_unit: "kWh".into(),
+            maximum_usage: 20,
+            rate_per_unit: money("2"),
+            cash_account: account_id(1),
+            expense_account: account_id(8),
+        }),
+    };
+    let utility_b = ActivityInstance {
+        id: ActivityInstanceId::from_bytes([8; 16]),
+        slice_id: SliceId::from_bytes([18; 16]),
+        version: ModelVersionId::from_bytes([28; 16]),
+        configuration: ActivityConfiguration::Utility(UtilityConfig {
+            usage_unit: "m³".into(),
+            maximum_usage: 20,
+            rate_per_unit: money("3"),
+            cash_account: account_id(1),
+            expense_account: account_id(8),
+        }),
+    };
+    let repair_b = activity(5, ActivitySampleKind::Repair);
+    let tax_slice = PropertyTaxSlice {
+        instance: tax.clone(),
+    };
+    let utility_a_slice = UtilitySlice {
+        instance: utility_a.clone(),
+    };
+    let utility_b_slice = UtilitySlice {
+        instance: utility_b.clone(),
+    };
+    let repair_b_slice = RepairSlice {
+        instance: repair_b.clone(),
+    };
+    let active_instances = vec![
+        executor.rental.instance.clone(),
+        executor.repair.instance.clone(),
+        repair_b.clone(),
+        tax.clone(),
+        utility_a.clone(),
+        utility_b.clone(),
+        activity(3, ActivitySampleKind::Loan),
+        activity(4, ActivitySampleKind::Loan),
+    ];
+    let loan_support = continuations.iter().flat_map(|continuation| {
+        let month_result = continuation.loan.unwrap().calculate_month().unwrap();
+        [
+            (CashFlowCategory::Operating, month_result.interest),
+            (CashFlowCategory::Financing, month_result.principal),
+        ]
+    });
+    validated
+        .validate_activities_before_sampling(&active_instances, loan_support)
+        .unwrap();
+
+    let rental_sample = ActivitySample::new(executor.rental.instance(), period, ());
+    let repair_sample = ActivitySample::new(
+        executor.repair.instance(),
+        period,
+        RepairSample::Repair { cost: money("5") },
+    );
+    let repair_b_sample =
+        ActivitySample::new(&repair_b, period, RepairSample::Repair { cost: money("5") });
+    let tax_sample = ActivitySample::new(&tax, period, ());
+    let utility_a_sample = ActivitySample::new(&utility_a, period, 2_u64);
+    let utility_b_sample = ActivitySample::new(&utility_b, period, 3_u64);
+    let outputs = vec![
+        propose_slice(&executor.rental, &validated, &rental_sample).unwrap(),
+        propose_slice(&executor.repair, &validated, &repair_sample).unwrap(),
+        propose_slice(&repair_b_slice, &validated, &repair_b_sample).unwrap(),
+        propose_slice(&tax_slice, &validated, &tax_sample).unwrap(),
+        propose_slice(&utility_a_slice, &validated, &utility_a_sample).unwrap(),
+        propose_slice(&utility_b_slice, &validated, &utility_b_sample).unwrap(),
+    ];
+    let samples = vec![
+        ActivitySample::new(
+            executor.rental.instance(),
+            period,
+            ActivitySampleValue::Rental,
+        ),
+        ActivitySample::new(
+            executor.repair.instance(),
+            period,
+            ActivitySampleValue::Repair(repair_sample.value),
+        ),
+        ActivitySample::new(
+            &repair_b,
+            period,
+            ActivitySampleValue::Repair(repair_b_sample.value),
+        ),
+        ActivitySample::new(&tax, period, ActivitySampleValue::PropertyTax),
+        ActivitySample::new(&utility_a, period, ActivitySampleValue::Utility(2)),
+        ActivitySample::new(&utility_b, period, ActivitySampleValue::Utility(3)),
+    ];
+    let loan_inputs: Vec<_> = executor
+        .loans
+        .iter()
+        .map(|slice| LoanMonthInput {
+            slice: slice.clone(),
+            loan: continuations
+                .iter()
+                .find(|item| item.instance_id == slice.instance_id)
+                .unwrap()
+                .loan,
+            update: None,
+        })
+        .collect();
+    let trial_id = TrialId::from_bytes([91; 16]);
+    let branch_id = BranchId::from_bytes([92; 16]);
+    let forward = coordinate_month_with_loans(
+        &validated,
+        &ledger,
+        outputs.clone(),
+        samples.clone(),
+        trial_id,
+        branch_id,
+        &executor.ids,
+        loan_inputs.clone(),
+    )
+    .unwrap();
+    let reversed = coordinate_month_with_loans(
+        &validated,
+        &ledger,
+        outputs.into_iter().rev().collect(),
+        samples.into_iter().rev().collect(),
+        trial_id,
+        branch_id,
+        &executor.ids,
+        loan_inputs.into_iter().rev().collect(),
+    )
+    .unwrap();
+    assert_eq!(forward.0.activities(), reversed.0.activities());
+    assert_eq!(forward.0.samples(), reversed.0.samples());
+    assert_eq!(forward.0.proposal(), reversed.0.proposal());
+    assert_eq!(
+        forward.0.cash_flow_contributions(),
+        reversed.0.cash_flow_contributions()
+    );
+    assert_eq!(
+        forward.0.loan_continuations(),
+        reversed.0.loan_continuations()
+    );
+    assert_eq!(forward.0.loan_events(), reversed.0.loan_events());
+    assert_eq!(forward.0.loan_effects(), reversed.0.loan_effects());
+    assert_eq!(forward.0.closing_state(), reversed.0.closing_state());
+    assert_eq!(forward.1, reversed.1);
+
+    let (result, committed) = forward;
+    assert_eq!(result.activities().len(), 8);
+    assert_eq!(result.proposal().transactions().len(), 8);
+    assert_eq!(result.proposal().effects().len(), 2);
+    assert_eq!(result.closing_state().condition, AssetCondition::Available);
+    assert_eq!(result.loan_continuations().len(), 2);
+    assert_source_and_ids(&result);
+    assert_cash_flow_matches_snapshot(&result, &committed, account_id(1));
+    for continuation in result.loan_continuations() {
+        let liability = match continuation.instance_id.as_bytes()[0] {
+            3 => account_id(6),
+            4 => account_id(7),
+            _ => unreachable!(),
+        };
+        let (side, balance) = committed.balance(liability).unwrap();
+        assert_eq!(side, BalanceSide::Credit);
+        assert_eq!(balance, continuation.loan.unwrap().opening_balance);
+    }
 }
 
 #[test]
