@@ -1,38 +1,39 @@
 # Repository guidance
 
-## Source of truth
+## Sources of truth
 
-- Read `property-simulation-sandbox-spec.md` as the document index, then consult the relevant topic document under `docs/` before changing architecture or domain behavior.
-- `docs/implementation-roadmap.md` is the current milestone source of truth; `docs/domain-model.md` owns simulation and accounting semantics; `docs/architecture.md` owns dependency boundaries; `docs/engineering-practices.md` owns code-quality gates. Where retained legacy section text conflicts with the current roadmap, follow the roadmap and the topic-specific current baseline.
-- Record consequential domain and architecture decisions as short ADRs under `docs/adr/` when that directory is created. Include the decision, alternatives considered, consequences, and test vectors where applicable.
+- Read `property-simulation-sandbox-spec.md`, then consult the relevant topic document before changing domain behavior or architecture.
+- `docs/implementation-roadmap.md` defines the current application/data-access work; `docs/domain-model.md` defines simulation and accounting semantics; `docs/architecture.md` defines dependency boundaries; `docs/engineering-practices.md` defines code-quality gates.
+- Record consequential new domain or architecture decisions in short ADRs under `docs/adr/`, including alternatives, consequences and verification examples where useful.
 
-## Domain design
+## Domain rules
 
-- Keep the simulation core independent of CLI, GPUI, SQLite, and file export. Interfaces call the core; domain rules do not live in UI or command handlers.
-- Treat time as inclusive `YearMonth` intervals and support calculations from any valid, sufficiently complete opening state. Do not impose a fixed simulation duration.
-- Preserve all known user-provided and previously generated variables required for continuation. Distinguish initial facts from events generated during the simulated interval; never invent past transactions to explain an opening state.
-- The simulation is a synchronous calculation and does not pause for domain decisions or model household solvency, bankruptcy, loan delinquency/default, or foreclosure in the initial scope. Negative property cash flow and economically unusual but computable outcomes are generated results, not failure conditions. Reject only structurally invalid or uncomputable input, not outcomes judged unrealistic. CLI/GUI will constrain input formats; the core validates domain invariants required for calculation. Runs, monthly control and scenario management are not current core responsibilities.
-- Do not add branches, snapshots/history ownership, multi-scenario management, or concurrency policy to the current calculation modules. The later persistence/application design will decide how to store user inputs, monthly snapshots/results and Ledger data. The current core is single-threaded and has no resident run/session object.
-- Keep events (what happened), decisions (chosen response), effects (state changes), and ledger transactions (economic postings) distinct and traceable.
-- Slice implementations return outputs from explicit input values and injected interfaces. M5 completes the independent Core modules; M6 defines the stateless single-month composition and Ledger settlement from caller-provided values. Slices must not mutate shared state or ledger directly.
-- Use decimal fixed-point money, explicit currency and rounding policies. The initial single-currency rule rounds posted positive amounts to the currency minor unit using half-up; do not use binary floating point for posted amounts.
-- Use double-entry accounting. Every posted journal transaction must balance. Derive account balances and financial statement/cash-flow views from opening balances and posted entries; do not maintain competing hand-written totals.
-- The initial accounting profile represents a household/personal property owner. Keep accounts focused on property assets, financing, rental income, and operating expenses; do not add corporate or tax-accounting behavior without an explicit design decision.
-- The initial mortgage convention is annual interest settled monthly. Before implementing calculations, consult the relevant ADR for the exact rate conversion, accrual/payment order, precision, and rounding rule; do not silently assume these details.
-- Distinguish probability distributions (what values are modeled) from random-stream allocation (how callers obtain random inputs). Sampling functions receive explicit random-source and sampler interfaces; the core does not allocate or retain a random stream. The application version is the only software version identifier; do not add independent model or random-stream version fields. Exact repeated output is not a product invariant. Fixed seeds remain useful for tests and diagnostics.
-- Organize random models by domain category (environment, physical property/component state, policy/macro conditions, occupancy/operations). Assume independent streams across categories in the initial model and record that assumption; do not add hidden cross-category correlation. Any later correlation model must be explicit and change with the application as a whole.
+- Keep Core independent of UI, CLI, SQLite, files and other IO. UI calls Application; only Application calls Data Access.
+- Treat time as inclusive `YearMonth` intervals. Support any valid, sufficiently complete opening state and do not impose a fixed simulation duration.
+- Preserve user-provided and generated state required for continuation. Distinguish initial facts from events generated during the simulated interval; do not invent past transactions.
+- The calculation is synchronous. Do not model household solvency, bankruptcy, delinquency/default or foreclosure in the initial scope. Negative property cash flow and other computable unusual outcomes are results, not failures.
+- Keep events, decisions, effects and Ledger transactions distinct and traceable.
+- Slice calculations use explicit inputs and injected interfaces; they do not mutate shared state or Ledger. Single-month calculation composes Core modules and settles a candidate Ledger without IO or cross-month state.
+- Use decimal fixed-point money, explicit currency and documented rounding. Posted positive amounts round half-up to the currency minor unit; do not use binary floating point for posted amounts.
+- Use double-entry accounting. Every posted transaction balances. Derive balances and cash-flow/financial statement views from opening balances and posted entries; do not maintain competing hand-written totals.
+- Keep the initial accounting profile focused on household property assets, financing, rental income and operating expenses.
+- Follow the mortgage rate conversion, accrual/payment order, precision and rounding in `docs/domain-model.md`.
+- Keep distributions, samplers and random-source allocation separate. Core consumes explicit random input and does not access system entropy or own random streams. Application obtains randomness from the system; repeatability and true randomness are not product guarantees. Random state may be persisted with context or snapshot for later months; exact placement is an open data-access design choice.
+- Treat random categories as independent initially. Do not add hidden cross-category correlation.
+
+## Application and persistence
+
+- Application is the only coordinator between Presentation, Data Access and single-month calculation. Do not add stage names or numbers to production crate, module, type, function or field names.
+- The simulation context retains initial user settings, latest settings and commands. Persist the effective inputs used by every completed month.
+- Users may configure multiple stop conditions; any satisfied condition stops the simulation. A stop command in a monthly update does not calculate another month.
+- Persist context edits in the context-update use case and save each completed month before advancing. A storage failure stops the simulation and is reported as a system error; do not add compensation or recovery behavior.
+- Persist the opening Ledger facts and committed transactions. Preserve Ledger-derived cash-flow details by activity instance/Slice and transaction; a cash-flow total alone is insufficient.
+- A fatal calculation or storage failure stops the simulation. Do not implement failed-run recovery, retry, replay, branches, multi-scenario management or parallel scheduling.
+- Do not promise schema versioning, migrations or cross-application-upgrade compatibility. The application version is the only software version identifier. Long-term retention after simulation completion is outside current work.
 
 ## Implementation and verification
 
-- Prefer small, typed domain interfaces and explicit validation over a general DSL, plugin framework, or speculative abstraction.
-- Make extensibility a primary design criterion: adding a domain input or Slice should normally extend its types, validation, and calculation implementation without rewriting unrelated calculations or presentation. Do not add a runner, application controller, or compatibility machinery before those layers are designed. Do not promise backwards compatibility across application upgrades; the application version identifies the build as a whole.
-- Keep responsibilities separated even before final crate/module names are chosen: domain rules, single-month integration, application orchestration, configuration parsing, data access/infrastructure, and CLI/GUI presentation have distinct boundaries. Domain must not depend on IO or presentation; presentation must not contain business rules; data access is called only by the application layer.
-- Treat separation of concerns and dependency direction as acceptance criteria for every milestone and code review. Explain the responsibility and dependency direction of new modules. Avoid both mixed-layer modules and unnecessary micro-modules or pattern boilerplate.
-- Use a single documented Rust format/lint/check workflow established with the project skeleton (at minimum rustfmt check, Clippy, compilation, and the relevant tests). Keep warnings visible; justify narrow lint exceptions. Do not claim checks that were not run.
-- Test domain rules without IO; retain old orchestration behavior only in test support until a higher application layer is designed; add integration tests at actual serialization/storage boundaries as those layers arrive. Keep tests deterministic with fixed inputs and seeds.
-- M5 covers independent in-memory Core modules only; M6 combines them into one single-month calculation. SQLite persistence and file export belong to the later application/data-access stage. Do not define schema versioning, migrations, or cross-upgrade compatibility promises; the application version is the only software version. CLI/GUI parse and constrain user input formats; core validation enforces domain invariants and cross-field constraints required for correct computation.
-- M6's monthly result contains state effects, journal transactions, events, Ledger-derived cash flow, and closing state. The application layer passes inputs to M6 and persists returned data through the data-access layer. Fatal failures return errors; no resident run recovery, retry, or checkpoint restoration is required.
-- Add unit tests for domain mathematics and invariants, plus continuity and composition tests for behavior across periods and slices. Simulation duration is test data, not a product constraint; use 24/240-month fixtures only when they add useful coverage.
-- When changing a domain rule, update its ADR/specification and relevant test vectors together. Persistence is deferred; record the application version at the application data or dataset boundary when that layer is introduced, without separate schema, model, or random-stream versioning.
-- Do not introduce CLI or GPUI dependencies into core crates.
-- Before finishing a change, report what changed and which checks were run. Do not claim checks that were not run.
+- Prefer small typed interfaces and explicit validation over a general DSL, plugin framework or speculative abstraction. Explain responsibility and dependency direction for new modules.
+- Use the repository's `./scripts/check.sh` workflow for formatting, Clippy, compilation and relevant tests. Keep warnings visible and justify narrow lint exceptions. Do not claim checks that were not run.
+- Test domain rules without IO. Test Application with fake/in-memory Data Access and test SQLite at its serialization/storage boundary. Use fixed inputs and seeds where deterministic tests need them.
+- Do not add CLI/GPUI dependencies to Core crates. Report what changed and which checks were run before finishing.

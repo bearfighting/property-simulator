@@ -28,7 +28,7 @@ pub struct MonthlyInput<'a> {
     pub opening_state: &'a OpeningState,
     pub frozen_input: &'a FrozenInput,
     /// Bounded repair cost support used to validate explicit repair samples.
-    /// M6 does not sample or consume the occurrence probability.
+    /// Single-month calculation does not sample or consume the occurrence probability.
     pub repair_distribution: &'a RepairCostDistribution,
     pub activities: &'a [ActivityInstance],
     pub samples: &'a [ActivitySample<ActivitySampleValue>],

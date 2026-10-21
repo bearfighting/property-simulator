@@ -3,7 +3,7 @@
 - **Status:** Proposed | Accepted | Superseded
 - **Date:** YYYY-MM-DD
 - **Related:** links to topic documents and ADRs
-- **Test vectors:** IDs in `docs/test-vectors.md`, or N/A with reason
+- **Verification:** relevant tests or vectors, when applicable
 
 ## Context
 

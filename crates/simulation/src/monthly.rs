@@ -67,7 +67,7 @@ impl<S: SimulationSlice> MonthlySliceAdapter for BoundSliceAdapter<'_, S> {
 /// Validate the opening context and evaluate each ordinary Slice independently.
 /// `ledger_read` must read from `monthly_input.opening_ledger`; this relationship
 /// is a caller contract because `LedgerRead` intentionally does not expose a
-/// concrete Ledger identity. Loan activities are kept for the loan-specific M6
+/// concrete Ledger identity. Loan activities are kept for the loan-specific monthly
 /// adapter boundary and are not dispatched through `SimulationSlice` here.
 pub fn evaluate_monthly_slices(
     monthly_input: &MonthlyInput<'_>,
