@@ -10,20 +10,56 @@ use property_simulation_models::{
 };
 
 use crate::proposals::identify_proposal_for;
+
+impl crate::LedgerRead for property_simulation_accounting::Ledger {
+    fn currency(&self) -> Currency {
+        property_simulation_accounting::Ledger::currency(self)
+    }
+
+    fn account(&self, id: AccountId) -> Option<crate::AccountFacts> {
+        let account = self.chart().get(id)?;
+        Some(crate::AccountFacts {
+            category: account.category(),
+            cash_position: account.is_cash_position(),
+            contra: account.is_contra(),
+        })
+    }
+
+    fn signed_balance(
+        &self,
+        id: AccountId,
+    ) -> Result<Money, property_simulation_accounting::AccountError> {
+        let (side, amount) = self.balance(id)?;
+        if side == property_simulation_accounting::BalanceSide::Debit {
+            Ok(amount)
+        } else {
+            amount.checked_neg().map_err(Into::into)
+        }
+    }
+}
+
+pub(crate) struct TestLoanCalculation;
+
+impl crate::LoanCalculation for TestLoanCalculation {
+    fn validate(
+        &self,
+        loan: property_simulation_models::FixedRateLoan,
+    ) -> Result<(), property_simulation_models::LoanModelError> {
+        loan.validate()
+    }
+
+    fn derive_payment(
+        &self,
+        loan: property_simulation_models::FixedRateLoan,
+    ) -> Result<Money, property_simulation_models::LoanModelError> {
+        loan.derive_payment()
+    }
+}
 struct TestIds;
-fn output_bytes(
-    kind: u8,
-    trial: TrialId,
-    branch: BranchId,
-    period: YearMonth,
-    instance: ActivityInstanceId,
-    key: &str,
-) -> [u8; 16] {
+fn output_bytes(kind: u8, period: YearMonth, instance: ActivityInstanceId, key: &str) -> [u8; 16] {
     let mut state = 0xcbf29ce484222325u64;
     for byte in [kind]
         .into_iter()
-        .chain(trial.as_bytes().iter().copied())
-        .chain(branch.as_bytes().iter().copied())
         .chain(period.year().to_le_bytes())
         .chain([period.month()])
         .chain(instance.as_bytes().iter().copied())
@@ -42,53 +78,40 @@ fn output_bytes(
     );
     result
 }
+
+fn semantic_random(
+    streams: &property_simulation_randomness::RandomStreams,
+    trial_id: TrialId,
+    instance: &ActivityInstance,
+    period: YearMonth,
+    category: property_simulation_randomness::RandomCategory,
+    purpose: &str,
+) -> property_simulation_randomness::RandomStream {
+    streams
+        .stream(&property_simulation_randomness::SemanticIdentity {
+            trial_id,
+            category,
+            slice_id: instance.slice_id,
+            activity_id: instance.id,
+            period,
+            purpose: purpose.into(),
+        })
+        .unwrap()
+}
 impl OutputIdFactory for TestIds {
-    fn event_id(
-        &self,
-        t: TrialId,
-        b: BranchId,
-        p: YearMonth,
-        i: ActivityInstanceId,
-        k: &str,
-    ) -> EventId {
-        EventId::from_bytes(output_bytes(1, t, b, p, i, k))
+    fn event_id(&self, p: YearMonth, i: ActivityInstanceId, k: &str) -> EventId {
+        EventId::from_bytes(output_bytes(1, p, i, k))
     }
-    fn effect_id(
-        &self,
-        t: TrialId,
-        b: BranchId,
-        p: YearMonth,
-        i: ActivityInstanceId,
-        k: &str,
-    ) -> EffectId {
-        EffectId::from_bytes(output_bytes(2, t, b, p, i, k))
+    fn effect_id(&self, p: YearMonth, i: ActivityInstanceId, k: &str) -> EffectId {
+        EffectId::from_bytes(output_bytes(2, p, i, k))
     }
-    fn transaction_id(
-        &self,
-        t: TrialId,
-        b: BranchId,
-        p: YearMonth,
-        i: ActivityInstanceId,
-        k: &str,
-    ) -> LedgerTransactionId {
-        LedgerTransactionId::from_bytes(output_bytes(3, t, b, p, i, k))
+    fn transaction_id(&self, p: YearMonth, i: ActivityInstanceId, k: &str) -> LedgerTransactionId {
+        LedgerTransactionId::from_bytes(output_bytes(3, p, i, k))
     }
 }
-fn identity() -> OutputIdentity<'static> {
+fn identity() -> &'static TestIds {
     static IDS: TestIds = TestIds;
-    OutputIdentity {
-        trial: TrialId::from_bytes([6; 16]),
-        branch: BranchId::from_bytes([7; 16]),
-        factory: &IDS,
-    }
-}
-fn identity_for(trial: u8, branch: u8) -> OutputIdentity<'static> {
-    static IDS: TestIds = TestIds;
-    OutputIdentity {
-        trial: TrialId::from_bytes([trial; 16]),
-        branch: BranchId::from_bytes([branch; 16]),
-        factory: &IDS,
-    }
+    &IDS
 }
 fn money(s: &str) -> Money {
     Money::parse(s, Currency::from_code("CAD").unwrap()).unwrap()
@@ -103,6 +126,17 @@ impl RandomSource for FixedWords {
         } else {
             Ok(self.0.remove(0))
         }
+    }
+}
+
+struct PermissiveRepairSampler;
+impl property_simulation_models::Sampler<RepairDistribution> for PermissiveRepairSampler {
+    fn sample<R: RandomSource>(
+        &mut self,
+        _distribution: &RepairDistribution,
+        _random: &mut R,
+    ) -> Result<RepairSample, SamplingError<R::Error>> {
+        Ok(RepairSample::NoRepair)
     }
 }
 
@@ -164,6 +198,31 @@ fn repair_sampling_composition_binds_activity_and_period_provenance() {
 }
 
 #[test]
+fn repair_sampling_rejects_invalid_distribution_before_custom_sampler() {
+    let instance = activity(4);
+    let distribution = RepairDistribution {
+        occurrence_numerator: 1,
+        occurrence_denominator: 0,
+        cost: RepairCostDistribution {
+            maximum: money("1.00"),
+        },
+    };
+    let mut sampler = PermissiveRepairSampler;
+    let mut random = FixedWords(vec![]);
+
+    assert_eq!(
+        sample_repair(
+            &instance,
+            YearMonth::new(2025, 1).unwrap(),
+            &distribution,
+            &mut sampler,
+            &mut random,
+        ),
+        Err(SamplingError::InvalidDistribution)
+    );
+}
+
+#[test]
 fn repair_sampling_fixed_seed_smoke_check_matches_distribution_support() {
     use property_simulation_randomness::{RootKey, RunKeyFactory};
     let instance = activity(45);
@@ -182,16 +241,21 @@ fn repair_sampling_fixed_seed_smoke_check_matches_distribution_support() {
         let mut root = [0; 32];
         root[..2].copy_from_slice(&seed.to_le_bytes());
         let trial = TrialId::from_bytes([seed as u8; 16]);
-        let streams = RunKeyFactory::new(RootKey::from_seed(root))
-            .run_streams(trial)
-            .unwrap();
-        let sample = sample_repair_from_streams(
+        let streams = RunKeyFactory::new(RootKey::from_seed(root)).run_streams(trial);
+        let mut random = semantic_random(
             &streams,
             trial,
             &instance,
             period,
+            property_simulation_randomness::RandomCategory::Property,
+            REPAIR_SAMPLE_PURPOSE,
+        );
+        let sample = sample_repair(
+            &instance,
+            period,
             &distribution,
             &mut RepairSampler,
+            &mut random,
         )
         .unwrap();
         if let RepairSample::Repair { cost } = sample.value {
@@ -211,15 +275,13 @@ fn repair_sampling_fixed_seed_smoke_check_matches_distribution_support() {
 
 #[test]
 fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
-    use crate::{RepairSlice, coordinate_month, propose_slice, sample_repair_from_streams};
+    use crate::{RepairSlice, coordinate_month, propose_slice, sample_repair};
     use property_simulation_randomness::{RootKey, RunKeyFactory};
 
     let instance = activity(44);
     let period = input().period;
     let trial = TrialId::from_bytes([61; 16]);
-    let streams = RunKeyFactory::new(RootKey::from_seed([8; 32]))
-        .run_streams(trial)
-        .unwrap();
+    let streams = RunKeyFactory::new(RootKey::from_seed([8; 32])).run_streams(trial);
     let distribution = RepairDistribution {
         occurrence_numerator: 1,
         occurrence_denominator: 1,
@@ -227,28 +289,41 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
             maximum: money("50"),
         },
     };
-    let sampled = sample_repair_from_streams(
+    let mut random = semantic_random(
         &streams,
         trial,
         &instance,
         period,
+        property_simulation_randomness::RandomCategory::Property,
+        REPAIR_SAMPLE_PURPOSE,
+    );
+    let sampled = sample_repair(
+        &instance,
+        period,
         &distribution,
         &mut RepairSampler,
+        &mut random,
     )
     .unwrap();
     assert_eq!(sampled.purpose.as_deref(), Some("repair.sample"));
-    assert_eq!(
-        sampled,
-        sample_repair_from_streams(
+    assert_eq!(sampled, {
+        let mut random = semantic_random(
             &streams,
             trial,
             &instance,
             period,
+            property_simulation_randomness::RandomCategory::Property,
+            REPAIR_SAMPLE_PURPOSE,
+        );
+        sample_repair(
+            &instance,
+            period,
             &distribution,
-            &mut RepairSampler
+            &mut RepairSampler,
+            &mut random,
         )
         .unwrap()
-    );
+    });
 
     let state = OpeningState {
         cash: money("100"),
@@ -293,36 +368,24 @@ fn semantic_repair_sample_flows_through_slice_coordinator_and_ledger() {
 }
 
 #[test]
-fn semantic_repair_sampling_preserves_trial_identity_errors() {
-    use crate::{RepairSamplingError, sample_repair_from_streams};
+fn semantic_stream_rejects_a_different_trial_identity() {
     use property_simulation_randomness::{RandomnessError, RootKey, RunKeyFactory};
 
     let configured_trial = TrialId::from_bytes([70; 16]);
     let requested_trial = TrialId::from_bytes([71; 16]);
-    let streams = RunKeyFactory::new(RootKey::from_seed([8; 32]))
-        .run_streams(configured_trial)
-        .unwrap();
-    let distribution = RepairDistribution {
-        occurrence_numerator: 0,
-        occurrence_denominator: 1,
-        cost: RepairCostDistribution {
-            maximum: money("1.00"),
-        },
-    };
-
-    assert_eq!(
-        sample_repair_from_streams(
-            &streams,
-            requested_trial,
-            &activity(46),
-            input().period,
-            &distribution,
-            &mut RepairSampler,
-        ),
-        Err(RepairSamplingError::Randomness(
-            RandomnessError::TrialIdentityMismatch
-        )),
-    );
+    let streams = RunKeyFactory::new(RootKey::from_seed([8; 32])).run_streams(configured_trial);
+    let instance = activity(46);
+    assert!(matches!(
+        streams.stream(&property_simulation_randomness::SemanticIdentity {
+            trial_id: requested_trial,
+            category: property_simulation_randomness::RandomCategory::Property,
+            slice_id: instance.slice_id,
+            activity_id: instance.id,
+            period: input().period,
+            purpose: REPAIR_SAMPLE_PURPOSE.into(),
+        }),
+        Err(RandomnessError::TrialIdentityMismatch)
+    ));
 }
 
 fn activity(id: u8) -> ActivityInstance {
@@ -464,7 +527,7 @@ fn property_tax_posts_on_anchored_due_month_and_retains_marker() {
     let mut frozen = input();
     frozen.period = YearMonth::new(2025, 4).unwrap();
     let ledger = ledger_for_cash(state.cash);
-    let validated = validate_input(
+    let mut validated = validate_input(
         &frozen,
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
@@ -473,6 +536,9 @@ fn property_tax_posts_on_anchored_due_month_and_retains_marker() {
         &state,
     )
     .unwrap();
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
     let slice = PropertyTaxSlice {
         instance: instance.clone(),
     };
@@ -534,7 +600,7 @@ fn property_tax_annual_schedule_carries_anchor_across_calendar_years() {
     ] {
         let mut frozen = input();
         frozen.period = period;
-        let validated = validate_input(
+        let mut validated = validate_input(
             &frozen,
             &RepairCostDistribution {
                 maximum: frozen.repair_cost_limit,
@@ -543,6 +609,9 @@ fn property_tax_annual_schedule_carries_anchor_across_calendar_years() {
             &state,
         )
         .unwrap();
+        validated
+            .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+            .unwrap();
         let output = propose_slice(
             &PropertyTaxSlice {
                 instance: instance.clone(),
@@ -613,7 +682,7 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
     let mut frozen = input();
     frozen.period = YearMonth::new(2026, 1).unwrap();
     let ledger = ledger_for_cash(state.cash);
-    let validated = validate_input(
+    let mut validated = validate_input(
         &frozen,
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
@@ -622,6 +691,9 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &state,
     )
     .unwrap();
+    validated
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
     let output = propose_slice(
         &PropertyTaxSlice {
             instance: instance.clone(),
@@ -644,7 +716,7 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
     assert!(non_due.proposal().events().is_empty() && non_due.proposal().transactions().is_empty());
     assert_eq!(still_open, ledger);
     frozen.period = YearMonth::new(2025, 12).unwrap();
-    let december_input = validate_input(
+    let mut december_input = validate_input(
         &frozen,
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
@@ -653,6 +725,9 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &state,
     )
     .unwrap();
+    december_input
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
+        .unwrap();
     let output = propose_slice(
         &PropertyTaxSlice {
             instance: instance.clone(),
@@ -684,7 +759,7 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
     if let ActivityConfiguration::PropertyTax(config) = &mut exact_zero.configuration {
         config.amount = money("0");
     }
-    let exact_zero_input = validate_input(
+    let mut exact_zero_input = validate_input(
         &frozen,
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
@@ -693,6 +768,9 @@ fn property_tax_non_due_zero_and_empty_months_are_identity() {
         &state,
     )
     .unwrap();
+    exact_zero_input
+        .validate_activities_before_sampling(std::slice::from_ref(&exact_zero), &ledger, [])
+        .unwrap();
     let zero_output = propose_slice(
         &PropertyTaxSlice {
             instance: exact_zero.clone(),
@@ -724,7 +802,7 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
     };
     let frozen = input();
     let ledger = ledger_for_cash(state.cash);
-    let validated = validate_input(
+    let mut validated = validate_input(
         &frozen,
         &RepairCostDistribution {
             maximum: frozen.repair_cost_limit,
@@ -743,6 +821,13 @@ fn property_tax_composes_with_rent_on_shared_cash_in_any_order() {
         cash_account: frozen.cash_account,
         expense_account: frozen.repair_expense_account,
     });
+    validated
+        .validate_activities_before_sampling(
+            &[rent.clone(), repair.clone(), tax.clone()],
+            &ledger,
+            [],
+        )
+        .unwrap();
     let rent_output = propose_slice(
         &RentalSlice {
             instance: rent.clone(),
@@ -988,7 +1073,7 @@ fn utility_slice_posts_exact_usage_charge_and_retains_sample_provenance() {
     .unwrap();
     let instance = utility_activity(61, 100, "0.125");
     validated
-        .validate_activities_before_sampling(std::slice::from_ref(&instance), [])
+        .validate_activities_before_sampling(std::slice::from_ref(&instance), &ledger, [])
         .unwrap();
     let slice = UtilitySlice { instance };
     let sample = ActivitySample::new(&slice.instance, frozen.period, 3_u64)
@@ -1008,9 +1093,9 @@ fn utility_slice_posts_exact_usage_charge_and_retains_sample_provenance() {
         &validated,
         &ledger,
         vec![output],
-        identity().trial,
-        identity().branch,
-        identity().factory,
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        identity(),
     )
     .unwrap();
     assert_eq!(result.samples()[0].value, ActivitySampleValue::Utility(3));
@@ -1044,7 +1129,7 @@ fn utility_zero_and_rounded_zero_have_no_economic_outputs() {
         utility_activity(63, 100, "0.001"),
     ];
     validated
-        .validate_activities_before_sampling(&instances, [])
+        .validate_activities_before_sampling(&instances, &ledger, [])
         .unwrap();
     for (instance, usage) in instances.into_iter().zip([0, 3]) {
         let slice = UtilitySlice { instance };
@@ -1084,7 +1169,7 @@ fn utility_sample_and_configuration_boundaries_are_validated() {
         .is_err()
     );
     validated
-        .validate_activities_before_sampling(std::slice::from_ref(&slice.instance), [])
+        .validate_activities_before_sampling(std::slice::from_ref(&slice.instance), &ledger, [])
         .unwrap();
     assert!(
         propose_slice(
@@ -1155,32 +1240,45 @@ fn utility_sampling_uses_required_semantic_identity_and_checks_trial() {
     let streams = property_simulation_randomness::RunKeyFactory::new(
         property_simulation_randomness::RootKey::from_seed([11; 32]),
     )
-    .run_streams(TrialId::from_bytes([6; 16]))
-    .unwrap();
+    .run_streams(TrialId::from_bytes([6; 16]));
+    let mut random = semantic_random(
+        &streams,
+        TrialId::from_bytes([6; 16]),
+        &instance,
+        frozen.period,
+        property_simulation_randomness::RandomCategory::OccupancyOperations,
+        UTILITY_SAMPLE_PURPOSE,
+    );
     assert!(matches!(
-        sample_utility_from_streams(
+        sample_utility(
             &validated,
-            &streams,
-            TrialId::from_bytes([6; 16]),
             &instance,
             frozen.period,
             &UtilityUsageDistribution { maximum: 100 },
             &mut UtilityUsageSampler,
+            &mut random,
         ),
         Err(UtilitySamplingError::ActivitySetNotPreflighted)
     ));
     validated
-        .validate_activities_before_sampling(&all_activities, [])
+        .validate_activities_before_sampling(&all_activities, &ledger, [])
         .unwrap();
     let distribution = UtilityUsageDistribution { maximum: 100 };
-    let sample = sample_utility_from_streams(
-        &validated,
+    let mut random = semantic_random(
         &streams,
         TrialId::from_bytes([6; 16]),
+        &instance,
+        frozen.period,
+        property_simulation_randomness::RandomCategory::OccupancyOperations,
+        UTILITY_SAMPLE_PURPOSE,
+    );
+    let sample = sample_utility(
+        &validated,
         &instance,
         input().period,
         &distribution,
         &mut UtilityUsageSampler,
+        &mut random,
     )
     .unwrap();
     assert!(sample.value <= 100);
@@ -1192,18 +1290,25 @@ fn utility_sampling_uses_required_semantic_identity_and_checks_trial() {
     let mut validated_february =
         validate_input(&february, &distribution_for_repairs, &ledger, &state).unwrap();
     validated_february
-        .validate_activities_before_sampling(&all_activities, [])
+        .validate_activities_before_sampling(&all_activities, &ledger, [])
         .unwrap();
     let unrestricted = UtilityUsageDistribution { maximum: u64::MAX };
     let draw = |validated: &ValidatedInput, instance: &ActivityInstance, period| {
-        sample_utility_from_streams(
-            validated,
+        let mut random = semantic_random(
             &streams,
             TrialId::from_bytes([6; 16]),
             instance,
             period,
+            property_simulation_randomness::RandomCategory::OccupancyOperations,
+            UTILITY_SAMPLE_PURPOSE,
+        );
+        sample_utility(
+            validated,
+            instance,
+            period,
             &unrestricted,
             &mut UtilityUsageSampler,
+            &mut random,
         )
         .unwrap()
         .value
@@ -1224,19 +1329,17 @@ fn utility_sampling_uses_required_semantic_identity_and_checks_trial() {
             YearMonth::new(2025, 2).unwrap()
         )
     );
+    let foreign_identity = property_simulation_randomness::SemanticIdentity {
+        trial_id: TrialId::from_bytes([7; 16]),
+        category: property_simulation_randomness::RandomCategory::OccupancyOperations,
+        slice_id: instance.slice_id,
+        activity_id: instance.id,
+        period: frozen.period,
+        purpose: UTILITY_SAMPLE_PURPOSE.into(),
+    };
     assert!(matches!(
-        sample_utility_from_streams(
-            &validated,
-            &streams,
-            TrialId::from_bytes([7; 16]),
-            &instance,
-            frozen.period,
-            &distribution,
-            &mut UtilityUsageSampler,
-        ),
-        Err(UtilitySamplingError::Randomness(
-            property_simulation_randomness::RandomnessError::TrialIdentityMismatch
-        ))
+        streams.stream(&foreign_identity),
+        Err(property_simulation_randomness::RandomnessError::TrialIdentityMismatch)
     ));
 }
 
@@ -1273,6 +1376,7 @@ fn utility_and_rental_composition_is_permutation_invariant() {
                 utility_b.instance.clone(),
                 rental.instance.clone(),
             ],
+            &ledger,
             [],
         )
         .unwrap();
@@ -1289,18 +1393,18 @@ fn utility_and_rental_composition_is_permutation_invariant() {
         &validated,
         &ledger,
         vec![out_ua.clone(), out_ub.clone(), out_rent.clone()],
-        identity().trial,
-        identity().branch,
-        identity().factory,
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        identity(),
     )
     .unwrap();
     let right = coordinate_month(
         &validated,
         &ledger,
         vec![out_rent, out_ub, out_ua],
-        identity().trial,
-        identity().branch,
-        identity().factory,
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        identity(),
     )
     .unwrap();
     assert_eq!(left, right);
@@ -1344,18 +1448,6 @@ fn coordinator_enforces_output_provenance_and_posts_month_atomically() {
     )
     .unwrap();
 
-    assert!(
-        coordinate_month(
-            &validated,
-            &ledger,
-            vec![repair_output.clone(), rental_output.clone()],
-            TrialId::from_bytes([6; 16]),
-            BranchId::from_bytes([7; 16]),
-            &TestIds,
-        )
-        .is_err()
-    );
-    assert_eq!(ledger.transactions().count(), 0);
     let mut changed_frozen = frozen;
     changed_frozen.rent = money("90");
     let changed_input = validate_input(
@@ -1378,6 +1470,7 @@ fn coordinator_enforces_output_provenance_and_posts_month_atomically() {
         )
         .is_err()
     );
+    assert_eq!(ledger.transactions().count(), 0);
     assert_eq!(ledger.transactions().count(), 0);
     let forward_outputs = vec![repair_output.clone(), rental_output.clone()];
     let (result, closing_ledger) = coordinate_month(
@@ -1476,23 +1569,22 @@ fn independent_repair_instances_superpose_in_any_order() {
     )
     .unwrap();
 
-    let identity = identity();
     let (forward_result, forward_ledger) = coordinate_month(
         &validated,
         &ledger,
         vec![first_output.clone(), second_output.clone()],
-        identity.trial,
-        identity.branch,
-        identity.factory,
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        identity(),
     )
     .unwrap();
     let (reverse_result, reverse_ledger) = coordinate_month(
         &validated,
         &ledger,
         vec![second_output, first_output],
-        identity.trial,
-        identity.branch,
-        identity.factory,
+        TrialId::from_bytes([6; 16]),
+        BranchId::from_bytes([7; 16]),
+        identity(),
     )
     .unwrap();
 
@@ -1501,62 +1593,6 @@ fn independent_repair_instances_superpose_in_any_order() {
     assert_eq!(forward_result.closing_state().cash, money("70"));
     assert_eq!(forward_result.proposal().effects().len(), 2);
     assert_eq!(forward_result.proposal().transactions().len(), 2);
-}
-
-#[test]
-fn coordinator_rejects_a_ledger_other_than_the_validated_opening_ledger() {
-    use crate::coordinate_month;
-    use property_simulation_accounting::{
-        BalanceSide, CashFlowCategory, LedgerEntry, LedgerTransaction,
-    };
-
-    let state = OpeningState {
-        cash: money("100"),
-        condition: AssetCondition::Available,
-    };
-    let ledger = ledger_for_cash(state.cash);
-    let frozen = input();
-    let validated = validate_input(
-        &frozen,
-        &RepairCostDistribution {
-            maximum: frozen.repair_cost_limit,
-        },
-        &ledger,
-        &state,
-    )
-    .unwrap();
-    let mut other_ledger = ledger.clone();
-    other_ledger
-        .post(LedgerTransaction::new(
-            LedgerTransactionId::from_bytes([20; 16]),
-            frozen.period,
-            [
-                LedgerEntry::new(
-                    frozen.repair_expense_account,
-                    BalanceSide::Debit,
-                    money("1"),
-                ),
-                LedgerEntry::new(frozen.cash_account, BalanceSide::Credit, money("1"))
-                    .with_cash_flow_category(CashFlowCategory::Operating),
-            ],
-        ))
-        .unwrap();
-
-    assert!(matches!(
-        coordinate_month(
-            &validated,
-            &other_ledger,
-            vec![],
-            TrialId::from_bytes([6; 16]),
-            BranchId::from_bytes([7; 16]),
-            &TestIds
-        ),
-        Err(SimulationError::InvalidInput(
-            "opening ledger differs from the ledger used to validate monthly input"
-        ))
-    ));
-    assert_eq!(other_ledger.transactions().count(), 1);
-    assert_eq!(ledger.transactions().count(), 0);
 }
 
 #[test]
@@ -2060,7 +2096,7 @@ fn proposal_transaction_validation_uses_ledger_rules_without_mutating_ledger() {
     let opening = OpeningBalances::new(&chart, [], Some(money("0"))).unwrap();
     let ledger = Ledger::new(chart, opening).unwrap();
     let mut proposal = IdentifiedProposal {
-        identity: None,
+        period: None,
         events: Vec::new(),
         effects: Vec::new(),
         transactions: vec![ProposedTransaction {
@@ -2323,58 +2359,19 @@ fn zero_rent_does_not_create_a_collection_event_or_posting() {
 
 #[test]
 fn output_ids_are_repeatable_and_use_all_identity_dimensions() {
-    let factory = identity().factory;
-    let trial = TrialId::from_bytes([6; 16]);
-    let branch = BranchId::from_bytes([7; 16]);
+    let factory = identity();
     let period = YearMonth::new(2025, 1).unwrap();
     let instance = activity(4).id;
-    let id = factory.transaction_id(trial, branch, period, instance, "rent");
-    assert_eq!(
-        id,
-        factory.transaction_id(trial, branch, period, instance, "rent")
-    );
+    let id = factory.transaction_id(period, instance, "rent");
+    assert_eq!(id, factory.transaction_id(period, instance, "rent"));
+    assert_ne!(id, factory.transaction_id(period, instance, "repair"));
     assert_ne!(
         id,
-        factory.transaction_id(trial, branch, period, instance, "repair")
+        factory.transaction_id(period.checked_add_months(1).unwrap(), instance, "rent")
     );
+    assert_ne!(id, factory.transaction_id(period, activity(5).id, "rent"));
     assert_ne!(
-        id,
-        factory.transaction_id(
-            TrialId::from_bytes([8; 16]),
-            branch,
-            period,
-            instance,
-            "rent"
-        )
-    );
-    assert_ne!(
-        id,
-        factory.transaction_id(
-            trial,
-            BranchId::from_bytes([8; 16]),
-            period,
-            instance,
-            "rent"
-        )
-    );
-    assert_ne!(
-        id,
-        factory.transaction_id(
-            trial,
-            branch,
-            period.checked_add_months(1).unwrap(),
-            instance,
-            "rent"
-        )
-    );
-    assert_ne!(
-        id,
-        factory.transaction_id(trial, branch, period, activity(5).id, "rent")
-    );
-    assert_ne!(
-        factory
-            .event_id(trial, branch, period, instance, "rent")
-            .as_bytes(),
+        factory.event_id(period, instance, "rent").as_bytes(),
         id.as_bytes()
     );
 
@@ -2414,7 +2411,7 @@ fn output_ids_are_repeatable_and_use_all_identity_dimensions() {
                 &sample(slice.instance(), ())
             )
             .unwrap(),
-            identity_for(8, 7),
+            identity(),
         )
         .unwrap()
     );
@@ -2803,13 +2800,8 @@ fn monthly_result_keeps_branch_identity_and_rejects_mixed_periods() {
         )
         .is_err()
     );
-    let wrong_branch_proposal = identify_proposal_for(
-        SliceProposal::default(),
-        identity_for(6, 9),
-        &activity(1),
-        period,
-    )
-    .unwrap();
+    let wrong_branch_proposal =
+        identify_proposal_for(SliceProposal::default(), identity(), &activity(1), period).unwrap();
     assert!(
         MonthlyResult::new(
             TrialId::from_bytes([6; 16]),
@@ -2961,30 +2953,6 @@ fn merge_rejects_duplicate_event_and_effect_ids() {
 }
 
 #[test]
-fn merge_rejects_different_trial_or_branch_identities() {
-    let proposal_a = identify_proposal_for(
-        SliceProposal::default(),
-        identity(),
-        &activity(1),
-        input().period,
-    )
-    .unwrap();
-    let proposal_b = identify_proposal_for(
-        SliceProposal::default(),
-        identity_for(6, 8),
-        &activity(2),
-        input().period,
-    )
-    .unwrap();
-    assert_eq!(
-        merge_proposals([proposal_a, proposal_b]),
-        Err(SimulationError::InvalidProposal(
-            "cannot merge outputs from different trials, branches, or periods"
-        ))
-    );
-}
-
-#[test]
 fn merge_rejects_different_periods() {
     let first_period = input().period;
     let second_period = first_period.checked_add_months(1).unwrap();
@@ -3005,7 +2973,7 @@ fn merge_rejects_different_periods() {
     assert_eq!(
         merge_proposals([first, second]),
         Err(SimulationError::InvalidProposal(
-            "cannot merge outputs from different trials, branches, or periods"
+            "cannot merge outputs from different periods"
         ))
     );
 }
@@ -3069,12 +3037,16 @@ fn slice_resource_contract_is_used_to_validate_actual_account_writes() {
     assert!(
         declaration
             .writes
-            .contains(&account_resource_key(period_input.cash_account))
+            .contains(&property_simulation_domain::ResourceKey::for_account(
+                period_input.cash_account
+            ))
     );
     assert!(
         declaration
             .writes
-            .contains(&account_resource_key(period_input.rent_account))
+            .contains(&property_simulation_domain::ResourceKey::for_account(
+                period_input.rent_account
+            ))
     );
 
     let proposal = identify_proposal_for(
@@ -3107,6 +3079,8 @@ fn slice_resource_contract_is_used_to_validate_actual_account_writes() {
     let mut incomplete = declaration;
     incomplete
         .writes
-        .remove(&account_resource_key(period_input.cash_account));
+        .remove(&property_simulation_domain::ResourceKey::for_account(
+            period_input.cash_account,
+        ));
     assert!(validate_composition(&[incomplete], &[proposal]).is_err());
 }

@@ -4,7 +4,7 @@ use property_simulation_domain::{BranchId, TrialId};
 use crate::activity::{ActivitySample, ActivitySampleValue, SliceOutput};
 use crate::composition::validate_composition;
 use crate::error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
-use crate::proposals::{OutputIdentity, identify_proposal, merge_proposals};
+use crate::proposals::{identify_proposal, merge_proposals};
 use crate::types::{AssetCondition, MonthlyResult, OutputIdFactory, ProposedEffect};
 use crate::validation::{
     ValidatedInput, validate_cashflow_support, validate_proposal_transactions,
@@ -63,11 +63,6 @@ fn coordinate_month_inner(
     ids: &dyn OutputIdFactory,
     additional_transactions: &[property_simulation_accounting::LedgerTransaction],
 ) -> Result<(MonthlyResult, Ledger), SimulationError> {
-    if !input.matches_opening_ledger(opening_ledger) {
-        return Err(SimulationError::InvalidInput(
-            "opening ledger differs from the ledger used to validate monthly input",
-        ));
-    }
     if outputs.iter().any(|output| {
         output.instance.configuration.sample_kind() == crate::types::ActivitySampleKind::Loan
     }) {
@@ -76,11 +71,6 @@ fn coordinate_month_inner(
         ));
     }
     let period = input.frozen_input().period;
-    let identity = OutputIdentity {
-        trial: trial_id,
-        branch: branch_id,
-        factory: ids,
-    };
     // Identify first, then validate declarations and provenance.
     let mut declarations = Vec::with_capacity(outputs.len());
     let mut activities = Vec::with_capacity(outputs.len());
@@ -98,7 +88,7 @@ fn coordinate_month_inner(
         activities.push(output.instance.clone());
         declarations.push(output.resources.clone());
         samples.push(output.sample.clone());
-        identified.push(identify_proposal(output, identity)?);
+        identified.push(identify_proposal(output, ids)?);
     }
     validate_cashflow_support(input.frozen_input(), &activities)?;
     validate_sample_set(&activities, &samples, period)?;
@@ -121,7 +111,7 @@ fn coordinate_month_inner(
     }
     let mut ledger = opening_ledger.clone();
     ledger.post_batch(transactions).map_err(|source| {
-        SimulationError::Fatal(FatalSimulationFailure::new(
+        SimulationError::Fatal(FatalSimulationFailure::with_run_identity(
             FatalSimulationPhase::LedgerCommit,
             period,
             Some(trial_id),
@@ -132,7 +122,7 @@ fn coordinate_month_inner(
     })?;
     let closing_cash =
         signed_balance(&ledger, input.frozen_input().cash_account).map_err(|source| {
-            SimulationError::Fatal(FatalSimulationFailure::new(
+            SimulationError::Fatal(FatalSimulationFailure::with_run_identity(
                 FatalSimulationPhase::ClosingStateDerivation,
                 period,
                 Some(trial_id),
@@ -157,7 +147,7 @@ fn coordinate_month_inner(
         proposal,
     )
     .map_err(|source| {
-        SimulationError::Fatal(FatalSimulationFailure::new(
+        SimulationError::Fatal(FatalSimulationFailure::with_run_identity(
             FatalSimulationPhase::MonthlyResultConstruction,
             period,
             Some(trial_id),

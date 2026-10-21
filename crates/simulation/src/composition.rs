@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use property_simulation_domain::{AccountId, ActivityInstanceId, ResourceKey, SliceId};
+use property_simulation_domain::{ActivityInstanceId, ResourceKey, SliceId};
 
 use crate::{error::SimulationError, types::IdentifiedProposal};
 
@@ -13,16 +13,6 @@ pub struct SliceResources {
     pub slice_id: SliceId,
     pub reads: BTreeSet<ResourceKey>,
     pub writes: BTreeSet<ResourceKey>,
-}
-
-/// Canonical resource key for an account changed by a proposed journal entry.
-pub fn account_resource_key(account: AccountId) -> ResourceKey {
-    let mut key = String::from("account:");
-    for byte in account.as_bytes() {
-        use std::fmt::Write as _;
-        write!(&mut key, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    ResourceKey::new(key).expect("account resource key is non-empty")
 }
 
 /// Check unique instances and declared output writes. Every instance observes
@@ -78,7 +68,7 @@ pub fn validate_composition(
             if transaction.entries.iter().any(|entry| {
                 !declaration
                     .writes
-                    .contains(&account_resource_key(entry.account_id()))
+                    .contains(&ResourceKey::for_account(entry.account_id()))
             }) {
                 return Err(SimulationError::InvalidProposal(
                     "transaction writes undeclared account resource",

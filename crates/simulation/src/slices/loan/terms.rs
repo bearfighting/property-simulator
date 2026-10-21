@@ -4,6 +4,16 @@ use property_simulation_accounting::LedgerTransaction;
 use property_simulation_domain::YearMonth;
 use property_simulation_models::{FixedRateLoan, LoanModelError};
 
+/// Loan mathematics supplied by the caller that connects this input transformation
+/// to the loan model implementation.
+pub trait LoanCalculation {
+    fn validate(&self, loan: FixedRateLoan) -> Result<(), LoanModelError>;
+    fn derive_payment(
+        &self,
+        loan: FixedRateLoan,
+    ) -> Result<property_simulation_domain::Money, LoanModelError>;
+}
+
 pub(in crate::slices) fn map_model_error(error: LoanModelError) -> SimulationError {
     match error {
         LoanModelError::Arithmetic => {
@@ -30,8 +40,8 @@ pub(in crate::slices) fn map_model_error(error: LoanModelError) -> SimulationErr
     }
 }
 
-/// Validates a month-start terms update. `coordinate_month` commits any principal delta
-/// as a balanced financing transaction in the same atomic batch as the monthly payment.
+/// Validates a month-start terms update and checks any principal delta against the
+/// caller-supplied balanced financing transaction.
 pub fn apply_loan_terms_update(
     current: FixedRateLoan,
     effective_period: YearMonth,
@@ -39,9 +49,12 @@ pub fn apply_loan_terms_update(
     remaining_months: u32,
     annual_rate: rust_decimal::Decimal,
     principal_transaction: Option<LedgerTransaction>,
+    calculation: &impl LoanCalculation,
 ) -> Result<LoanTermsUpdate, SimulationError> {
-    current.validate().map_err(map_model_error)?;
-    current.derive_payment().map_err(map_model_error)?;
+    calculation.validate(current).map_err(map_model_error)?;
+    calculation
+        .derive_payment(current)
+        .map_err(map_model_error)?;
     if opening_balance.currency() != current.opening_balance.currency()
         || opening_balance.is_negative()
     {
@@ -64,8 +77,10 @@ pub fn apply_loan_terms_update(
             annual_rate,
             scheduled_payment: None,
         };
-        active.validate().map_err(map_model_error)?;
-        active.derive_payment().map_err(map_model_error)?;
+        calculation.validate(active).map_err(map_model_error)?;
+        calculation
+            .derive_payment(active)
+            .map_err(map_model_error)?;
         Some(active)
     };
     let principal_change = opening_balance.checked_sub(current.opening_balance)?;

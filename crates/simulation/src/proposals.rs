@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use property_simulation_domain::{BranchId, TrialId, YearMonth};
+use property_simulation_domain::YearMonth;
 
 use crate::activity::SliceOutput;
 use crate::error::SimulationError;
@@ -9,26 +9,18 @@ use crate::types::{
     ProposedTransaction, SliceProposal,
 };
 
-/// Caller supplied identity context used to create stable output IDs.
-#[derive(Clone, Copy)]
-pub struct OutputIdentity<'a> {
-    pub trial: TrialId,
-    pub branch: BranchId,
-    pub factory: &'a dyn OutputIdFactory,
-}
-
-/// Assign IDs centrally. The instance is supplied by the coordinator, not by
-/// proposal data, and every draft must belong to the frozen input period.
+/// Assign IDs using the caller's factory. The instance comes from the validated
+/// Slice output, and every draft must belong to its frozen period.
 pub fn identify_proposal(
     output: SliceOutput,
-    identity: OutputIdentity<'_>,
+    ids: &dyn OutputIdFactory,
 ) -> Result<IdentifiedProposal, SimulationError> {
-    identify_proposal_for(output.proposal, identity, &output.instance, output.period)
+    identify_proposal_for(output.proposal, ids, &output.instance, output.period)
 }
 
 pub(crate) fn identify_proposal_for(
     proposal: SliceProposal,
-    identity: OutputIdentity<'_>,
+    ids: &dyn OutputIdFactory,
     instance: &ActivityInstance,
     period: YearMonth,
 ) -> Result<IdentifiedProposal, SimulationError> {
@@ -47,13 +39,7 @@ pub(crate) fn identify_proposal_for(
         .events
         .into_iter()
         .map(|event| ProposedEvent {
-            id: identity.factory.event_id(
-                identity.trial,
-                identity.branch,
-                period,
-                instance.id,
-                &event.key,
-            ),
+            id: ids.event_id(period, instance.id, &event.key),
             instance_id: instance.id,
             slice_id: instance.slice_id,
             period,
@@ -75,13 +61,7 @@ pub(crate) fn identify_proposal_for(
                 None => None,
             };
             Ok(ProposedEffect {
-                id: identity.factory.effect_id(
-                    identity.trial,
-                    identity.branch,
-                    period,
-                    instance.id,
-                    &effect.key,
-                ),
+                id: ids.effect_id(period, instance.id, &effect.key),
                 instance_id: instance.id,
                 slice_id: instance.slice_id,
                 period,
@@ -103,13 +83,7 @@ pub(crate) fn identify_proposal_for(
                 None => None,
             };
             Ok(ProposedTransaction {
-                id: identity.factory.transaction_id(
-                    identity.trial,
-                    identity.branch,
-                    period,
-                    instance.id,
-                    &transaction.key,
-                ),
+                id: ids.transaction_id(period, instance.id, &transaction.key),
                 instance_id: instance.id,
                 slice_id: instance.slice_id,
                 period,
@@ -120,7 +94,7 @@ pub(crate) fn identify_proposal_for(
         })
         .collect::<Result<Vec<_>, SimulationError>>()?;
     Ok(IdentifiedProposal {
-        identity: Some((identity.trial, identity.branch, period)),
+        period: Some(period),
         events,
         effects,
         transactions,
@@ -139,15 +113,15 @@ pub fn merge_proposals(
     let mut effect_ids = BTreeSet::new();
     let mut transaction_ids = BTreeSet::new();
     let mut effect_keys = BTreeMap::new();
-    let mut identity = None;
+    let mut period = None;
     for mut p in proposals {
-        if let Some(proposal_identity) = p.identity {
-            if identity.is_some_and(|existing| existing != proposal_identity) {
+        if let Some(proposal_period) = p.period {
+            if period.is_some_and(|existing| existing != proposal_period) {
                 return Err(SimulationError::InvalidProposal(
-                    "cannot merge outputs from different trials, branches, or periods",
+                    "cannot merge outputs from different periods",
                 ));
             }
-            identity = Some(proposal_identity);
+            period = Some(proposal_period);
         }
         for t in &p.transactions {
             if !transaction_ids.insert(t.id) {
@@ -181,6 +155,6 @@ pub fn merge_proposals(
     merged.events.sort_by_key(|e| e.id);
     merged.effects.sort_by_key(|e| e.id);
     merged.transactions.sort_by_key(|t| t.id);
-    merged.identity = identity;
+    merged.period = period;
     Ok(merged)
 }

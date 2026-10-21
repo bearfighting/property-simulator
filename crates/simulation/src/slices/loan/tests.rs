@@ -14,32 +14,35 @@ use property_simulation_domain::{
 use property_simulation_domain::{Currency, EffectId, EventId, LedgerTransactionId, Money};
 use property_simulation_models::FixedRateLoan;
 
+fn prepare_loan_terms_update(
+    current: FixedRateLoan,
+    effective_period: YearMonth,
+    opening_balance: Money,
+    remaining_months: u32,
+    annual_rate: rust_decimal::Decimal,
+    principal_transaction: Option<LedgerTransaction>,
+) -> Result<LoanTermsUpdate, crate::SimulationError> {
+    apply_loan_terms_update(
+        current,
+        effective_period,
+        opening_balance,
+        remaining_months,
+        annual_rate,
+        principal_transaction,
+        &crate::tests::TestLoanCalculation,
+    )
+}
+
 struct Ids;
 impl OutputIdFactory for Ids {
-    fn event_id(
-        &self,
-        _: TrialId,
-        _: BranchId,
-        _: YearMonth,
-        _: ActivityInstanceId,
-        key: &str,
-    ) -> EventId {
+    fn event_id(&self, _: YearMonth, _: ActivityInstanceId, key: &str) -> EventId {
         EventId::from_bytes([if key == "loan_payment" { 1 } else { 2 }; 16])
     }
-    fn effect_id(
-        &self,
-        _: TrialId,
-        _: BranchId,
-        _: YearMonth,
-        _: ActivityInstanceId,
-        _: &str,
-    ) -> EffectId {
+    fn effect_id(&self, _: YearMonth, _: ActivityInstanceId, _: &str) -> EffectId {
         EffectId::from_bytes([3; 16])
     }
     fn transaction_id(
         &self,
-        _: TrialId,
-        _: BranchId,
         _: YearMonth,
         _: ActivityInstanceId,
         key: &str,
@@ -130,7 +133,7 @@ fn property_tax_composes_with_a_loan_in_the_same_month() {
     let distribution = property_simulation_models::RepairCostDistribution {
         maximum: frozen.repair_cost_limit,
     };
-    let input = crate::validate_input(&frozen, &distribution, &ledger, &state).unwrap();
+    let mut input = crate::validate_input(&frozen, &distribution, &ledger, &state).unwrap();
     let tax = ActivityInstance {
         id: ActivityInstanceId::from_bytes([40; 16]),
         slice_id: SliceId::from_bytes([41; 16]),
@@ -145,6 +148,9 @@ fn property_tax_composes_with_a_loan_in_the_same_month() {
     let slice = PropertyTaxSlice {
         instance: tax.clone(),
     };
+    input
+        .validate_activities_before_sampling(std::slice::from_ref(&tax), &ledger, [])
+        .unwrap();
     let output = propose_slice(&slice, &input, &ActivitySample::new(&tax, period, ())).unwrap();
 
     let (result, committed) = coordinate_month_with_loans(
@@ -364,7 +370,7 @@ fn principal_terms_update_is_committed_with_payment_and_cash_delta() {
     let (slice, ledger) = fixture("10000");
     let current = loan("10000", 12);
     let period = YearMonth::new(2026, 1).unwrap();
-    let update = apply_loan_terms_update(
+    let update = prepare_loan_terms_update(
         current,
         period,
         Money::parse("11000", Currency::from_code("CAD").unwrap()).unwrap(),
@@ -440,7 +446,7 @@ fn rate_only_change_is_recorded_and_zero_balance_update_settles_without_payment(
     let (slice, ledger) = fixture("10000");
     let current = loan("10000", 12);
     let period = YearMonth::new(2026, 1).unwrap();
-    let rate_update = apply_loan_terms_update(
+    let rate_update = prepare_loan_terms_update(
         current,
         period,
         current.opening_balance,
@@ -473,7 +479,7 @@ fn rate_only_change_is_recorded_and_zero_balance_update_settles_without_payment(
     let current = loan("100", 12);
     let settled = Money::parse("0", Currency::from_code("CAD").unwrap()).unwrap();
     let payoff_period = YearMonth::new(2026, 1).unwrap();
-    let update = apply_loan_terms_update(
+    let update = prepare_loan_terms_update(
         current,
         payoff_period,
         settled,
@@ -510,7 +516,7 @@ fn mismatched_caller_principal_transaction_is_rejected_before_any_commit() {
     let (slice, ledger) = fixture("10000");
     let period = YearMonth::new(2026, 1).unwrap();
     let current = loan("10000", 12);
-    let update = apply_loan_terms_update(
+    let update = prepare_loan_terms_update(
         current,
         period,
         Money::parse("11000", Currency::from_code("CAD").unwrap()).unwrap(),
@@ -617,7 +623,7 @@ fn rejects_bad_account_roles_and_wrong_effective_month_before_commit() {
         )
         .is_err()
     );
-    let update = apply_loan_terms_update(
+    let update = prepare_loan_terms_update(
         loan("10000", 12),
         YearMonth::new(2026, 2).unwrap(),
         Money::parse("11000", Currency::from_code("CAD").unwrap()).unwrap(),

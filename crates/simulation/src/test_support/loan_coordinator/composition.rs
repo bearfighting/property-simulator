@@ -59,7 +59,7 @@ pub fn coordinate_month_with_loans(
     )?;
     for mut output in loan_outputs {
         let (side, balance) = ledger.balance(output.liability_account).map_err(|source| {
-            SimulationError::Fatal(FatalSimulationFailure::new(
+            SimulationError::Fatal(FatalSimulationFailure::with_run_identity(
                 FatalSimulationPhase::ClosingStateDerivation,
                 output.period,
                 Some(trial_id),
@@ -73,21 +73,23 @@ pub fn coordinate_month_with_loans(
             |loan| Ok(loan.opening_balance),
         )?;
         if side != BalanceSide::Credit || balance != expected {
-            return Err(SimulationError::Fatal(FatalSimulationFailure::new(
-                FatalSimulationPhase::ClosingStateDerivation,
-                output.period,
-                Some(trial_id),
-                Some(branch_id),
-                Some(output.instance_id),
-                SimulationError::InvalidProposal(
-                    "loan closing balance does not reconcile to its liability after the monthly batch",
+            return Err(SimulationError::Fatal(
+                FatalSimulationFailure::with_run_identity(
+                    FatalSimulationPhase::ClosingStateDerivation,
+                    output.period,
+                    Some(trial_id),
+                    Some(branch_id),
+                    Some(output.instance_id),
+                    SimulationError::InvalidProposal(
+                        "loan closing balance does not reconcile to its liability after the monthly batch",
+                    ),
                 ),
-            )));
+            ));
         }
         output.ledger = ledger.clone();
         let instance_id = output.instance_id;
         result = result.attach_loan_month(output).map_err(|source| {
-            SimulationError::Fatal(FatalSimulationFailure::new(
+            SimulationError::Fatal(FatalSimulationFailure::with_run_identity(
                 FatalSimulationPhase::MonthlyResultConstruction,
                 input.frozen_input().period,
                 Some(trial_id),

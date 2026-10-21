@@ -1,4 +1,4 @@
-/// A caller-owned source of random words. Stream allocation and seeding belong to M3.
+/// A caller-owned source of random words. Stream allocation and seeding are supplied separately.
 pub trait RandomSource {
     type Error;
     fn next_u64(&mut self) -> Result<u64, Self::Error>;

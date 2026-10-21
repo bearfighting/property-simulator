@@ -3,13 +3,13 @@ use std::collections::BTreeSet;
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
-use crate::composition::{SliceResources, account_resource_key};
+use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
     ActivityConfiguration, ActivityInstance, ActivitySampleKind, EventProposal, FrozenInput,
     OpeningState, PropertyTaxConfig, SliceProposal, TransactionProposal,
 };
-use crate::validation::{ValidatedInput, tax_due};
+use crate::validation::ValidatedInput;
 
 pub struct PropertyTaxSlice {
     pub instance: ActivityInstance,
@@ -26,7 +26,7 @@ impl SimulationSlice for PropertyTaxSlice {
             ActivityConfiguration::PropertyTax(config) => {
                 [config.cash_account, config.expense_account]
                     .into_iter()
-                    .map(account_resource_key)
+                    .map(property_simulation_domain::ResourceKey::for_account)
                     .collect()
             }
             _ => BTreeSet::new(),
@@ -44,11 +44,9 @@ impl SimulationSlice for PropertyTaxSlice {
     fn validate_sample(&self, input: &ValidatedInput, _sample: &()) -> Result<(), SimulationError> {
         config(&self.instance)?;
         if !input.has_preflighted_activity(&self.instance) {
-            crate::validation::validate_activity_configuration(
-                &self.instance,
-                input.frozen_input(),
-                input.opening_ledger(),
-            )?;
+            return Err(SimulationError::InvalidInput(
+                "property-tax activity set must be preflighted before transition",
+            ));
         }
         Ok(())
     }
@@ -59,7 +57,7 @@ impl SimulationSlice for PropertyTaxSlice {
         _sample: &ValidatedActivitySample<'_, ()>,
     ) -> Result<SliceProposal, SimulationError> {
         let config = config(&self.instance)?;
-        if !tax_due(input.period, config.first_due, config.cadence) {
+        if !config.is_due(input.period) {
             return Ok(SliceProposal::default());
         }
         let amount = config.amount.rounded_for_posting()?;

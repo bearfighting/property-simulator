@@ -1,10 +1,12 @@
-use property_simulation_accounting::{AccountCategory, AccountError, Ledger, LedgerTransaction};
+use property_simulation_accounting::{AccountCategory, AccountError};
+#[cfg(test)]
+use property_simulation_accounting::{Ledger, LedgerTransaction};
 use property_simulation_models::RepairCostDistribution;
 
 use crate::SimulationError;
-use crate::types::{
-    ActivityInstance, ActivitySampleKind, FrozenInput, IdentifiedProposal, OpeningState,
-};
+#[cfg(test)]
+use crate::types::IdentifiedProposal;
+use crate::types::{ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState};
 
 /// A correctable issue found while freezing a period's input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,8 +19,30 @@ pub struct ValidationIssue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationErrors(pub Vec<ValidationIssue>);
 
+/// Account properties needed by simulation input checks. The application boundary
+/// supplies these facts from its accounting implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountFacts {
+    pub category: AccountCategory,
+    pub cash_position: bool,
+    pub contra: bool,
+}
+
+/// Narrow accounting read interface used by simulation validation.
+/// Implementations belong to the caller that connects accounting data to a calculation.
+pub trait LedgerRead {
+    fn currency(&self) -> property_simulation_domain::Currency;
+    fn account(&self, id: property_simulation_domain::AccountId) -> Option<AccountFacts>;
+    /// Return the signed balance, where debit balances are positive.
+    fn signed_balance(
+        &self,
+        id: property_simulation_domain::AccountId,
+    ) -> Result<property_simulation_domain::Money, AccountError>;
+}
+
 /// A transaction error found while preflighting an identified proposal.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct ProposalValidationIssue {
     pub transaction_key: Option<String>,
     pub error: AccountError,
@@ -26,6 +50,7 @@ pub struct ProposalValidationIssue {
 
 /// All transaction issues found while preflighting a proposal.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct ProposalValidationErrors(pub Vec<ProposalValidationIssue>);
 
 /// Inputs that have passed all checks required before sampling and transition.
@@ -34,7 +59,6 @@ pub struct ValidatedInput {
     opening_state: OpeningState,
     frozen_input: FrozenInput,
     repair_distribution: RepairCostDistribution,
-    opening_ledger: Ledger,
     preflighted_activities: Option<Vec<ActivityInstance>>,
 }
 
@@ -48,12 +72,6 @@ impl ValidatedInput {
     pub const fn repair_distribution(&self) -> &RepairCostDistribution {
         &self.repair_distribution
     }
-    pub(crate) fn matches_opening_ledger(&self, ledger: &Ledger) -> bool {
-        self.opening_ledger == *ledger
-    }
-    pub(crate) fn opening_ledger(&self) -> &Ledger {
-        &self.opening_ledger
-    }
 
     /// Validate the complete active activity set and its monthly cash-flow
     /// support before any sampler is called. Random activity samplers require
@@ -61,6 +79,7 @@ impl ValidatedInput {
     pub fn validate_activities_before_sampling(
         &mut self,
         activities: &[ActivityInstance],
+        ledger: &impl LedgerRead,
         additional_support: impl IntoIterator<
             Item = (
                 property_simulation_accounting::CashFlowCategory,
@@ -80,7 +99,7 @@ impl ValidatedInput {
                     "duplicate activity instance in pre-sampling input",
                 ));
             }
-            validate_activity_configuration(activity, &self.frozen_input, &self.opening_ledger)?;
+            validate_activity_configuration(activity, &self.frozen_input, ledger)?;
         }
         validate_cashflow_support_with_additional(
             &self.frozen_input,
@@ -101,7 +120,7 @@ impl ValidatedInput {
 pub(crate) fn validate_activity_configuration(
     activity: &ActivityInstance,
     _input: &FrozenInput,
-    ledger: &Ledger,
+    ledger: &impl LedgerRead,
 ) -> Result<(), SimulationError> {
     let (cash_account, expense_account, amount_valid, error) = match &activity.configuration {
         crate::ActivityConfiguration::PropertyTax(config) => (
@@ -128,14 +147,12 @@ pub(crate) fn validate_activity_configuration(
         }
         _ => return Ok(()),
     };
-    let cash_valid = ledger.chart().get(cash_account).is_some_and(|account| {
-        account.category() == AccountCategory::Asset
-            && account.is_cash_position()
-            && !account.is_contra()
+    let cash_valid = ledger.account(cash_account).is_some_and(|account| {
+        account.category == AccountCategory::Asset && account.cash_position && !account.contra
     });
-    let expense_valid = ledger.chart().get(expense_account).is_some_and(|account| {
-        account.category() == AccountCategory::Expense && !account.is_contra()
-    });
+    let expense_valid = ledger
+        .account(expense_account)
+        .is_some_and(|account| account.category == AccountCategory::Expense && !account.contra);
     if amount_valid && cash_valid && expense_valid {
         Ok(())
     } else {
@@ -147,7 +164,7 @@ pub(crate) fn validate_activity_configuration(
 pub fn validate_input(
     input: &FrozenInput,
     repair_distribution: &RepairCostDistribution,
-    ledger: &Ledger,
+    ledger: &impl LedgerRead,
     state: &OpeningState,
 ) -> Result<ValidatedInput, ValidationErrors> {
     let mut issues = Vec::new();
@@ -222,7 +239,7 @@ pub fn validate_input(
         }
     }
 
-    let cash_account_valid = match ledger.chart().get(input.cash_account) {
+    let cash_account_valid = match ledger.account(input.cash_account) {
         None => {
             issues.push(ValidationIssue {
                 field: "cash_account",
@@ -231,9 +248,9 @@ pub fn validate_input(
             false
         }
         Some(account)
-            if account.category() != AccountCategory::Asset
-                || !account.is_cash_position()
-                || account.is_contra() =>
+            if account.category != AccountCategory::Asset
+                || !account.cash_position
+                || account.contra =>
         {
             issues.push(ValidationIssue {
                 field: "cash_account",
@@ -244,37 +261,24 @@ pub fn validate_input(
         Some(_) => true,
     };
     if cash_account_valid && state.cash.currency() == currency {
-        match ledger.balance(input.cash_account) {
-            Ok((side, balance)) => {
-                let signed_balance = if side == property_simulation_accounting::BalanceSide::Debit {
-                    Ok(balance)
-                } else {
-                    balance.checked_neg().map_err(AccountError::from)
-                };
-                match signed_balance {
-                    Ok(balance) if balance == state.cash => {}
-                    Ok(_) => issues.push(ValidationIssue {
-                        field: "opening_state.cash",
-                        message: "opening cash must match the ledger cash-account balance",
-                    }),
-                    Err(_) => issues.push(ValidationIssue {
-                        field: "opening_state.cash",
-                        message: "ledger cash-account balance cannot be represented",
-                    }),
-                }
-            }
+        match ledger.signed_balance(input.cash_account) {
+            Ok(balance) if balance == state.cash => {}
+            Ok(_) => issues.push(ValidationIssue {
+                field: "opening_state.cash",
+                message: "opening cash must match the ledger cash-account balance",
+            }),
             Err(_) => issues.push(ValidationIssue {
                 field: "opening_state.cash",
                 message: "ledger cash-account balance cannot be represented",
             }),
         }
     }
-    match ledger.chart().get(input.rent_account) {
+    match ledger.account(input.rent_account) {
         None => issues.push(ValidationIssue {
             field: "rent_account",
             message: "rent account does not exist",
         }),
-        Some(account) if account.category() != AccountCategory::Income => {
+        Some(account) if account.category != AccountCategory::Income => {
             issues.push(ValidationIssue {
                 field: "rent_account",
                 message: "rent account must be an income account",
@@ -282,12 +286,12 @@ pub fn validate_input(
         }
         Some(_) => {}
     }
-    match ledger.chart().get(input.repair_expense_account) {
+    match ledger.account(input.repair_expense_account) {
         None => issues.push(ValidationIssue {
             field: "repair_expense_account",
             message: "repair account does not exist",
         }),
-        Some(account) if account.category() != AccountCategory::Expense => {
+        Some(account) if account.category != AccountCategory::Expense => {
             issues.push(ValidationIssue {
                 field: "repair_expense_account",
                 message: "repair account must be an expense account",
@@ -301,7 +305,6 @@ pub fn validate_input(
             opening_state: state.clone(),
             frozen_input: *input,
             repair_distribution: *repair_distribution,
-            opening_ledger: ledger.clone(),
             preflighted_activities: None,
         })
     } else {
@@ -311,6 +314,7 @@ pub fn validate_input(
 
 /// Ensure the sum of absolute cash-flow support for all active instances fits in `Money`.
 /// This stronger bound makes every possible ordering and grouping of monthly contributions safe.
+#[cfg(test)]
 pub(crate) fn validate_cashflow_support(
     input: &FrozenInput,
     activities: &[ActivityInstance],
@@ -357,7 +361,7 @@ pub(crate) fn validate_cashflow_support_with_additional(
             }
             ActivitySampleKind::PropertyTax => match &activity.configuration {
                 crate::ActivityConfiguration::PropertyTax(config)
-                    if tax_due(input.period, config.first_due, config.cadence) =>
+                    if config.is_due(input.period) =>
                 {
                     config.amount.rounded_for_posting()?
                 }
@@ -393,7 +397,7 @@ pub(crate) fn validate_cashflow_support_with_additional(
     for (category, bound) in additional {
         if bound.currency() != currency || bound.is_negative() {
             return Err(SimulationError::InvalidInput(
-                "additional cash-flow support must be non-negative and use the run currency",
+                "additional cash-flow support must be non-negative and use the ledger currency",
             ));
         }
         let total = absolute_support
@@ -408,22 +412,19 @@ pub(crate) fn validate_cashflow_support_with_additional(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn tax_due(
     period: property_simulation_domain::YearMonth,
-    first: property_simulation_domain::YearMonth,
+    first_due: property_simulation_domain::YearMonth,
     cadence: crate::PropertyTaxCadence,
 ) -> bool {
-    if period < first {
-        return false;
-    }
-    let months = i64::from(period.year()) * 12 + i64::from(period.month())
-        - (i64::from(first.year()) * 12 + i64::from(first.month()));
-    months % i64::from(cadence.months()) == 0
+    crate::PropertyTaxConfig::due_on(period, first_due, cadence)
 }
 
 /// Check all proposed transactions against a candidate ledger without mutating the caller's
 /// ledger. `post_batch` applies the same account, currency, precision, cash classification,
 /// balance, duplicate-ID, and month-end asset rules used for a real post.
+#[cfg(test)]
 pub fn validate_proposal_transactions(
     ledger: &Ledger,
     proposal: &IdentifiedProposal,
@@ -438,6 +439,7 @@ pub fn validate_proposal_transactions(
     validate_transaction_batch(ledger, &transactions)
 }
 
+#[cfg(test)]
 pub(crate) fn validate_transaction_batch(
     ledger: &Ledger,
     transactions: &[LedgerTransaction],

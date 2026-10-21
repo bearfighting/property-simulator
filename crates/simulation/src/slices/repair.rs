@@ -4,7 +4,7 @@ use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry}
 use property_simulation_domain::Money;
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
-use crate::composition::{SliceResources, account_resource_key};
+use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
     ActivityInstance, ActivitySampleKind, AssetCondition, EffectProposal, EventProposal,
@@ -27,8 +27,8 @@ impl SimulationSlice for RepairSlice {
             slice_id: self.instance.slice_id,
             reads: BTreeSet::new(),
             writes: [
-                account_resource_key(input.cash_account),
-                account_resource_key(input.repair_expense_account),
+                property_simulation_domain::ResourceKey::for_account(input.cash_account),
+                property_simulation_domain::ResourceKey::for_account(input.repair_expense_account),
                 property_simulation_domain::ResourceKey::new("property.condition")
                     .expect("static resource key"),
             ]

@@ -19,7 +19,7 @@ use property_simulation_simulation::{
     RepairSlice, RunCommand, RunConfig, RunIdentity, RunUpdate, RunUpdateValue, SimulationArchive,
     SimulationError, SimulationRun, SimulationSlice, SingleMonthExecutor, StopCondition,
     StopReason, UtilityConfig, UtilitySlice, ValidatedInput, coordinate_month_with_loans,
-    propose_slice, sample_repair_from_streams, sample_utility_from_streams, saved_month,
+    propose_slice, sample_repair, sample_utility, saved_month,
 };
 
 fn month(number: u8) -> YearMonth {
@@ -50,55 +50,30 @@ fn activity(value: u8, kind: ActivitySampleKind) -> ActivityInstance {
 
 struct Ids;
 
-fn derived_id(
-    tag: u8,
-    trial: TrialId,
-    branch: BranchId,
-    period: YearMonth,
-    instance: ActivityInstanceId,
-    key: &str,
-) -> [u8; 16] {
+fn derived_id(tag: u8, period: YearMonth, instance: ActivityInstanceId, key: &str) -> [u8; 16] {
     let mut bytes = [0; 16];
     bytes[0] = tag;
     bytes[1..5].copy_from_slice(&period.year().to_le_bytes());
     bytes[5] = period.month();
     bytes[6] = key.bytes().fold(0_u8, u8::wrapping_add);
-    bytes[7..11].copy_from_slice(&trial.as_bytes()[..4]);
-    bytes[11..15].copy_from_slice(&branch.as_bytes()[..4]);
-    bytes[15] = instance.as_bytes()[0];
+    bytes[7..15].copy_from_slice(&instance.as_bytes()[..8]);
     bytes
 }
 
 impl OutputIdFactory for Ids {
-    fn event_id(
-        &self,
-        trial: TrialId,
-        branch: BranchId,
-        period: YearMonth,
-        instance: ActivityInstanceId,
-        key: &str,
-    ) -> EventId {
-        EventId::from_bytes(derived_id(1, trial, branch, period, instance, key))
+    fn event_id(&self, period: YearMonth, instance: ActivityInstanceId, key: &str) -> EventId {
+        EventId::from_bytes(derived_id(1, period, instance, key))
     }
-    fn effect_id(
-        &self,
-        trial: TrialId,
-        branch: BranchId,
-        period: YearMonth,
-        instance: ActivityInstanceId,
-        key: &str,
-    ) -> EffectId {
-        EffectId::from_bytes(derived_id(2, trial, branch, period, instance, key))
+    fn effect_id(&self, period: YearMonth, instance: ActivityInstanceId, key: &str) -> EffectId {
+        EffectId::from_bytes(derived_id(2, period, instance, key))
     }
     fn transaction_id(
         &self,
-        trial: TrialId,
-        branch: BranchId,
         period: YearMonth,
         instance: ActivityInstanceId,
         key: &str,
     ) -> LedgerTransactionId {
-        LedgerTransactionId::from_bytes(derived_id(3, trial, branch, period, instance, key))
+        LedgerTransactionId::from_bytes(derived_id(3, period, instance, key))
     }
 }
 
@@ -169,10 +144,9 @@ impl SingleMonthExecutor for CompositionExecutor {
         &mut self,
         identity: Option<RunIdentity>,
     ) -> Result<Option<property_simulation_randomness::RandomStreams>, &'static str> {
-        self.key_factory
-            .run_streams(identity.ok_or("missing run identity")?.trial_id)
-            .map(Some)
-            .map_err(|_| "run stream allocation failed")
+        Ok(Some(self.key_factory.run_streams(
+            identity.ok_or("missing run identity")?.trial_id,
+        )))
     }
 
     fn execute(
@@ -203,13 +177,22 @@ impl SingleMonthExecutor for CompositionExecutor {
         let identity = identity.ok_or(SimulationError::InvalidInput("missing run identity"))?;
         let streams = streams.ok_or(SimulationError::InvalidInput("missing random streams"))?;
         let period = input.frozen_input().period;
-        let repair_sample = sample_repair_from_streams(
-            streams,
-            identity.trial_id,
+        let mut repair_random = streams
+            .stream(&property_simulation_randomness::SemanticIdentity {
+                trial_id: identity.trial_id,
+                category: property_simulation_randomness::RandomCategory::Property,
+                slice_id: self.repair.instance.slice_id,
+                activity_id: self.repair.instance.id,
+                period,
+                purpose: property_simulation_simulation::REPAIR_SAMPLE_PURPOSE.into(),
+            })
+            .map_err(|_| SimulationError::InvalidInput("repair random stream failed"))?;
+        let repair_sample = sample_repair(
             self.repair.instance(),
             period,
             &self.distribution,
             &mut self.sampler,
+            &mut repair_random,
         )
         .map_err(|_| SimulationError::InvalidInput("repair sampling failed"))?;
         let rental_sample = ActivitySample::new(self.rental.instance(), period, ());
@@ -259,16 +242,28 @@ impl SingleMonthExecutor for CompositionExecutor {
                     let slice = UtilitySlice {
                         instance: instance.clone(),
                     };
-                    let typed = sample_utility_from_streams(
+                    let mut utility_random = streams
+                        .stream(&property_simulation_randomness::SemanticIdentity {
+                            trial_id: identity.trial_id,
+                            category:
+                                property_simulation_randomness::RandomCategory::OccupancyOperations,
+                            slice_id: instance.slice_id,
+                            activity_id: instance.id,
+                            period,
+                            purpose: property_simulation_simulation::UTILITY_SAMPLE_PURPOSE.into(),
+                        })
+                        .map_err(|_| {
+                            SimulationError::InvalidInput("utility random stream failed")
+                        })?;
+                    let typed = sample_utility(
                         input,
-                        streams,
-                        identity.trial_id,
                         instance,
                         period,
                         &UtilityUsageDistribution {
                             maximum: config.maximum_usage,
                         },
                         &mut self.utility_sampler,
+                        &mut utility_random,
                     )
                     .map_err(|_| SimulationError::InvalidInput("utility sampling failed"))?;
                     let sample = ActivitySample {
@@ -549,7 +544,7 @@ fn activity_update(activities: Vec<ActivityInstance>, source: &str) -> RunUpdate
 }
 
 #[test]
-fn m46_operating_activities_follow_month_updates_and_branch_isolation() {
+fn operating_activities_follow_month_updates_and_branch_isolation() {
     let (_, mut executor, ledger, loans) = fixture();
     let parent_trial = TrialId::from_bytes([31; 16]);
     let parent_branch = BranchId::from_bytes([41; 16]);
@@ -768,7 +763,7 @@ fn m46_operating_activities_follow_month_updates_and_branch_isolation() {
 }
 
 #[test]
-fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
+fn operating_slices_and_multiple_loans_share_one_monthly_batch() {
     let (_run, executor, ledger, continuations) = fixture();
     let period = YearMonth::new(u32::MAX, 12).unwrap();
     let state = OpeningState {
@@ -857,7 +852,7 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
         ]
     });
     validated
-        .validate_activities_before_sampling(&active_instances, loan_support)
+        .validate_activities_before_sampling(&active_instances, &ledger, loan_support)
         .unwrap();
 
     let rental_sample = ActivitySample::new(executor.rental.instance(), period, ());
@@ -952,7 +947,7 @@ fn m45_operating_slices_and_multiple_loans_share_one_monthly_batch() {
 }
 
 #[test]
-fn m37_run_sampling_coordination_two_loans_and_snapshot_branch_compose() {
+fn run_sampling_two_loans_and_snapshot_branch_compose() {
     let (mut parent, mut parent_executor, _opening_ledger, _) = fixture();
     let parent_trial = TrialId::from_bytes([31; 16]);
     let parent_branch = BranchId::from_bytes([41; 16]);
@@ -1120,7 +1115,7 @@ fn m37_run_sampling_coordination_two_loans_and_snapshot_branch_compose() {
 }
 
 #[test]
-fn m37_mixed_slice_batch_checks_only_the_month_end_cash_balance() {
+fn mixed_slice_batch_checks_only_the_month_end_cash_balance() {
     let currency = Currency::from_code("CAD").unwrap();
     let cash = account_id(81);
     let rent_account = account_id(82);
@@ -1242,6 +1237,7 @@ fn m37_mixed_slice_batch_checks_only_the_month_end_cash_balance() {
         updated_loan.remaining_months,
         updated_loan.annual_rate,
         Some(principal_transaction),
+        &crate::tests::TestLoanCalculation,
     )
     .unwrap();
     let monthly = updated_loan.calculate_month().unwrap();

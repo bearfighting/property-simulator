@@ -7,8 +7,8 @@ mod time;
 
 pub use error::DomainError;
 pub use ids::{
-    AccountId, ActivityInstanceId, BranchId, DecisionId, EffectId, EntityId, EventId,
-    LedgerTransactionId, ResourceKey, RunId, ScenarioId, SliceId, SnapshotId, TrialId,
+    AccountId, ActivityInstanceId, BranchId, EffectId, EventId, LedgerTransactionId, ResourceKey,
+    RunId, SliceId, SnapshotId, TrialId,
 };
 pub use money::{Currency, Money};
 pub use time::{YearMonth, YearMonthRange};

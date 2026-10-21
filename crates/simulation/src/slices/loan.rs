@@ -1,3 +1,4 @@
+#[cfg(test)]
 mod accounting;
 mod proposal;
 mod terms;
@@ -5,11 +6,16 @@ mod terms;
 mod tests;
 mod types;
 
+#[cfg(test)]
 pub(in crate::slices) use accounting::{cash_classified_entry, validate_loan_accounts};
-pub use terms::apply_loan_terms_update;
+#[cfg(test)]
 pub(in crate::slices) use terms::map_model_error;
+pub use terms::{LoanCalculation, apply_loan_terms_update};
+#[cfg(test)]
+pub use types::LoanCoordinatedMonth;
+#[cfg(test)]
+pub use types::LoanMonthCommand;
 pub use types::{
-    LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanMonthCommand, LoanMonthInput,
-    LoanMonthOutput, LoanRunUpdate, LoanSlice, LoanStateEffect, LoanStateEffectProposal,
-    LoanTermsUpdate,
+    LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanRunUpdate, LoanSlice,
+    LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate,
 };

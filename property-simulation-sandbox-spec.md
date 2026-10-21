@@ -1,7 +1,7 @@
 # Property Simulation Sandbox (PSS)
 
 **Project specification — 2026-10-19**
-**Status:** M0 design baseline, M1 Ledger primitives, M2 monthly activity/Slice foundations, M3 monthly runs/random streams/loan Slice, and M4 multi-Slice coordination are complete. M5 in-memory core data contract is next. Ledger, mortgage, M3, and M4 vectors are indexed in `docs/test-vectors.md`.
+**Status:** M0–M4 milestone behavior has historical implementation/test coverage. A pre-M5 crate call-boundary review and remediation is complete; the former run, archive, and monthly coordinator implementations now exist only in test support. M5's monthly input/output calculation contract has not started. Ledger, mortgage, M3, and M4 vectors are indexed in `docs/test-vectors.md`.
 
 The detailed specification is split by topic so each document has one main responsibility. Section numbers are retained from the original specification for reference; use the documents below as the current source of truth.
 
@@ -16,7 +16,7 @@ The detailed specification is split by topic so each document has one main respo
 
 ## Current implementation order
 
-1. Domain kernel: M0 engineering/design baseline, then M1 ledger primitives, M2 monthly activity and Slice foundations, M3 monthly runs/random streams and the first domain Slice, M4 Slice composition, M5 complete in-memory core data contract.
+1. Domain kernel: M0 engineering/design baseline, then M1 ledger primitives, M2 monthly activity and Slice foundations, M3/M4 calculation and composition behavior (historical integration tests retained), the completed pre-M5 crate call-boundary review/remediation, then M5 monthly input/output contract.
 2. Application and persistence: CLI, SQLite, input workflow, database save/restore, and exports. Storage compatibility or old-data handling is considered only if actual project use requires it; no cross-upgrade compatibility or migration is promised by default.
 3. Desktop application: GPUI scenario builder and simulation exploration.
 

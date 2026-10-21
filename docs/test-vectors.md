@@ -1,12 +1,22 @@
 # Ledger and mortgage test vectors
 
+**Historical M3/M4 test-fixture note:** The vectors below describe behavior
+retained in `simulation/src/test_support/` and test modules. They are regression
+coverage for previously implemented combinations, not production run-control,
+snapshot, branch, or persistence API promises. Current production scope and M5
+target are defined by ADR-27 and ADR-28. Some vectors name the former
+`CashFlowContribution` implementation. Those values are expected cash-flow
+projections from Ledger postings, grouped by the Ledger source identity. They do
+not require a second independently generated contribution record. The M5 target
+contract is defined in [ADR-27](adr/ADR-27-current-month-runtime-and-database-owned-history.md).
+
 ## M3.4 semantic random-stream vectors
 
-With diagnostic root key `[8; 32]`, two calls for the same trial allocate different run keys because the process sequence advances; separate factories with the same root and sequence but a different trial derive different run keys. An initial `SimulationRun` can be constructed with an explicit trial/branch identity; an anonymous run that requests randomness fails before sampling. A `SimulationRun` allocates one run key and reuses it across month calls; period identities still derive independent substreams. A stream collection rejects a semantic identity for a different trial. Under one run key, identical semantic identity yields the same sequence within that run. Changing any one of category, Slice ID, activity instance ID, year/month, or purpose yields an independently derived stream. Consuming extra words from another purpose stream does not change this sequence. Reordering calls to derive month/instance/Slice streams has no effect. OS entropy read success fills all 32 bytes; an entropy error rejects factory creation. Purpose is UTF-8 with an explicit `u64` byte length. These are isolation vectors, not cross-application-version output guarantees or uniqueness constraints.
+With diagnostic root key `[8; 32]`, calls using the same root and trial derive the same run key; a different trial derives a different key. The current tests construct semantic streams directly from explicit identity; run-control integration is test-only. A stream collection rejects a semantic identity for a different trial. Under one run key, identical semantic identity yields the same sequence. Changing category, Slice ID, activity instance ID, year/month, or purpose yields an independently derived stream. Consuming another purpose stream does not affect it. OS entropy success fills all 32 bytes; entropy failure is returned. Purpose is UTF-8 with an explicit `u64` byte length. These are implementation-isolation vectors, not replay guarantees or production run-management behavior.
 
 ## M3.5 repair random end-to-end vector
 
-The repair composition boundary derives a `Property` semantic stream from trial ID,
+The test caller derives a `Property` semantic stream from trial ID,
 Slice ID, activity instance ID, and period with purpose `repair.sample`.
 With diagnostic root key `[8; 32]` and the same semantic identity, the typed repair
 sample is repeatable within the same run streams. The resulting `ActivitySample`
@@ -21,24 +31,24 @@ diagnostic behavior for this fixed key, not a cross-application-version replay g
 
 **Slice 代数组合约定：** 每个实例只根据同一份期初状态、冻结输入及自身显式样本计算，不消费其他实例的当月输出。对可接受实例结果做任意排列或重新分组，组合结果必须相同；空结果是单位元。相同状态值可兼容合并，冲突值须在提交前拒绝；账簿凭证保留独立来源并作为批次验证。读写资源交叠不建立执行顺序。依赖字段、拓扑阶段或跨实例结果上下文均不属于当前 Slice 契约。
 
-These vectors are exercised across the M3.0–M3.6 `SimulationRun`, executor,
-Slice/coordinator, Ledger, archive, and loan tests. The monthly executor remains
-test-owned; M3 does not add a production scheduler.
+These vectors are exercised across test-only M3 run/executor/coordinator fixtures,
+Slice outputs, Ledger, and loan tests. They do not assert that the current
+production core exposes that integrated workflow.
 
 | Case | Expected acceptance |
 |---|---|
 | Inclusive two-month run ending at February | Each `Continue` commits exactly one month. The February snapshot is retained before end/condition evaluation; status reports the configured stop reason. A between-month `Stop` preserves the latest completed snapshot and does not invoke the executor. |
-| Month-start input update | A valid update effective in the next period is validated and retained in both run history and the completed result with its source and effective month. An invalid update or executor input/sample/proposal preflight rejection occurs before commit: no new snapshot or history mutation, and run status stays retryable; corrected input can be retried. Fatal failures during an accepted transition or commit fail the run. |
+| Month-start input update | A valid update effective in the next period is validated and included in the completed result with its source and effective month. Invalid user input is rejected before calculation so it can be corrected and resubmitted. A fatal error during an accepted transition stops the simulation and produces no result for that month. |
 | Balanced month-start state adjustment | Its transaction is retained in the completed result with the update source and transaction ID. A separate run-input Effect records prior/updated state and links to that transaction. Cash entries produce input cash-flow contributions that aggregate with Slice contributions and reconcile to the period Ledger projection; no fabricated Slice/activity identity is used. |
-| Fatal monthly transition | A fatal executor/Slice transition marks the run failed and returns a diagnostic carrying phase and month. The failed month has no snapshot, is not reported as a normal stop, and continuation is rejected. No recovery promise is made for external persistence. |
+| Fatal monthly transition | A fatal executor/Slice transition stops the simulation and returns a diagnostic carrying phase and month. The failed month has no successful result or snapshot and is not reported as a normal stop. No failed-run recovery or persistence promise is made. |
 | Repair + rent + two loans in one period | A single `SimulationRun` test executor draws a semantic repair sample, proposes rent and repair outputs, and calls the real loan coordinator for two independent loans. Every transaction is balanced and source-linked to its event/activity. Events, Effects, samples, transactions and contributions carry the same trial, branch, month, Slice and activity identity; output IDs are unique. Rent/repair contributions and loan interest/principal contributions sum by category to the Ledger direct cash-flow projection. Each loan continuation equals its own liability account balance. |
 | Two repair instances superpose | Two repair instances evaluate from the same opening state and frozen inputs with separate samples. Their compatible condition Effects combine idempotently, their postings and contributions remain separate and attributable, and reversing instance/sample order produces the same `MonthlyResult` and Ledger. |
 | Mixed Slice final-balance boundary | A loan principal advance and its monthly payment are prepared against a cash balance within 500 minor units of the maximum `Money` coefficient. The loan batch alone would overflow, while an ordinary repair outflow offsets the advance and payment so the full month closes at a representable cash balance. The shared coordinator accepts the month and the contribution projection still matches the Ledger. |
 | Random semantic streams across periods and activities | Repair samples carry `repair.sample` and are allocated from the explicit Property semantic identity. Different period/activity/purpose identities are isolated; consuming another category's stream does not affect them. Fixed diagnostic keys test isolation, not cross-run replay. |
 | Branch from a completed snapshot | A new trial and branch begin in the month after the selected snapshot, restore its closing state, Ledger, inputs, activities and loan continuations, and may accept explicit updates. Saving child months leaves parent snapshots/results unchanged. Child cash-flow summaries include child months only; the month sequence is contiguous within each branch. |
 
-The shared assertions are implemented in `run_control` lifecycle, failure, retry,
-stop and archive tests; `tests/m3_composition.rs` joins a two-period run, semantic
+The shared assertions are implemented in test-support lifecycle, failure,
+stop and composition tests; `src/monthly_composition_tests.rs` joins a two-period run, semantic
 repair sampling, rent/repair Slices, two loan accounts, Ledger projections, a
 month-start rent update and a child branch; and lower-level tests cover the
 loan-update and independent-stream boundaries. This matrix intentionally does
@@ -192,9 +202,9 @@ The cash postings may share one cash account but retain their separate cash-flow
 
 ### M3.6 loan Slice boundary
 
-`LoanSlice::propose_month` binds the typed monthly calculation to the loan activity instance, Slice and period. The loan coordinator validates account roles and the opening liability, then atomically posts a balanced transaction: debit shared interest expense and the loan-specific liability, then credit cash with separate operating (interest) and financing (principal) classifications. It checks that the resulting liability equals the closing schedule balance and returns the ledger, continuation schedule, signed cash-flow contributions, event records linked from transaction sources, and a typed loan-state Effect linked to its source event. `coordinate_month_with_loans` combines those outputs with ordinary Slice outputs into one `MonthlyResult`; loan continuations, events, Effects, transactions, and cash-flow contributions are retained in the saved month snapshot. A month-start principal update requires the caller's balanced financing transaction, which is validated against the exact liability/cash delta and committed atomically with the monthly payment. Rate-only and term-only changes produce a terms-update event with before/after values. A zero-balance update requires a matching payoff transaction and closes the loan before monthly accrual; an absent loan then remains a no-op.
+`LoanSlice::propose_month` is a pure transformation from a typed monthly calculation to a loan proposal. The historical test-only loan coordinator validates account roles and opening liability, prepares and posts a balanced transaction, and checks the closing liability. `coordinate_month_with_loans` and the resulting `MonthlyResult` are test-only; the production core does not commit a Ledger batch or retain loan continuation history. The vectors below continue to check interest/principal classifications and loan arithmetic, not a current integrated API.
 
-The model tests implement M-01 through M-07 and M-09 through M-12; M-08 is the absence of an active loan and produces no payment proposal. Continuation keeps the rounded payment from M-02 through M-06; explicit rate/term/balance updates clear and rederive that payment before the effective month is calculated. A carried payment with the wrong currency, subminor precision, zero/negative value, or below current posted interest is rejected. Principal outside currency minor-unit precision is rejected at model validation. Negative cash is allowed by the cash-position account convention and does not alter loan calculation. Loan state and contributions are retained in the shared monthly result and its snapshot. `SimulationRun` accepts the matching continuation records and passes typed month-start loan updates to the executor; the executor validates and coordinates them before committing its monthly result. Branch creation restores those records from the parent snapshot. The M3.7 composition vector in `crates/simulation/tests/m3_composition.rs` exercises multiple loan instances with sampling, ordinary Slices, snapshots, and branch continuation.
+The model tests implement M-01 through M-07 and M-09 through M-12; M-08 is the absence of an active loan and produces no payment proposal. Continuation keeps the rounded payment from M-02 through M-06; explicit rate/term/balance inputs clear and rederive that payment before calculation. A carried payment with the wrong currency, subminor precision, zero/negative value, or below current posted interest is rejected. Principal outside currency minor-unit precision is rejected at model validation. Negative cash is allowed by the cash-position account convention and does not alter loan calculation. Historical run and branch continuation cases remain only in test support. The monthly composition fixture at `crates/simulation/src/monthly_composition_tests.rs` exercises those prior combinations; it is not a production API contract.
 
 ## M4.5 unified monthly composition vector
 
@@ -227,17 +237,16 @@ equal numeric samples across different instances are allowed.
 
 | Boundary | Expected result |
 |---|---|
-| Correctable run update or executor sample/input rejection | Reject before commit. The run remains `Running` at the same next month; opening state, Ledger, update history, and latest snapshot remain unchanged. After correction, retry may succeed and creates one snapshot for that month. A retained random stream allocation is reused; the test does not require replay or recovery of unfinished random draws. |
+| Correctable user input rejected before calculation | Reject the input before starting the monthly calculation. The user may correct it and submit the command again. This is input validation, not recovery/retry of a failed simulation. |
 | Invalid sample source, unknown Effect, or rejected journal | The coordinator returns a validation error before returning a successful monthly result. The caller's opening Ledger remains unchanged, with no partial transaction batch. |
 | Duplicate output identity or conflicting state writes | Proposal merge rejects duplicate IDs and different values written to the same target before commit. These are merge-layer unit vectors; they do not claim a separate full-coordinator fixture. |
-| Fatal executor preflight defect or accepted-input transition | Mark the run `Failed`; do not create a snapshot for that month and reject subsequent continuation. Run-control tests assert that the in-memory state, Ledger, and update history remain at the last committed boundary. No recovery or persistent rollback guarantee is made for external infrastructure. |
+| Fatal error during accepted-input calculation | Stop the simulation and produce no successful result or snapshot for that month. No failed-run recovery, continuation, resource preservation, or replay is required. |
 
-These are layered in-memory simulation boundaries. Under ADR-19, correctable
-pre-commit validation errors remain retryable, while unexpected runtime/invariant
-failures mark the run failed and cannot be retried in place. Under ADR-21, retrying
-a correctable error does not promise recovery or replay of consumed random draws;
-completed month-end snapshots are the continuation boundary, and a new run from one
-receives a new trial stream.
+These are layered simulation boundaries. Under ADR-19, correctable user input is
+rejected before calculation and can be resubmitted after correction. Unexpected
+runtime/invariant failures stop the simulation and produce no successful result for
+the failed month. Under ADR-21 and ADR-27, a user-requested new run from a completed
+snapshot receives a new trial stream; this is not recovery or replay.
 
 ### Structural input errors
 

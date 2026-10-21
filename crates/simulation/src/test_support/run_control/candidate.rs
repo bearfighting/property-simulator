@@ -154,7 +154,7 @@ pub(super) fn prepare_month(
     )
     .map_err(RunControlError::InvalidExecutionInput)?;
     validated
-        .validate_activities_before_sampling(&activities, additional_support)
+        .validate_activities_before_sampling(&activities, &candidate_ledger, additional_support)
         .map_err(RunControlError::InvalidExecutionInput)?;
     Ok(PreparedMonth {
         input,

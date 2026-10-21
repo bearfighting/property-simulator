@@ -1,17 +1,26 @@
+#[cfg(test)]
 use std::collections::BTreeMap;
 
-use property_simulation_accounting::{
-    CashFlowCategory, LedgerEntry, LedgerTransaction, LedgerTransactionSource,
-};
+#[cfg(test)]
+use property_simulation_accounting::CashFlowCategory;
+use property_simulation_accounting::LedgerEntry;
+#[cfg(test)]
+use property_simulation_accounting::{LedgerTransaction, LedgerTransactionSource};
 use property_simulation_domain::{
-    AccountId, ActivityInstanceId, BranchId, EffectId, EventId, LedgerTransactionId, Money,
-    ResourceKey, SliceId, TrialId, YearMonth,
+    AccountId, ActivityInstanceId, EffectId, EventId, LedgerTransactionId, Money, ResourceKey,
+    SliceId, YearMonth,
 };
+#[cfg(test)]
+use property_simulation_domain::{BranchId, TrialId};
 pub use property_simulation_models::RepairSample;
 
+#[cfg(test)]
 use crate::activity::{ActivitySample, ActivitySampleValue};
+#[cfg(test)]
 use crate::error::SimulationError;
+#[cfg(test)]
 use crate::proposals::merge_proposals;
+#[cfg(test)]
 use crate::slices::{LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanStateEffect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +48,8 @@ pub struct ActivityInstance {
     pub slice_id: SliceId,
     pub configuration: ActivityConfiguration,
 }
-/// Per-instance model configuration. The variant is the activity/sample kind,
-/// so it cannot disagree with the configuration carried into snapshots.
+/// Per-instance model configuration. The variant is also the activity/sample kind,
+/// so it cannot disagree with the configuration used for this calculation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivityConfiguration {
     Rental,
@@ -82,6 +91,20 @@ pub struct PropertyTaxConfig {
     pub first_due: YearMonth,
     pub cash_account: AccountId,
     pub expense_account: AccountId,
+}
+impl PropertyTaxConfig {
+    pub fn is_due(&self, period: YearMonth) -> bool {
+        Self::due_on(period, self.first_due, self.cadence)
+    }
+
+    pub fn due_on(period: YearMonth, first_due: YearMonth, cadence: PropertyTaxCadence) -> bool {
+        if period < first_due {
+            return false;
+        }
+        let months = i64::from(period.year()) * 12 + i64::from(period.month())
+            - (i64::from(first_due.year()) * 12 + i64::from(first_due.month()));
+        months % i64::from(cadence.months()) == 0
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UtilityConfig {
@@ -129,17 +152,17 @@ pub struct SliceProposal {
     pub transactions: Vec<TransactionProposal>,
 }
 
-/// A proposal after IDs have been assigned by the coordination boundary.
+/// A proposal after IDs have been assigned from caller-supplied identity.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IdentifiedProposal {
-    pub(crate) identity: Option<(TrialId, BranchId, YearMonth)>,
+    pub(crate) period: Option<YearMonth>,
     pub(crate) events: Vec<ProposedEvent>,
     pub(crate) effects: Vec<ProposedEffect>,
     pub(crate) transactions: Vec<ProposedTransaction>,
 }
 impl IdentifiedProposal {
-    pub fn identity(&self) -> Option<(TrialId, BranchId, YearMonth)> {
-        self.identity
+    pub fn period(&self) -> Option<YearMonth> {
+        self.period
     }
     pub fn events(&self) -> &[ProposedEvent] {
         &self.events
@@ -162,6 +185,7 @@ pub struct ProposedTransaction {
     pub entries: Vec<LedgerEntry>,
 }
 impl ProposedTransaction {
+    #[cfg(test)]
     pub fn into_ledger_transaction(self) -> LedgerTransaction {
         LedgerTransaction::new(self.id, self.period, self.entries).with_source(
             LedgerTransactionSource {
@@ -196,26 +220,10 @@ pub struct ProposedEffect {
 /// The caller's implementation must be deterministic and collision-resistant
 /// over the supplied identity tuple. Duplicate IDs in a monthly result are rejected.
 pub trait OutputIdFactory {
-    fn event_id(
-        &self,
-        trial: TrialId,
-        branch: BranchId,
-        period: YearMonth,
-        instance: ActivityInstanceId,
-        key: &str,
-    ) -> EventId;
-    fn effect_id(
-        &self,
-        trial: TrialId,
-        branch: BranchId,
-        period: YearMonth,
-        instance: ActivityInstanceId,
-        key: &str,
-    ) -> EffectId;
+    fn event_id(&self, period: YearMonth, instance: ActivityInstanceId, key: &str) -> EventId;
+    fn effect_id(&self, period: YearMonth, instance: ActivityInstanceId, key: &str) -> EffectId;
     fn transaction_id(
         &self,
-        trial: TrialId,
-        branch: BranchId,
         period: YearMonth,
         instance: ActivityInstanceId,
         key: &str,
@@ -223,6 +231,7 @@ pub trait OutputIdFactory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct MonthlyResult {
     trial_id: TrialId,
     branch_id: BranchId,
@@ -234,9 +243,13 @@ pub struct MonthlyResult {
     closing_state: OpeningState,
     proposal: IdentifiedProposal,
     cash_flow_contributions: Vec<CashFlowContribution>,
+    #[cfg(test)]
     input_postings: Vec<RunInputPosting>,
+    #[cfg(test)]
     input_cash_flow_contributions: Vec<InputCashFlowContribution>,
+    #[cfg(test)]
     input_updates: Vec<crate::RunUpdate>,
+    #[cfg(test)]
     input_effects: Vec<RunInputEffect>,
     loan_continuations: Vec<LoanContinuation>,
     loan_events: Vec<LoanEvent>,
@@ -246,6 +259,7 @@ pub struct MonthlyResult {
 /// A balanced month-start transaction supplied with a run update. These postings
 /// are recorded separately from Slice outputs because they have no Slice identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct RunInputPosting {
     pub source: String,
     pub transaction: LedgerTransaction,
@@ -254,6 +268,7 @@ pub struct RunInputPosting {
 /// State change caused by an economically accounted month-start adjustment.
 /// Its identity is deterministically derived from the caller-supplied transaction ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct RunInputEffect {
     pub id: EffectId,
     pub source: String,
@@ -265,6 +280,7 @@ pub struct RunInputEffect {
 
 /// Cash-flow impact of a month-start input posting, attributed to its update source.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct InputCashFlowContribution {
     pub source: String,
     pub period: YearMonth,
@@ -275,6 +291,7 @@ pub struct InputCashFlowContribution {
 
 /// Net signed cash impact for one committed transaction and cash-flow category.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct CashFlowContribution {
     pub trial_id: TrialId,
     pub branch_id: BranchId,
@@ -289,12 +306,14 @@ pub struct CashFlowContribution {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub struct CashFlowContributionTotals {
     pub operating: Money,
     pub investing: Money,
     pub financing: Money,
 }
 
+#[cfg(test)]
 impl CashFlowContributionTotals {
     pub fn zero(currency: property_simulation_domain::Currency) -> Self {
         let zero = Money::from_parts(0, 0, currency).expect("zero is representable");
@@ -325,6 +344,7 @@ impl CashFlowContributionTotals {
         })
     }
 }
+#[cfg(test)]
 impl MonthlyResult {
     // These fields form one validated period result; keeping them in one constructor
     // makes it impossible to omit the identity or any of the transition inputs.
@@ -414,8 +434,8 @@ impl MonthlyResult {
                 .iter()
                 .any(|output| !source_matches(output.instance_id, output.slice_id))
             || proposal
-                .identity
-                .is_some_and(|identity| identity != (trial_id, branch_id, period))
+                .period
+                .is_some_and(|proposal_period| proposal_period != period)
         {
             return Err(SimulationError::InvalidProposal(
                 "monthly result identity or period does not match its contents",
@@ -504,9 +524,13 @@ impl MonthlyResult {
             closing_state,
             proposal,
             cash_flow_contributions,
+            #[cfg(test)]
             input_postings: Vec::new(),
+            #[cfg(test)]
             input_cash_flow_contributions: Vec::new(),
+            #[cfg(test)]
             input_updates: Vec::new(),
+            #[cfg(test)]
             input_effects: Vec::new(),
             loan_continuations: Vec::new(),
             loan_events: Vec::new(),
@@ -543,19 +567,24 @@ impl MonthlyResult {
     pub fn cash_flow_contributions(&self) -> &[CashFlowContribution] {
         &self.cash_flow_contributions
     }
+    #[cfg(test)]
     pub fn input_postings(&self) -> &[RunInputPosting] {
         &self.input_postings
     }
+    #[cfg(test)]
     pub fn input_cash_flow_contributions(&self) -> &[InputCashFlowContribution] {
         &self.input_cash_flow_contributions
     }
+    #[cfg(test)]
     pub fn input_updates(&self) -> &[crate::RunUpdate] {
         &self.input_updates
     }
+    #[cfg(test)]
     pub fn input_effects(&self) -> &[RunInputEffect] {
         &self.input_effects
     }
 
+    #[cfg(test)]
     pub(crate) fn with_input_updates(
         mut self,
         updates: Vec<crate::RunUpdate>,
@@ -787,25 +816,23 @@ impl MonthlyResult {
         Ok(result)
     }
     pub fn cash_flow_totals(&self) -> Result<CashFlowContributionTotals, SimulationError> {
-        CashFlowContributionTotals::sum(
-            self.cash_flow_contributions
+        let contributions = self
+            .cash_flow_contributions
+            .iter()
+            .map(|c| (c.category, c.amount));
+        #[cfg(test)]
+        let contributions = contributions.chain(
+            self.input_cash_flow_contributions
                 .iter()
-                .map(|c| (c.category, c.amount))
-                // Month-start adjustments are part of the month's Ledger cash flow,
-                // even though they deliberately have no Slice/activity attribution.
-                // Keep their provenance separate while including them in the total.
-                .chain(
-                    self.input_cash_flow_contributions
-                        .iter()
-                        .map(|c| (c.category, c.amount)),
-                ),
-            self.closing_state.cash.currency(),
-        )
+                .map(|c| (c.category, c.amount)),
+        );
+        CashFlowContributionTotals::sum(contributions, self.closing_state.cash.currency())
     }
 }
 
 /// Sum signed fixed-point values without overflowing intermediate partial sums.
 /// Conversion back to `Money` is checked only after exact cancellation is complete.
+#[cfg(test)]
 pub(crate) fn exact_signed_sum(
     values: impl IntoIterator<Item = Money>,
     currency: property_simulation_domain::Currency,
@@ -861,11 +888,13 @@ pub(crate) fn exact_signed_sum(
     Ok(Money::from_parts(coefficient, total.scale, currency)?)
 }
 
+#[cfg(test)]
 struct DecimalAccumulator {
     negative: bool,
     digits: Vec<u8>,
     scale: u8,
 }
+#[cfg(test)]
 impl DecimalAccumulator {
     fn zero() -> Self {
         Self {
@@ -904,11 +933,13 @@ impl DecimalAccumulator {
         }
     }
 }
+#[cfg(test)]
 fn decimal_compare(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     a.len()
         .cmp(&b.len())
         .then_with(|| a.iter().rev().cmp(b.iter().rev()))
 }
+#[cfg(test)]
 fn decimal_add(a: &mut Vec<u8>, b: &[u8]) {
     let mut carry = 0;
     for i in 0..a.len().max(b.len()) {
@@ -923,6 +954,7 @@ fn decimal_add(a: &mut Vec<u8>, b: &[u8]) {
         a.push(carry);
     }
 }
+#[cfg(test)]
 fn decimal_subtract(a: &mut Vec<u8>, b: &[u8]) {
     let mut borrow = 0_i8;
     for (i, digit) in a.iter_mut().enumerate() {
@@ -942,6 +974,7 @@ fn decimal_subtract(a: &mut Vec<u8>, b: &[u8]) {
     }
 }
 
+#[cfg(test)]
 fn sum_contribution_amounts(
     amounts: Vec<Money>,
     currency: property_simulation_domain::Currency,

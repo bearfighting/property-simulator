@@ -1,15 +1,21 @@
 mod loan;
+#[cfg(test)]
+#[path = "test_support/loan_coordinator.rs"]
 mod loan_coordinator;
 mod property_tax;
 mod rental;
 mod repair;
 mod utility;
 
+#[cfg(test)]
+pub use loan::LoanCoordinatedMonth;
+#[cfg(test)]
+pub use loan::LoanMonthCommand;
 pub use loan::{
-    LoanContinuation, LoanCoordinatedMonth, LoanEvent, LoanMonthCommand, LoanMonthInput,
-    LoanMonthOutput, LoanRunUpdate, LoanSlice, LoanStateEffect, LoanStateEffectProposal,
-    LoanTermsUpdate, apply_loan_terms_update,
+    LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanRunUpdate,
+    LoanSlice, LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, apply_loan_terms_update,
 };
+#[cfg(test)]
 pub use loan_coordinator::{coordinate_loan_month, coordinate_month_with_loans};
 pub use property_tax::PropertyTaxSlice;
 pub use rental::RentalSlice;

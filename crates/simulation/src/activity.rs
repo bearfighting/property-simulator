@@ -9,6 +9,7 @@ use crate::validation::ValidatedInput;
 use property_simulation_domain::{ActivityInstanceId, SliceId, YearMonth};
 use property_simulation_models::{
     Distribution, RandomSource, RepairDistribution, Sampler, SamplingError,
+    UtilityUsageDistribution,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,8 +121,6 @@ pub fn propose_slice<S: SimulationSlice>(
             SimulationError::Fatal(FatalSimulationFailure::new(
                 FatalSimulationPhase::SliceTransition,
                 frozen_input.period,
-                None,
-                None,
                 Some(slice.instance().id),
                 source,
             ))
@@ -157,35 +156,27 @@ pub const REPAIR_SAMPLE_PURPOSE: &str = "repair.sample";
 pub const UTILITY_SAMPLE_PURPOSE: &str = "utility.usage";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepairSamplingError {
-    InvalidDistribution,
-    Randomness(property_simulation_randomness::RandomnessError),
-    Sampler(SamplingError<std::convert::Infallible>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UtilitySamplingError {
+pub enum UtilitySamplingError<E> {
     InvalidDistribution,
     ActivitySetNotPreflighted,
     PeriodMismatch,
-    Randomness(property_simulation_randomness::RandomnessError),
-    Sampler(SamplingError<std::convert::Infallible>),
+    Sampler(SamplingError<E>),
 }
 
-/// Draw utility usage from its fixed occupancy/operations semantic substream.
+/// Sample utility usage from caller-supplied randomness.
 /// The supplied input must have preflighted the complete active activity set
 /// for this month before any random sampler is called.
-pub fn sample_utility_from_streams<S>(
+pub fn sample_utility<R, S>(
     validated: &ValidatedInput,
-    streams: &property_simulation_randomness::RandomStreams,
-    trial_id: property_simulation_domain::TrialId,
     instance: &ActivityInstance,
     period: YearMonth,
-    distribution: &property_simulation_models::UtilityUsageDistribution,
+    distribution: &UtilityUsageDistribution,
     sampler: &mut S,
-) -> Result<ActivitySample<u64>, UtilitySamplingError>
+    random: &mut R,
+) -> Result<ActivitySample<u64>, UtilitySamplingError<R::Error>>
 where
-    S: Sampler<property_simulation_models::UtilityUsageDistribution>,
+    R: RandomSource,
+    S: Sampler<UtilityUsageDistribution>,
 {
     if !matches!(
         &instance.configuration,
@@ -200,18 +191,8 @@ where
     if validated.frozen_input().period != period {
         return Err(UtilitySamplingError::PeriodMismatch);
     }
-    let mut random = streams
-        .stream(&property_simulation_randomness::SemanticIdentity {
-            trial_id,
-            category: property_simulation_randomness::RandomCategory::OccupancyOperations,
-            slice_id: instance.slice_id,
-            activity_id: instance.id,
-            period,
-            purpose: UTILITY_SAMPLE_PURPOSE.into(),
-        })
-        .map_err(UtilitySamplingError::Randomness)?;
     let value = sampler
-        .sample(distribution, &mut random)
+        .sample(distribution, random)
         .map_err(UtilitySamplingError::Sampler)?;
     Ok(ActivitySample::new(instance, period, value)
         .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())))
@@ -236,39 +217,6 @@ where
         return Err(SamplingError::InvalidDistribution);
     }
     let value = sampler.sample(distribution, random)?;
-    Ok(ActivitySample::new(instance, period, value))
-}
-
-/// Draw a repair sample from its stable semantic substream and attach its purpose.
-pub fn sample_repair_from_streams<S>(
-    streams: &property_simulation_randomness::RandomStreams,
-    trial_id: property_simulation_domain::TrialId,
-    instance: &ActivityInstance,
-    period: YearMonth,
-    distribution: &RepairDistribution,
-    sampler: &mut S,
-) -> Result<ActivitySample<RepairSample>, RepairSamplingError>
-where
-    S: Sampler<RepairDistribution>,
-{
-    if instance.configuration.sample_kind() != ActivitySampleKind::Repair
-        || !distribution.validate()
-    {
-        return Err(RepairSamplingError::InvalidDistribution);
-    }
-    let mut random = streams
-        .stream(&property_simulation_randomness::SemanticIdentity {
-            trial_id,
-            category: property_simulation_randomness::RandomCategory::Property,
-            slice_id: instance.slice_id,
-            activity_id: instance.id,
-            period,
-            purpose: REPAIR_SAMPLE_PURPOSE.into(),
-        })
-        .map_err(RepairSamplingError::Randomness)?;
-    let value = sampler
-        .sample(distribution, &mut random)
-        .map_err(RepairSamplingError::Sampler)?;
     Ok(ActivitySample::new(instance, period, value)
         .with_purpose(Some(REPAIR_SAMPLE_PURPOSE.into())))
 }

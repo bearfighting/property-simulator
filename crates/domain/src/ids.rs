@@ -10,14 +10,11 @@ macro_rules! opaque_id {
 }
 
 opaque_id!(
-    ScenarioId,
     RunId,
     TrialId,
     BranchId,
     SliceId,
-    EntityId,
     EventId,
-    DecisionId,
     LedgerTransactionId,
     AccountId,
     ActivityInstanceId,
@@ -40,6 +37,16 @@ impl ResourceKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Canonical key for a ledger account resource.
+    pub fn for_account(account: AccountId) -> Self {
+        let mut value = String::from("account:");
+        for byte in account.as_bytes() {
+            use std::fmt::Write as _;
+            write!(&mut value, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        Self(value)
+    }
 }
 
 #[cfg(test)]
@@ -49,12 +56,12 @@ mod tests {
     #[test]
     fn ids_preserve_fixed_width_bytes_and_have_distinct_types() {
         let bytes = [7; 16];
-        let scenario_id = ScenarioId::from_bytes(bytes);
-        assert_eq!(scenario_id.as_bytes(), &bytes);
-        assert_eq!(scenario_id, ScenarioId::from_bytes(bytes));
-
         let run_id = RunId::from_bytes(bytes);
         assert_eq!(run_id.as_bytes(), &bytes);
         assert_eq!(run_id, RunId::from_bytes(bytes));
+
+        let activity_id = ActivityInstanceId::from_bytes(bytes);
+        assert_eq!(activity_id.as_bytes(), &bytes);
+        assert_eq!(activity_id, ActivityInstanceId::from_bytes(bytes));
     }
 }

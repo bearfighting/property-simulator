@@ -29,7 +29,7 @@ impl Ledger {
         Self::new_with_cash_accounts(chart, opening, cash_accounts)
     }
 
-    /// Creates a ledger with its cash-position accounts fixed for the branch.
+    /// Creates a ledger with its cash-position accounts fixed for this ledger.
     pub fn new_with_cash_accounts(
         chart: ChartOfAccounts,
         opening: OpeningBalances,

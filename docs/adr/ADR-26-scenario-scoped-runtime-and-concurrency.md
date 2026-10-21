@@ -1,27 +1,25 @@
-# ADR-26: Scenario-scoped runtime state and application-owned concurrency
+# ADR-26: Single-threaded calculation scope and deferred scenario management
 
 - **Status:** Accepted
 - **Date:** 2026-10-20
-- **Related:** [roadmap](../implementation-roadmap.md), [domain model](../domain-model.md), [architecture](../architecture.md), [desktop application](../desktop-application.md), [ADR-22](ADR-22-m3-run-inputs-snapshot-and-cashflow-contract.md), [ADR-25](ADR-25-m5-in-memory-core-contract.md)
-- **Test vectors:** No new domain vectors; scenario scoping and archive invariants are covered by M5 runtime/archive tests.
+- **Related:** [roadmap](../implementation-roadmap.md), [domain model](../domain-model.md), [architecture](../architecture.md), [desktop application](../desktop-application.md), [ADR-22](ADR-22-m3-run-inputs-snapshot-and-cashflow-contract.md), [ADR-27](ADR-27-current-month-runtime-and-database-owned-history.md)
+- **Test vectors:** No concurrency or scenario-manager behavior is implemented in the current core.
 
 ## Context
 
-The core needs a clear owner for editable settings and completed run history without introducing a multi-scenario manager or parallel scheduler. CLI and GUI may later operate on several scenarios at once, and each scenario needs independent settings and run history.
+The current work defines calculation modules, not a running application. CLI and GUI may later manage multiple simulation scenarios with independent settings. That higher-level workflow is not needed to implement the current core calculations.
 
 ## Decision
 
-- An in-memory `SimulationArchive` represents one scenario's run family: its runs, snapshots, branches, queries, and latest editable user settings. Latest settings are scoped to that archive and do not replace the frozen inputs stored with completed results or snapshots.
-- The core executes each run as an ordered sequence of monthly transitions. It does not manage a collection of scenarios, schedule multiple scenario runs, or promise parallel execution.
-- The application layer owns scenario collections and any concurrency policy. If it runs multiple scenarios concurrently, each uses independent scenario configuration, run-control state, and archive; there is no shared mutable global settings state in the core contract.
-- This decision does not restrict the application process to one operating-system thread. It leaves multi-scenario concurrency and scheduling outside the current core milestone. Slice-result parallel evaluation remains governed separately by ADR-20.
+- Core calculation APIs are synchronous, stateless input/output calls. No run context, scenario registry, schedule, archive, or concurrency policy is implemented here.
+- Treat the current project work as single-threaded. Do not add synchronization or parallel scenario execution to the calculation modules.
+- Multiple scenarios, their independent settings, and any future scheduling are deferred to a higher application layer. This ADR does not define how that layer will implement them.
 
 ## Alternatives considered
 
-- Add a core-wide scenario registry and parallel runner: rejected because no current domain operation requires cross-scenario coordination, and scheduling belongs to the application layer.
-- Keep latest settings global across all scenarios: rejected because settings are scenario-specific and must not silently affect another scenario or a saved snapshot.
-- Require the whole application to be single-threaded: rejected because this is an unnecessary process-level restriction; the core only declines to define concurrency policy.
+- Add a core-wide scenario registry or parallel runner: rejected because the current calculation work has no scenario-management requirement.
+- Design multi-scenario ownership now: deferred until the CLI/GUI workflow is specified.
 
 ## Consequences
 
-M5 can implement and validate one scenario's complete in-memory runtime contract. Future CLI/GUI work can compose independent scenario contexts and choose sequential or concurrent execution without changing domain semantics. No cross-scenario synchronization or shared-setting semantics are introduced into the core.
+The current core has no persistent scenario/run context and assumes single-threaded calls. Future CLI/GUI work can introduce scenario ownership and decide whether to schedule calls sequentially or concurrently without putting that policy into calculation modules.

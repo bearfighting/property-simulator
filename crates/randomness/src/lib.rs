@@ -5,11 +5,9 @@ use property_simulation_domain::{ActivityInstanceId, SliceId, TrialId, YearMonth
 use property_simulation_models::RandomSource;
 use rand_chacha::ChaCha12Rng;
 use rand_core::{RngCore, SeedableRng};
-use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RandomnessError {
     EntropyUnavailable,
-    RunSequenceExhausted,
     TrialIdentityMismatch,
 }
 
@@ -39,30 +37,21 @@ impl RootKey {
 
 pub struct RunKeyFactory {
     root: RootKey,
-    sequence: AtomicU64,
 }
 
 impl RunKeyFactory {
     pub fn new(root: RootKey) -> Self {
-        Self {
-            root,
-            sequence: AtomicU64::new(0),
-        }
+        Self { root }
     }
 
-    pub fn run_streams(&self, trial: TrialId) -> Result<RandomStreams, RandomnessError> {
-        let sequence = self
-            .sequence
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-            .map_err(|_| RandomnessError::RunSequenceExhausted)?;
+    pub fn run_streams(&self, trial: TrialId) -> RandomStreams {
         let mut hasher = Hasher::new_keyed(&self.root.0);
         hasher.update(b"property-simulation/run-key\0");
         hasher.update(trial.as_bytes());
-        hasher.update(&sequence.to_le_bytes());
-        Ok(RandomStreams {
+        RandomStreams {
             run_key: *hasher.finalize().as_bytes(),
             trial_id: trial,
-        })
+        }
     }
 }
 
@@ -156,17 +145,16 @@ mod tests {
     }
 
     #[test]
-    fn run_keys_change_with_trial_and_process_sequence() {
+    fn run_keys_are_derived_from_trial_identity() {
         let root = [8; 32];
         let factory = RunKeyFactory::new(RootKey::from_seed(root));
-        let a = factory.run_streams(TrialId::from_bytes([1; 16])).unwrap();
-        let b = factory.run_streams(TrialId::from_bytes([1; 16])).unwrap();
+        let a = factory.run_streams(TrialId::from_bytes([1; 16]));
+        let b = factory.run_streams(TrialId::from_bytes([1; 16]));
         let id = identity();
-        assert_ne!(draws(&a, &id), draws(&b, &id));
+        assert_eq!(draws(&a, &id), draws(&b, &id));
 
-        let different_trial = RunKeyFactory::new(RootKey::from_seed(root))
-            .run_streams(TrialId::from_bytes([2; 16]))
-            .unwrap();
+        let different_trial =
+            RunKeyFactory::new(RootKey::from_seed(root)).run_streams(TrialId::from_bytes([2; 16]));
         let mut different_trial_identity = id.clone();
         different_trial_identity.trial_id = TrialId::from_bytes([2; 16]);
         assert_ne!(
@@ -176,18 +164,9 @@ mod tests {
     }
 
     #[test]
-    fn sequence_exhaustion_is_an_error_without_wrapping() {
-        let factory = RunKeyFactory::new(RootKey::from_seed([3; 32]));
-        factory.sequence.store(u64::MAX, Ordering::Relaxed);
-        assert!(factory.run_streams(TrialId::from_bytes([1; 16])).is_err());
-        assert_eq!(factory.sequence.load(Ordering::Relaxed), u64::MAX);
-    }
-
-    #[test]
     fn semantic_fields_and_independent_consumption_are_isolated() {
         let streams = RunKeyFactory::new(RootKey::from_seed([7; 32]))
-            .run_streams(TrialId::from_bytes([1; 16]))
-            .unwrap();
+            .run_streams(TrialId::from_bytes([1; 16]));
         let base = identity();
         let expected = draws(&streams, &base);
         let mut unrelated = streams
@@ -223,8 +202,7 @@ mod tests {
     #[test]
     fn semantic_stream_rejects_a_different_trial_identity() {
         let streams = RunKeyFactory::new(RootKey::from_seed([4; 32]))
-            .run_streams(TrialId::from_bytes([1; 16]))
-            .unwrap();
+            .run_streams(TrialId::from_bytes([1; 16]));
         let mut foreign = identity();
         foreign.trial_id = TrialId::from_bytes([2; 16]);
         assert!(matches!(

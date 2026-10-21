@@ -1,8 +1,16 @@
-use crate::{CashFlowContribution, OutputIdFactory, SliceProposal};
-use property_simulation_accounting::{Ledger, LedgerTransaction};
+#[cfg(test)]
+use crate::CashFlowContribution;
+#[cfg(test)]
+use crate::OutputIdFactory;
+use crate::SliceProposal;
+#[cfg(test)]
+use property_simulation_accounting::Ledger;
+use property_simulation_accounting::LedgerTransaction;
 use property_simulation_domain::{
-    AccountId, ActivityInstanceId, BranchId, EffectId, EventId, Money, SliceId, TrialId, YearMonth,
+    AccountId, ActivityInstanceId, EffectId, EventId, Money, SliceId, YearMonth,
 };
+#[cfg(test)]
+use property_simulation_domain::{BranchId, TrialId};
 use property_simulation_models::{FixedRateLoan, LoanMonth};
 
 /// Fixed-rate loan activity with an independently tracked liability account.
@@ -31,6 +39,7 @@ pub struct LoanStateEffectProposal {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct LoanCoordinatedMonth {
     pub instance_id: ActivityInstanceId,
     pub slice_id: SliceId,
@@ -95,6 +104,7 @@ pub struct LoanTermsUpdate {
     pub(super) principal_transaction: Option<LedgerTransaction>,
 }
 
+#[cfg(test)]
 pub struct LoanMonthCommand<'a> {
     pub period: YearMonth,
     pub loan: Option<FixedRateLoan>,

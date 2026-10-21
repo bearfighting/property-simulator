@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
-use crate::composition::{SliceResources, account_resource_key};
+use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
     ActivityConfiguration, ActivityInstance, ActivitySampleKind, EventProposal, FrozenInput,
@@ -27,7 +27,7 @@ impl SimulationSlice for UtilitySlice {
         let writes = match &self.instance.configuration {
             ActivityConfiguration::Utility(config) => [config.cash_account, config.expense_account]
                 .into_iter()
-                .map(account_resource_key)
+                .map(property_simulation_domain::ResourceKey::for_account)
                 .collect(),
             _ => BTreeSet::new(),
         };

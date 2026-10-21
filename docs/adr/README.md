@@ -18,29 +18,31 @@ Copy [`TEMPLATE.md`](TEMPLATE.md) for new records.
 
 | ADR | Decision | Status |
 |---|---|---|
-| [01](ADR-01-monthly-run-control.md) | Monthly simulation and external run control | Accepted |
+| [01](ADR-01-monthly-run-control.md) | Monthly simulation and external run control | Superseded by ADR-27 |
 | [02](ADR-02-monthly-tick.md) | One monthly transactional tick | Accepted |
 | [03](ADR-03-arbitrary-opening-state.md) | Start from a valid opening state | Accepted |
 | [04](ADR-04-scenario-and-overrides.md) | Scenario preset and user overrides | Accepted |
-| [05](ADR-05-slice-coordination.md) | Independent proposals and coordinated commit | Accepted |
+| [05](ADR-05-slice-coordination.md) | Independent proposals and coordinated commit | Superseded by ADR-28 |
 | [06](ADR-06-events-effects-ledger.md) | Separate events, effects, and ledger | Accepted |
 | [07](ADR-07-monthly-cashflow.md) | Monthly cash-flow posting | Accepted |
-| [08](ADR-08-dataset-output.md) | Dataset as core output | Accepted |
+| [08](ADR-08-dataset-output.md) | Dataset as core output | Superseded by ADR-27 |
 | [09](ADR-09-random-trials.md) | Explicit random trials and resampling | Accepted |
 | [10](ADR-10-delivery-phases.md) | Three delivery phases | Accepted |
 | [11](ADR-11-static-registration.md) | Static Rust registration initially | Accepted |
 | [12](ADR-12-independent-random-categories.md) | Independent random categories initially | Accepted |
 | [13](ADR-13-ledger-profile.md) | Household property ledger profile | Accepted |
 | [14](ADR-14-mortgage-interest.md) | Mortgage interest and payment convention | Accepted |
-| [15](ADR-15-random-streams-and-branches.md) | Random streams, branches, and recovery | Accepted |
-| [16](ADR-16-configuration-and-run-control.md) | Configuration and run controls | Accepted |
+| [15](ADR-15-random-streams-and-branches.md) | Random streams and branches | Accepted |
+| [16](ADR-16-configuration-and-run-control.md) | Configuration and run controls | Superseded by ADR-27/28 |
 | [17](ADR-17-money-and-identifiers.md) | Currency-tagged money and opaque identifiers | Accepted |
 | [18](ADR-18-sufficient-state-transition.md) | Sufficient state and single-period transition | Accepted |
 | [19](ADR-19-validation-only-domain-errors.md) | Validation boundary and fatal runtime failures | Accepted |
 | [20](ADR-20-composable-slices-and-random-sampling.md) | Composable proposals, stable provenance, and decoupled sampling | Accepted |
 | [21](ADR-21-m3-run-randomness-and-persistence.md) | M3 run randomness, persistence, and composition | Accepted |
-| [22](ADR-22-m3-run-inputs-snapshot-and-cashflow-contract.md) | M3 run inputs, snapshot references, and cash-flow aggregation | Accepted |
+| [22](ADR-22-m3-run-inputs-snapshot-and-cashflow-contract.md) | M3 inputs and Ledger-derived cash flow | Updated by ADR-27 |
 | [23](ADR-23-loan-ledger-account-granularity.md) | Loan Ledger account granularity | Accepted |
-| [24](ADR-24-m4-operating-activity-contracts.md) | M4 operating activity contracts | Accepted |
-| [25](ADR-25-m5-in-memory-core-contract.md) | M5 in-memory core data contract | Accepted |
-| [26](ADR-26-scenario-scoped-runtime-and-concurrency.md) | Scenario-scoped runtime state and application-owned concurrency | Accepted |
+| [24](ADR-24-m4-operating-activity-contracts.md) | M4 operating activity domain contracts | Accepted; runtime composition historical |
+| [25](ADR-25-m5-in-memory-core-contract.md) | Earlier M5 in-memory core data contract | Superseded by ADR-27 |
+| [26](ADR-26-scenario-scoped-runtime-and-concurrency.md) | Single-threaded calculation scope; scenario management deferred | Accepted |
+| [27](ADR-27-current-month-runtime-and-database-owned-history.md) | Monthly calculation boundary and Ledger-derived cash flow | Accepted |
+| [28](ADR-28-pre-m5-crate-call-boundary-review.md) | Pre-M5 crate call-boundary review | Accepted |

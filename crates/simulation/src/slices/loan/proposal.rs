@@ -5,8 +5,8 @@ use property_simulation_domain::YearMonth;
 use property_simulation_models::{FixedRateLoan, LoanMonth};
 
 impl LoanSlice {
-    /// Propose postings for a typed monthly calculation. The coordinator remains
-    /// responsible for calculation, validation, ID assignment, and atomic commit.
+    /// Propose postings for a typed monthly calculation. The caller composes this
+    /// proposal with other outputs and owns validation, ID assignment, and commit.
     pub fn propose_month(
         &self,
         period: YearMonth,

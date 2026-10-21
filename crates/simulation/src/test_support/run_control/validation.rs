@@ -10,14 +10,16 @@ pub(super) fn fatal_run_error(
     activity_instance_id: Option<property_simulation_domain::ActivityInstanceId>,
     source: SimulationError,
 ) -> RunControlError {
-    RunControlError::Simulation(SimulationError::Fatal(crate::FatalSimulationFailure::new(
-        phase,
-        period,
-        identity.map(|identity| identity.trial_id),
-        identity.map(|identity| identity.branch_id),
-        activity_instance_id,
-        source,
-    )))
+    RunControlError::Simulation(SimulationError::Fatal(
+        crate::FatalSimulationFailure::with_run_identity(
+            phase,
+            period,
+            identity.map(|identity| identity.trial_id),
+            identity.map(|identity| identity.branch_id),
+            activity_instance_id,
+            source,
+        ),
+    ))
 }
 
 pub(super) fn has_duplicate_activity_ids(activities: &[crate::ActivityInstance]) -> bool {

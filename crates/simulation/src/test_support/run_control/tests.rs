@@ -255,10 +255,9 @@ fn random_run_key_is_allocated_once_and_reused_across_months() {
             identity: Option<RunIdentity>,
         ) -> Result<Option<property_simulation_randomness::RandomStreams>, &'static str> {
             self.allocations += 1;
-            self.factory
-                .run_streams(identity.ok_or("missing run identity")?.trial_id)
-                .map(Some)
-                .map_err(|_| "random stream allocation failed")
+            Ok(Some(self.factory.run_streams(
+                identity.ok_or("missing run identity")?.trial_id,
+            )))
         }
 
         fn execute(
@@ -570,7 +569,7 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
             let trial = TrialId::from_bytes([4; 16]);
             let branch = BranchId::from_bytes([5; 16]);
             let proposal = IdentifiedProposal {
-                identity: Some((trial, branch, input.frozen_input().period)),
+                period: Some(input.frozen_input().period),
                 transactions: vec![crate::ProposedTransaction {
                     id: transaction_id,
                     instance_id: activity.id,
@@ -906,10 +905,10 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
             identity: Option<RunIdentity>,
         ) -> Result<Option<property_simulation_randomness::RandomStreams>, &'static str> {
             self.stream_allocations += 1;
-            self.key_factory
-                .run_streams(identity.ok_or("missing identity")?.trial_id)
-                .map(Some)
-                .map_err(|_| "run-key allocation failed")
+            Ok(Some(
+                self.key_factory
+                    .run_streams(identity.ok_or("missing identity")?.trial_id),
+            ))
         }
 
         fn execute(
@@ -1651,7 +1650,7 @@ fn archive_cashflow_summary_derives_nonzero_month_activity_and_run_totals() {
         .post(transaction.clone().into_ledger_transaction())
         .unwrap();
     let proposal = IdentifiedProposal {
-        identity: Some((trial, branch, month(1))),
+        period: Some(month(1)),
         events: vec![],
         effects: vec![],
         transactions: vec![transaction],
