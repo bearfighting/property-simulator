@@ -1,26 +1,19 @@
-use super::{
-    LoanCalculation, LoanMonthOutput, LoanSlice, LoanStateEffectProposal, map_model_error,
-};
+use super::{LoanMonthOutput, LoanSlice, LoanStateEffectProposal};
 use crate::{EventProposal, SimulationError, SliceProposal, TransactionProposal};
 use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 use property_simulation_domain::YearMonth;
 use property_simulation_models::{FixedRateLoan, LoanMonth};
 
 impl LoanSlice {
-    /// Propose postings for a typed monthly calculation. The caller composes this
-    /// proposal with other outputs and owns validation, ID assignment, and commit.
-    pub fn propose_month(
+    /// Propose postings for a precomputed monthly loan result. The caller owns
+    /// model validation and calculation; this method checks posting consistency
+    /// and leaves composition, ID assignment, and commit to the caller.
+    pub(crate) fn propose_month(
         &self,
         period: YearMonth,
         loan: FixedRateLoan,
         result: LoanMonth,
-        calculation: &impl LoanCalculation,
     ) -> Result<LoanMonthOutput, SimulationError> {
-        if calculation.calculate_month(loan).map_err(map_model_error)? != result {
-            return Err(SimulationError::InvalidInput(
-                "loan month output does not match the supplied loan calculation",
-            ));
-        }
         let currency = loan.opening_balance.currency();
         let amounts = [
             result.interest,

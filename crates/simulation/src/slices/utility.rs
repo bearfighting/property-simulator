@@ -6,8 +6,8 @@ use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
-    ActivityConfiguration, ActivityInstance, ActivitySampleKind, EventProposal, FrozenInput,
-    OpeningState, SliceProposal, TransactionProposal, UtilityConfig,
+    ActivityConfiguration, ActivityInstance, EventProposal, FrozenInput, OpeningState,
+    SliceProposal, TransactionProposal, UtilityConfig,
 };
 use crate::validation::ValidatedInput;
 
@@ -17,7 +17,6 @@ pub struct UtilitySlice {
 
 impl SimulationSlice for UtilitySlice {
     type Sample = u64;
-    const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Utility;
 
     fn instance(&self) -> &ActivityInstance {
         &self.instance

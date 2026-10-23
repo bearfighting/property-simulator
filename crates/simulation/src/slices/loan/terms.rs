@@ -1,6 +1,9 @@
+#[cfg(test)]
 use super::LoanTermsUpdate;
 use crate::SimulationError;
+#[cfg(test)]
 use property_simulation_accounting::LedgerTransaction;
+#[cfg(test)]
 use property_simulation_domain::YearMonth;
 use property_simulation_models::{FixedRateLoan, LoanModelError};
 
@@ -48,6 +51,7 @@ pub(crate) fn map_model_error(error: LoanModelError) -> SimulationError {
 
 /// Validates a month-start terms update and checks any principal delta against the
 /// caller-supplied balanced financing transaction.
+#[cfg(test)]
 pub fn apply_loan_terms_update(
     current: FixedRateLoan,
     effective_period: YearMonth,

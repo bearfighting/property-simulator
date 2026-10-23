@@ -21,7 +21,6 @@ pub enum StopCondition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunUpdateValue {
     Rent(Money),
-    RepairCostLimit(Money),
     Condition(crate::AssetCondition),
     Activities(Vec<crate::ActivityInstance>),
     LoanTerms(Box<LoanRunUpdate>),
@@ -262,9 +261,7 @@ impl SimulationRun {
         }
         let loan_activities: std::collections::BTreeMap<_, _> = activities
             .iter()
-            .filter(|activity| {
-                activity.configuration.sample_kind() == crate::ActivitySampleKind::Loan
-            })
+            .filter(|activity| activity.configuration.is_loan())
             .map(|activity| (activity.id, activity))
             .collect();
         let mut loan_ids = std::collections::BTreeSet::new();

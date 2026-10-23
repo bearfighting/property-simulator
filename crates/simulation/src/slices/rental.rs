@@ -6,8 +6,7 @@ use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
-    ActivityInstance, ActivitySampleKind, EventProposal, FrozenInput, OpeningState, SliceProposal,
-    TransactionProposal,
+    ActivityInstance, EventProposal, FrozenInput, OpeningState, SliceProposal, TransactionProposal,
 };
 
 pub struct RentalSlice {
@@ -15,7 +14,6 @@ pub struct RentalSlice {
 }
 impl SimulationSlice for RentalSlice {
     type Sample = ();
-    const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Rental;
     fn instance(&self) -> &ActivityInstance {
         &self.instance
     }

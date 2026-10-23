@@ -1,6 +1,12 @@
 #[cfg(test)]
 use std::collections::BTreeMap;
 
+use crate::SimulationError;
+use crate::activity::{ActivitySample, ActivitySampleValue};
+use crate::proposals::merge_proposals;
+#[cfg(test)]
+use crate::slices::LoanCoordinatedMonth;
+use crate::slices::{LoanContinuation, LoanEvent, LoanStateEffect};
 use property_simulation_accounting::LedgerEntry;
 #[cfg(test)]
 use property_simulation_accounting::LedgerTransactionSource;
@@ -11,15 +17,6 @@ use property_simulation_domain::{
 };
 #[cfg(test)]
 use property_simulation_domain::{BranchId, TrialId};
-use property_simulation_models::RepairCostDistribution;
-pub use property_simulation_models::RepairSample;
-
-use crate::SimulationError;
-use crate::activity::{ActivitySample, ActivitySampleValue};
-use crate::proposals::merge_proposals;
-#[cfg(test)]
-use crate::slices::LoanCoordinatedMonth;
-use crate::slices::{LoanContinuation, LoanEvent, LoanStateEffect};
 
 /// Explicit values for one synchronous monthly calculation. The opening Ledger is
 /// borrowed so calculation cannot publish partial postings to its caller.
@@ -27,10 +24,8 @@ use crate::slices::{LoanContinuation, LoanEvent, LoanStateEffect};
 pub struct MonthlyInput<'a> {
     pub opening_state: &'a OpeningState,
     pub frozen_input: &'a FrozenInput,
-    /// Bounded repair cost support used to validate explicit repair samples.
-    /// Single-month calculation does not sample or consume the occurrence probability.
-    pub repair_distribution: &'a RepairCostDistribution,
     pub activities: &'a [ActivityInstance],
+    #[cfg(test)]
     pub samples: &'a [ActivitySample<ActivitySampleValue>],
     /// Opening loan state is separate because the loan module does not implement
     /// `SimulationSlice`.
@@ -52,8 +47,8 @@ pub struct MonthlyCashFlowContribution {
 }
 
 /// Complete successful output contract for one month. The production monthly
-/// entry point constructs this after invoking Slice adapters and settling a
-/// candidate Ledger.
+/// entry point constructs this after dispatching configured Slices and settling
+/// a candidate Ledger.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonthlyResult {
     period: YearMonth,
@@ -63,6 +58,7 @@ pub struct MonthlyResult {
     samples: Vec<ActivitySample<ActivitySampleValue>>,
     closing_state: OpeningState,
     proposal: IdentifiedProposal,
+    lifecycle_changes: Vec<InstanceLifecycleChange>,
     ledger_transactions: Vec<LedgerTransaction>,
     cash_flow_contributions: Vec<MonthlyCashFlowContribution>,
     opening_loan_continuations: Vec<LoanContinuation>,
@@ -74,7 +70,42 @@ pub struct MonthlyResult {
 
 impl MonthlyResult {
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) fn from_settled_parts(
+        period: YearMonth,
+        opening_state: OpeningState,
+        frozen_input: FrozenInput,
+        activities: Vec<ActivityInstance>,
+        samples: Vec<ActivitySample<ActivitySampleValue>>,
+        closing_state: OpeningState,
+        proposal: IdentifiedProposal,
+        ledger_transactions: Vec<LedgerTransaction>,
+        cash_flow_contributions: Vec<MonthlyCashFlowContribution>,
+        opening_loan_continuations: Vec<LoanContinuation>,
+        closing_loan_continuations: Vec<LoanContinuation>,
+        loan_events: Vec<LoanEvent>,
+        loan_effects: Vec<LoanStateEffect>,
+    ) -> Result<Self, SimulationError> {
+        Self::from_settled_parts_with_lifecycle(
+            period,
+            opening_state,
+            frozen_input,
+            activities,
+            samples,
+            closing_state,
+            proposal,
+            Vec::new(),
+            ledger_transactions,
+            cash_flow_contributions,
+            opening_loan_continuations,
+            closing_loan_continuations,
+            loan_events,
+            loan_effects,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_settled_parts_with_lifecycle(
         period: YearMonth,
         opening_state: OpeningState,
         frozen_input: FrozenInput,
@@ -82,6 +113,7 @@ impl MonthlyResult {
         mut samples: Vec<ActivitySample<ActivitySampleValue>>,
         closing_state: OpeningState,
         proposal: IdentifiedProposal,
+        mut lifecycle_changes: Vec<InstanceLifecycleChange>,
         mut ledger_transactions: Vec<LedgerTransaction>,
         mut cash_flow_contributions: Vec<MonthlyCashFlowContribution>,
         mut opening_loan_continuations: Vec<LoanContinuation>,
@@ -93,6 +125,7 @@ impl MonthlyResult {
         let proposal = merge_proposals([proposal])?;
         activities.sort_by_key(|activity| activity.id);
         samples.sort_by_key(|sample| sample.instance_id);
+        lifecycle_changes.sort_by_key(|change| (change.effective_period, change.instance_id()));
         ledger_transactions.sort_by_key(LedgerTransaction::id);
         cash_flow_contributions.sort_by_key(|item| (item.transaction_id, item.category));
         opening_loan_continuations.sort_by_key(|loan| loan.instance_id);
@@ -100,6 +133,10 @@ impl MonthlyResult {
         loan_events.sort_by_key(|event| event.id);
         loan_effects.sort_by_key(|effect| effect.id);
         let activity_ids = activities.iter().map(|a| a.id).collect::<BTreeSet<_>>();
+        let lifecycle_ids = lifecycle_changes
+            .iter()
+            .map(InstanceLifecycleChange::instance_id)
+            .collect::<BTreeSet<_>>();
         let sample_ids = samples
             .iter()
             .map(|s| s.instance_id)
@@ -117,32 +154,21 @@ impl MonthlyResult {
                 .iter()
                 .any(|a| a.id == instance_id && a.slice_id == slice_id)
         };
-        let sample_kind_matches = |sample: &ActivitySample<ActivitySampleValue>| {
+        let sample_matches = |sample: &ActivitySample<ActivitySampleValue>| {
             activities
                 .iter()
                 .find(|a| a.id == sample.instance_id)
-                .is_some_and(|activity| {
-                    matches!(
-                        (&sample.value, activity.configuration.sample_kind()),
-                        (ActivitySampleValue::Rental, ActivitySampleKind::Rental)
-                            | (ActivitySampleValue::Repair(_), ActivitySampleKind::Repair)
-                            | (
-                                ActivitySampleValue::PropertyTax,
-                                ActivitySampleKind::PropertyTax
-                            )
-                            | (ActivitySampleValue::Utility(_), ActivitySampleKind::Utility)
-                    )
-                })
+                .is_some_and(|activity| sample.value.matches_configuration(&activity.configuration))
         };
         let slice_activity_count = activities
             .iter()
-            .filter(|activity| activity.configuration.sample_kind() != ActivitySampleKind::Loan)
+            .filter(|activity| !matches!(activity.configuration, ActivityConfiguration::Loan(_)))
             .count();
         let loan_activity_matches = |loan: &LoanContinuation| {
             activities.iter().any(|activity| {
                 activity.id == loan.instance_id
                     && activity.slice_id == loan.slice_id
-                    && activity.configuration.sample_kind() == ActivitySampleKind::Loan
+                    && matches!(activity.configuration, ActivityConfiguration::Loan(_))
             })
         };
         let money_matches = |amount: Money| amount.currency() == opening_state.cash.currency();
@@ -153,9 +179,11 @@ impl MonthlyResult {
         {
             ActivityConfiguration::PropertyTax(config) => money_matches(config.amount),
             ActivityConfiguration::Utility(config) => money_matches(config.rate_per_unit),
-            ActivityConfiguration::Rental
-            | ActivityConfiguration::Repair
-            | ActivityConfiguration::Loan => true,
+            ActivityConfiguration::RepairOccurrence(config) => {
+                money_matches(config.cost_template.maximum)
+            }
+            ActivityConfiguration::RepairCost(config) => money_matches(config.maximum),
+            ActivityConfiguration::Rental | ActivityConfiguration::Loan(_) => true,
         };
         let cash_changes = ledger_transactions
             .iter()
@@ -179,21 +207,28 @@ impl MonthlyResult {
             || opening_state.condition == closing_state.condition);
         if frozen_input.period != period
             || opening_state.cash.currency() != frozen_input.rent.currency()
-            || !money_matches(frozen_input.repair_cost_limit)
             || closing_state.cash.currency() != opening_state.cash.currency()
             || closing_state.cash != expected_closing_cash
             || !effects_match_closing_state
             || activity_ids.len() != activities.len()
+            || lifecycle_ids.len() != lifecycle_changes.len()
+            || lifecycle_changes.iter().any(|change| {
+                change.effective_period < period
+                    || match &change.operation {
+                        InstanceLifecycleOperation::Add(instance) => {
+                            activity_ids.contains(&instance.id)
+                        }
+                        InstanceLifecycleOperation::Complete { instance_id } => {
+                            !activity_ids.contains(instance_id)
+                        }
+                    }
+            })
             || sample_ids.len() != samples.len()
             || samples.len() != slice_activity_count
             || samples
                 .iter()
                 .any(|s| s.period != period || !source_matches(s.instance_id, s.slice_id))
-            || samples.iter().any(|sample| !sample_kind_matches(sample))
-            || samples.iter().any(|sample| match &sample.value {
-                ActivitySampleValue::Repair(RepairSample::Repair { cost }) => !money_matches(*cost),
-                _ => false,
-            })
+            || samples.iter().any(|sample| !sample_matches(sample))
             || activities
                 .iter()
                 .any(|activity| !activity_currency_matches(activity))
@@ -238,14 +273,14 @@ impl MonthlyResult {
                 != activities
                     .iter()
                     .filter(|activity| {
-                        activity.configuration.sample_kind() == ActivitySampleKind::Loan
+                        matches!(activity.configuration, ActivityConfiguration::Loan(_))
                     })
                     .count()
             || closing_loan_continuations.len()
                 != activities
                     .iter()
                     .filter(|activity| {
-                        activity.configuration.sample_kind() == ActivitySampleKind::Loan
+                        matches!(activity.configuration, ActivityConfiguration::Loan(_))
                     })
                     .count()
             || loan_events.iter().any(|v| {
@@ -342,7 +377,26 @@ impl MonthlyResult {
                     .iter()
                     .map(|event| (event.id, (event.instance_id, event.slice_id))),
             )
+            .chain(activities.iter().filter_map(|activity| {
+                if let ActivityConfiguration::RepairCost(config) = &activity.configuration {
+                    Some((
+                        config.source_event_id,
+                        (config.source_instance_id, config.source_slice_id),
+                    ))
+                } else {
+                    None
+                }
+            }))
             .collect::<std::collections::BTreeMap<_, _>>();
+        let source_event_matches = |owner, slice, event_id| {
+            event_sources.get(&event_id) == Some(&(owner, slice))
+                || activities.iter().any(|activity| {
+                    activity.id == owner && activity.slice_id == slice
+                        && matches!(&activity.configuration, ActivityConfiguration::RepairCost(config)
+                            if config.source_event_id == event_id
+                                && event_sources.get(&event_id) == Some(&(config.source_instance_id, config.source_slice_id)))
+                })
+        };
         if transaction_ids.len() != ledger_transactions.len()
             || source_by_transaction.len() != ledger_transactions.len()
             || proposal_transactions.len() != proposal.transactions().len()
@@ -361,12 +415,12 @@ impl MonthlyResult {
                     || proposed.key != source.output_key
                     || proposed.source_event_id != source.source_event_id
                     || source.source_event_id.is_some_and(|event_id| {
-                        event_sources.get(&event_id) != Some(&(source.instance_id, source.slice_id))
+                        !source_event_matches(source.instance_id, source.slice_id, event_id)
                     })
             })
             || proposal.effects().iter().any(|effect| {
                 effect.source_event_id.is_some_and(|event_id| {
-                    event_sources.get(&event_id) != Some(&(effect.instance_id, effect.slice_id))
+                    !source_event_matches(effect.instance_id, effect.slice_id, event_id)
                 })
             })
             || supplied_projection.len() != cash_flow_contributions.len()
@@ -476,6 +530,7 @@ impl MonthlyResult {
             samples,
             closing_state,
             proposal,
+            lifecycle_changes,
             ledger_transactions,
             cash_flow_contributions,
             opening_loan_continuations,
@@ -504,6 +559,10 @@ impl MonthlyResult {
     }
     pub fn proposal(&self) -> &IdentifiedProposal {
         &self.proposal
+    }
+
+    pub fn lifecycle_changes(&self) -> &[InstanceLifecycleChange] {
+        &self.lifecycle_changes
     }
     pub fn ledger_transactions(&self) -> &[LedgerTransaction] {
         &self.ledger_transactions
@@ -541,35 +600,153 @@ pub struct FrozenInput {
     pub rent: Money,
     pub rent_account: AccountId,
     pub cash_account: AccountId,
-    pub repair_expense_account: AccountId,
-    pub repair_cost_limit: Money,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityInstance {
     pub id: ActivityInstanceId,
     pub slice_id: SliceId,
     pub configuration: ActivityConfiguration,
 }
-/// Per-instance model configuration. The variant is also the activity/sample kind,
-/// so it cannot disagree with the configuration used for this calculation.
+/// Per-instance model configuration and closed tag used by the monthly dispatcher.
+/// Loan state is carried separately and does not have a random sample variant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivityConfiguration {
     Rental,
-    Repair,
-    Loan,
+    RepairOccurrence(RepairOccurrenceConfig),
+    RepairCost(RepairCostConfig),
+    Loan(LoanConfig),
     PropertyTax(PropertyTaxConfig),
     Utility(UtilityConfig),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairOccurrenceConfig {
+    pub cost_template: RepairCostTemplate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairCostTemplate {
+    pub maximum: Money,
+    pub expense_account: AccountId,
+    pub delay_months: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairCostConfig {
+    pub source_event_id: EventId,
+    pub source_instance_id: ActivityInstanceId,
+    pub source_slice_id: SliceId,
+    pub occurrence_period: YearMonth,
+    pub delay_months: u32,
+    pub effective_period: YearMonth,
+    pub maximum: Money,
+    pub expense_account: AccountId,
+}
+
+/// Month facts used by the repair occurrence model. A missing settlement month
+/// means no settled repair cost is known; the simulation start is then the
+/// interval baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairHistory {
+    pub simulation_start: YearMonth,
+    pub latest_settled_cost: Option<YearMonth>,
+}
+
+/// Stable key supplied by the caller when preparing an independent Slice
+/// random stream. One runtime belongs to one simulation run; the full activity,
+/// Slice, month and purpose tuple prevents unrelated draws from sharing state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SliceRandomInputKey {
+    pub activity_id: ActivityInstanceId,
+    pub slice_id: SliceId,
+    pub period: YearMonth,
+    pub purpose: &'static str,
+}
+
+impl RepairHistory {
+    pub fn age_months(self, period: YearMonth) -> Result<u64, SimulationError> {
+        let baseline = self
+            .latest_settled_cost
+            .unwrap_or(self.simulation_start)
+            .max(self.simulation_start);
+        if period < baseline {
+            return Err(SimulationError::InvalidInput(
+                "repair history baseline is after the calculation month",
+            ));
+        }
+        let year_delta = i64::from(period.year()) - i64::from(baseline.year());
+        let month_delta = i64::from(period.month()) - i64::from(baseline.month());
+        u64::try_from(year_delta * 12 + month_delta).map_err(|_| {
+            SimulationError::InvalidInput("repair history month difference is invalid")
+        })
+    }
+}
+
+#[cfg(test)]
+mod repair_history_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn repair_age_uses_latest_known_baseline_and_complete_months() {
+        let start = YearMonth::from_str("2024-12").unwrap();
+        let history = RepairHistory {
+            simulation_start: start,
+            latest_settled_cost: None,
+        };
+        assert_eq!(history.age_months(start).unwrap(), 0);
+        assert_eq!(
+            history
+                .age_months(YearMonth::from_str("2025-01").unwrap())
+                .unwrap(),
+            1
+        );
+        let settled = RepairHistory {
+            simulation_start: start,
+            latest_settled_cost: Some(YearMonth::from_str("2025-02").unwrap()),
+        };
+        assert_eq!(
+            settled
+                .age_months(YearMonth::from_str("2025-03").unwrap())
+                .unwrap(),
+            1
+        );
+        assert!(
+            settled
+                .age_months(YearMonth::from_str("2025-01").unwrap())
+                .is_err()
+        );
+    }
+}
+
 impl ActivityConfiguration {
-    pub const fn sample_kind(&self) -> ActivitySampleKind {
+    pub const fn is_loan(&self) -> bool {
+        matches!(self, Self::Loan(_))
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_kind(&self) -> TestActivityKind {
         match self {
-            Self::Rental => ActivitySampleKind::Rental,
-            Self::Repair => ActivitySampleKind::Repair,
-            Self::Loan => ActivitySampleKind::Loan,
-            Self::PropertyTax(_) => ActivitySampleKind::PropertyTax,
-            Self::Utility(_) => ActivitySampleKind::Utility,
+            Self::Rental => TestActivityKind::Rental,
+            Self::RepairOccurrence(_) => TestActivityKind::RepairOccurrence,
+            Self::RepairCost(_) => TestActivityKind::RepairCost,
+            Self::Loan(_) => TestActivityKind::Loan,
+            Self::PropertyTax(_) => TestActivityKind::PropertyTax,
+            Self::Utility(_) => TestActivityKind::Utility,
         }
     }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TestActivityKind {
+    Rental,
+    RepairOccurrence,
+    RepairCost,
+    Loan,
+    PropertyTax,
+    Utility,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyTaxCadence {
@@ -616,13 +793,44 @@ pub struct UtilityConfig {
     pub cash_account: AccountId,
     pub expense_account: AccountId,
 }
+
+/// Account roles used by each active loan Slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActivitySampleKind {
-    Rental,
-    Repair,
-    Loan,
-    PropertyTax,
-    Utility,
+pub struct LoanConfig {
+    pub liability_account: AccountId,
+    pub interest_expense_account: AccountId,
+    pub cash_account: AccountId,
+}
+
+#[cfg(test)]
+impl Default for LoanConfig {
+    fn default() -> Self {
+        Self {
+            liability_account: AccountId::from_bytes([251; 16]),
+            interest_expense_account: AccountId::from_bytes([252; 16]),
+            cash_account: AccountId::from_bytes([253; 16]),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceLifecycleChange {
+    pub effective_period: YearMonth,
+    pub operation: InstanceLifecycleOperation,
+}
+
+impl InstanceLifecycleChange {
+    pub const fn instance_id(&self) -> ActivityInstanceId {
+        match &self.operation {
+            InstanceLifecycleOperation::Add(instance) => instance.id,
+            InstanceLifecycleOperation::Complete { instance_id } => *instance_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstanceLifecycleOperation {
+    Add(ActivityInstance),
+    Complete { instance_id: ActivityInstanceId },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventProposal {
@@ -719,9 +927,15 @@ pub struct ProposedEffect {
     pub condition: AssetCondition,
 }
 
-/// The caller's implementation must be deterministic and collision-resistant
-/// over the supplied identity tuple. Duplicate IDs in a monthly result are rejected.
-pub trait OutputIdFactory {
+/// Caller-provided typed ID allocation. Production allocation is supplied by
+/// Application; Core does not own an ID source. Duplicate output IDs are rejected.
+pub trait OutputIdAllocator {
+    fn activity_instance_id(
+        &self,
+        period: YearMonth,
+        source_instance: ActivityInstanceId,
+        key: &str,
+    ) -> ActivityInstanceId;
     fn event_id(&self, period: YearMonth, instance: ActivityInstanceId, key: &str) -> EventId;
     fn effect_id(&self, period: YearMonth, instance: ActivityInstanceId, key: &str) -> EffectId;
     fn transaction_id(
@@ -882,27 +1096,19 @@ impl TestMonthlyResult {
                 .get(&instance_id)
                 .is_some_and(|activity| activity.slice_id == slice_id)
         };
-        let sample_kind_matches = |sample: &ActivitySample<ActivitySampleValue>| {
+        let sample_matches = |sample: &ActivitySample<ActivitySampleValue>| {
             activity_by_id
                 .get(&sample.instance_id)
-                .is_some_and(|activity| {
-                    matches!(
-                        (&sample.value, activity.configuration.sample_kind()),
-                        (ActivitySampleValue::Rental, ActivitySampleKind::Rental)
-                            | (ActivitySampleValue::Repair(_), ActivitySampleKind::Repair)
-                            | (ActivitySampleValue::Loan(_), ActivitySampleKind::Loan)
-                            | (
-                                ActivitySampleValue::PropertyTax,
-                                ActivitySampleKind::PropertyTax
-                            )
-                            | (ActivitySampleValue::Utility(_), ActivitySampleKind::Utility)
-                    )
-                })
+                .is_some_and(|activity| sample.value.matches_configuration(&activity.configuration))
         };
+        let non_loan_activity_count = activities
+            .iter()
+            .filter(|activity| !matches!(activity.configuration, ActivityConfiguration::Loan(_)))
+            .count();
         if frozen_input.period != period
             || opening_state.cash.currency() != frozen_input.rent.currency()
             || closing_state.cash.currency() != opening_state.cash.currency()
-            || samples.len() != activities.len()
+            || samples.len() != non_loan_activity_count
             || samples
                 .iter()
                 .map(|sample| sample.instance_id)
@@ -913,7 +1119,7 @@ impl TestMonthlyResult {
             || samples
                 .iter()
                 .any(|sample| !source_matches(sample.instance_id, sample.slice_id))
-            || samples.iter().any(|sample| !sample_kind_matches(sample))
+            || samples.iter().any(|sample| !sample_matches(sample))
             || proposal.events.iter().any(|output| output.period != period)
             || proposal
                 .events
@@ -983,24 +1189,23 @@ impl TestMonthlyResult {
             *total = total.checked_add(amount)?;
         }
         for activity in &activities {
-            let bound = match activity.configuration.sample_kind() {
-                ActivitySampleKind::Rental => frozen_input.rent,
-                ActivitySampleKind::Repair => frozen_input.repair_cost_limit,
-                ActivitySampleKind::Loan => continue,
-                ActivitySampleKind::PropertyTax => match &activity.configuration {
-                    ActivityConfiguration::PropertyTax(config)
-                        if crate::validation::tax_due(period, config.first_due, config.cadence) =>
-                    {
+            let bound = match &activity.configuration {
+                ActivityConfiguration::Rental => frozen_input.rent,
+                ActivityConfiguration::RepairOccurrence(_) => {
+                    Money::from_parts(0, 0, opening_state.cash.currency())?
+                }
+                ActivityConfiguration::RepairCost(config) => config.maximum,
+                ActivityConfiguration::Loan(_) => continue,
+                ActivityConfiguration::PropertyTax(config) => {
+                    if crate::validation::tax_due(period, config.first_due, config.cadence) {
                         config.amount
+                    } else {
+                        Money::from_parts(0, 0, opening_state.cash.currency())?
                     }
-                    _ => Money::from_parts(0, 0, opening_state.cash.currency())?,
-                },
-                ActivitySampleKind::Utility => match &activity.configuration {
-                    ActivityConfiguration::Utility(config) => {
-                        config.rate_per_unit.checked_mul_u64(config.maximum_usage)?
-                    }
-                    _ => Money::from_parts(0, 0, opening_state.cash.currency())?,
-                },
+                }
+                ActivityConfiguration::Utility(config) => {
+                    config.rate_per_unit.checked_mul_u64(config.maximum_usage)?
+                }
             }
             .rounded_for_posting()?;
             if actual_support
@@ -1235,7 +1440,7 @@ impl TestMonthlyResult {
         let loan_activity = ActivityInstance {
             id: output.instance_id,
             slice_id: output.slice_id,
-            configuration: ActivityConfiguration::Loan,
+            configuration: ActivityConfiguration::Loan(LoanConfig::default()),
         };
         if activities
             .iter()
@@ -1246,12 +1451,7 @@ impl TestMonthlyResult {
             ));
         }
         activities.push(loan_activity.clone());
-        let mut samples = self.samples.clone();
-        samples.push(crate::activity::ActivitySample::new(
-            &loan_activity,
-            self.period,
-            ActivitySampleValue::Loan(output.closing_loan),
-        ));
+        let samples = self.samples.clone();
         // OpeningState has one canonical cash account from FrozenInput. A loan may
         // post through any declared cash-position account, so do not overwrite the
         // state from that particular loan account when composing multiple accounts.

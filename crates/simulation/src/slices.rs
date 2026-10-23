@@ -10,18 +10,13 @@ mod utility;
 #[cfg(test)]
 pub use loan::LoanCoordinatedMonth;
 #[cfg(test)]
-pub use loan::LoanMonthCommand;
-#[cfg(test)]
 pub use loan::LoanRunUpdate;
-pub(crate) use loan::map_model_error;
-pub use loan::{
-    LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanSlice,
-    LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, apply_loan_terms_update,
-    validate_loan_input, validate_loan_terms_update,
-};
+pub use loan::{LoanCalculation, LoanContinuation, LoanEvent, LoanStateEffect};
+pub(crate) use loan::{LoanMonthOutput, LoanSlice};
+pub(crate) use loan::{validate_loan_calculation, validate_loan_opening_state};
 #[cfg(test)]
 pub use loan_coordinator::{coordinate_loan_month, coordinate_month_with_loans};
 pub use property_tax::PropertyTaxSlice;
 pub use rental::RentalSlice;
-pub use repair::RepairSlice;
+pub use repair::{RepairCostSlice, RepairOccurrenceSlice};
 pub use utility::UtilitySlice;

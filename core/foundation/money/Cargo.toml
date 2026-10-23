@@ -1,0 +1,13 @@
+[package]
+name = "property-simulation-money"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+iso_currency = "0.7.1"
+rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

@@ -238,15 +238,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "property-simulation-accounting"
+name = "property-simulation-account"
+version = "0.1.0"
+
+[[package]]
+name = "property-simulation-context"
 version = "0.1.0"
 dependencies = [
- "property-simulation-domain",
- "rust_decimal",
+ "property-simulation-money",
+ "property-simulation-random-engine",
+ "property-simulation-slice-catalogue",
 ]
 
 [[package]]
-name = "property-simulation-domain"
+name = "property-simulation-domain-calculations"
+version = "0.1.0"
+
+[[package]]
+name = "property-simulation-journal-entry"
+version = "0.1.0"
+dependencies = [
+ "property-simulation-account",
+ "property-simulation-money",
+ "property-simulation-month",
+]
+
+[[package]]
+name = "property-simulation-ledger"
+version = "0.1.0"
+dependencies = [
+ "property-simulation-account",
+ "property-simulation-journal-entry",
+ "property-simulation-money",
+ "property-simulation-month",
+]
+
+[[package]]
+name = "property-simulation-money"
 version = "0.1.0"
 dependencies = [
  "iso_currency",
@@ -254,34 +282,49 @@ dependencies = [
 ]
 
 [[package]]
-name = "property-simulation-models"
+name = "property-simulation-month"
 version = "0.1.0"
-dependencies = [
- "property-simulation-domain",
- "rust_decimal",
-]
 
 [[package]]
-name = "property-simulation-randomness"
+name = "property-simulation-random-engine"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "getrandom 0.2.17",
- "property-simulation-domain",
- "property-simulation-models",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]
 
 [[package]]
-name = "property-simulation-simulation"
+name = "property-simulation-reporting"
 version = "0.1.0"
 dependencies = [
- "property-simulation-accounting",
- "property-simulation-domain",
- "property-simulation-models",
- "property-simulation-randomness",
+ "property-simulation-account",
+ "property-simulation-journal-entry",
+ "property-simulation-ledger",
+ "property-simulation-money",
+ "property-simulation-month",
+]
+
+[[package]]
+name = "property-simulation-slice"
+version = "0.1.0"
+dependencies = [
+ "property-simulation-context",
+ "property-simulation-snapshot",
+]
+
+[[package]]
+name = "property-simulation-slice-catalogue"
+version = "0.1.0"
+dependencies = [
  "rust_decimal",
+]
+
+[[package]]
+name = "property-simulation-snapshot"
+version = "0.1.0"
+dependencies = [
+ "property-simulation-month",
 ]
 
 [[package]]

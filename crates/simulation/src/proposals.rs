@@ -5,7 +5,7 @@ use property_simulation_domain::YearMonth;
 use crate::activity::SliceOutput;
 use crate::error::SimulationError;
 use crate::types::{
-    ActivityInstance, IdentifiedProposal, OutputIdFactory, ProposedEffect, ProposedEvent,
+    ActivityInstance, IdentifiedProposal, OutputIdAllocator, ProposedEffect, ProposedEvent,
     ProposedTransaction, SliceProposal,
 };
 
@@ -13,14 +13,14 @@ use crate::types::{
 /// Slice output, and every draft must belong to its frozen period.
 pub fn identify_proposal(
     output: SliceOutput,
-    ids: &dyn OutputIdFactory,
+    ids: &dyn OutputIdAllocator,
 ) -> Result<IdentifiedProposal, SimulationError> {
     identify_proposal_for(output.proposal, ids, &output.instance, output.period)
 }
 
 pub(crate) fn identify_proposal_for(
     proposal: SliceProposal,
-    ids: &dyn OutputIdFactory,
+    ids: &dyn OutputIdAllocator,
     instance: &ActivityInstance,
     period: YearMonth,
 ) -> Result<IdentifiedProposal, SimulationError> {

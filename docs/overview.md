@@ -23,15 +23,15 @@ Property Simulation Sandbox 是面向个人/家庭房产持有者的可配置、
 | 术语 | 含义 |
 |---|---|
 | Initial state | 模拟起点已知事实与足以继续计算的状态 |
-| Context | Application 内部状态，保留用户初始设置、后续设置/命令、活动实例定义及用户启用选择；不作为整体向 UI 展示 |
+| Context | Application 内部状态，保留模拟起始月、用户初始设置、后续设置/命令、活动实例定义及用户启用选择；不作为整体向 UI 展示 |
 | Effective monthly input | 某月计算实际使用的冻结输入 |
-| Activity instance | 用户配置并在特定月份生效的模拟对象 |
+| Activity instance | 用户配置或模型生成、在特定月份生效的模拟对象 |
 | Slice | 对活动进行计算的代码规则边界；与活动实例不要求一一对应 |
 | Event | 已发生的事实 |
 | Decision | 用户或策略的选择 |
 | Effect | 状态变化 |
 | Ledger transaction | 经济行为的复式账务记录 |
-| Snapshot | 月度计算产生、供 UI 查询的期末状态及模型生成的活动生命周期状态 |
-| Monthly result | 完整月度输出，包含 snapshot、事件、状态变化、Ledger 增量及 Ledger 派生的逐实例现金流明细 |
+| Snapshot | Application 将完整月度结果映射成的持久化 DTO，供 UI 查询和审计 |
+| Monthly result | 单月 Core 调用返回的完整暂态计算值；Application 映射为一个 Snapshot DTO 持久化，不另存一份重复结果 |
 
 上下文、计算和存储边界见[领域模型](domain-model.md)、[架构](architecture.md)和[实施计划](implementation-roadmap.md)。

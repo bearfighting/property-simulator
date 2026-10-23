@@ -1,10 +1,24 @@
 [workspace]
 members = [
+    "core/accounting/account",
+    "core/accounting/journal-entry",
+    "core/accounting/ledger",
+    "core/accounting/reporting",
+    "core/foundation/money",
+    "core/foundation/month",
+    "core/simulation/context",
+    "core/simulation/domain-calculations",
+    "core/simulation/random-engine",
+    "core/simulation/slice-catalogue",
+    "core/simulation/slice",
+    "core/simulation/snapshot",
+]
+exclude = [
     "crates/domain",
     "crates/accounting",
-    "crates/simulation",
     "crates/models",
     "crates/randomness",
+    "crates/simulation",
 ]
 resolver = "3"
 

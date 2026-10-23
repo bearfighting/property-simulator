@@ -1,7 +1,7 @@
 use super::super::loan::{LoanMonthCommand, LoanMonthInput};
 use super::month::prepare_loan_month;
 use crate::{
-    FatalSimulationFailure, FatalSimulationPhase, OutputIdFactory, SimulationError, SliceOutput,
+    FatalSimulationFailure, FatalSimulationPhase, OutputIdAllocator, SimulationError, SliceOutput,
     TestMonthlyResult, ValidatedInput, coordinator::coordinate_month_allow_empty_with_transactions,
 };
 use property_simulation_accounting::BalanceSide;
@@ -17,7 +17,7 @@ pub fn coordinate_month_with_loans(
     outputs: Vec<SliceOutput>,
     trial_id: property_simulation_domain::TrialId,
     branch_id: property_simulation_domain::BranchId,
-    ids: &dyn OutputIdFactory,
+    ids: &dyn OutputIdAllocator,
     mut loans: Vec<LoanMonthInput>,
 ) -> Result<(TestMonthlyResult, property_simulation_accounting::Ledger), SimulationError> {
     loans.sort_by_key(|loan| loan.slice.instance_id);

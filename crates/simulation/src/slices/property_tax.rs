@@ -6,8 +6,8 @@ use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
-    ActivityConfiguration, ActivityInstance, ActivitySampleKind, EventProposal, FrozenInput,
-    OpeningState, PropertyTaxConfig, SliceProposal, TransactionProposal,
+    ActivityConfiguration, ActivityInstance, EventProposal, FrozenInput, OpeningState,
+    PropertyTaxConfig, SliceProposal, TransactionProposal,
 };
 use crate::validation::ValidatedInput;
 
@@ -17,7 +17,6 @@ pub struct PropertyTaxSlice {
 
 impl SimulationSlice for PropertyTaxSlice {
     type Sample = ();
-    const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::PropertyTax;
     fn instance(&self) -> &ActivityInstance {
         &self.instance
     }

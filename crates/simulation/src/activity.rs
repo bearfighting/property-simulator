@@ -3,21 +3,35 @@ use std::ops::Deref;
 use crate::composition::SliceResources;
 use crate::error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 use crate::types::{
-    ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState, RepairSample, SliceProposal,
+    ActivityConfiguration, ActivityInstance, FrozenInput, OpeningState, SliceProposal,
 };
 use crate::validation::ValidatedInput;
 use property_simulation_domain::{ActivityInstanceId, SliceId, YearMonth};
-use property_simulation_models::{
-    RandomSource, RepairDistribution, Sampler, SamplingError, UtilityUsageDistribution,
-};
+use property_simulation_models::{RandomSource, Sampler, SamplingError, UtilityUsageDistribution};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivitySampleValue {
     Rental,
-    Repair(RepairSample),
+    RepairOccurrence(property_simulation_models::RepairOccurrenceSample),
+    RepairCost(property_simulation_models::RepairCostSample),
     Utility(u64),
-    Loan(Option<property_simulation_models::FixedRateLoan>),
     PropertyTax,
+}
+
+impl ActivitySampleValue {
+    pub(crate) fn matches_configuration(&self, configuration: &ActivityConfiguration) -> bool {
+        matches!(
+            (self, configuration),
+            (Self::Rental, ActivityConfiguration::Rental)
+                | (
+                    Self::RepairOccurrence(_),
+                    ActivityConfiguration::RepairOccurrence(_)
+                )
+                | (Self::RepairCost(_), ActivityConfiguration::RepairCost(_))
+                | (Self::Utility(_), ActivityConfiguration::Utility(_))
+                | (Self::PropertyTax, ActivityConfiguration::PropertyTax(_))
+        )
+    }
 }
 
 /// An opaque sample token created only by `propose_slice` after provenance checks.
@@ -38,7 +52,6 @@ impl<T> ValidatedActivitySample<'_, T> {
 /// to validate provenance before dispatching to a Slice.
 pub trait SimulationSlice {
     type Sample;
-    const SAMPLE_KIND: ActivitySampleKind;
     fn instance(&self) -> &ActivityInstance;
     /// Declare the resources read from the shared opening context and written
     /// by this active instance, including accounts affected by frozen inputs.
@@ -104,10 +117,6 @@ impl SliceOutput {
     pub fn resources(&self) -> &SliceResources {
         &self.resources
     }
-
-    pub fn sample(&self) -> &ActivitySample<ActivitySampleValue> {
-        &self.sample
-    }
 }
 
 /// Validate a typed sample against the concrete activity instance and frozen
@@ -120,9 +129,10 @@ pub fn propose_slice<S: SimulationSlice>(
     let state = input.opening_state();
     let frozen_input = input.frozen_input();
     sample.validate_for(slice.instance(), frozen_input.period)?;
-    if slice.instance().configuration.sample_kind() != S::SAMPLE_KIND {
+    let sample_value = slice.sample_value(&sample.value);
+    if !sample_value.matches_configuration(&slice.instance().configuration) {
         return Err(SimulationError::InvalidInput(
-            "activity sample kind does not match Slice",
+            "activity configuration does not match Slice sample",
         ));
     }
     slice.validate_sample(input, &sample.value)?;
@@ -157,12 +167,8 @@ pub fn propose_slice<S: SimulationSlice>(
         opening_state: state.clone(),
         frozen_input: *frozen_input,
         resources,
-        sample: ActivitySample::new(
-            slice.instance(),
-            frozen_input.period,
-            slice.sample_value(&sample.value),
-        )
-        .with_purpose(sample.purpose.clone()),
+        sample: ActivitySample::new(slice.instance(), frozen_input.period, sample_value)
+            .with_purpose(sample.purpose.clone()),
     })
 }
 
@@ -177,19 +183,10 @@ pub struct ActivitySample<T> {
     pub value: T,
 }
 
-pub const REPAIR_SAMPLE_PURPOSE: &str = "repair.sample";
 pub const UTILITY_SAMPLE_PURPOSE: &str = "utility.usage";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UtilitySamplingError<E> {
-    InvalidDistribution,
-    ActivitySetNotPreflighted,
-    PeriodMismatch,
-    Sampler(SamplingError<E>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepairSamplingError<E> {
     InvalidDistribution,
     ActivitySetNotPreflighted,
     PeriodMismatch,
@@ -231,41 +228,6 @@ where
         .with_purpose(Some(UTILITY_SAMPLE_PURPOSE.into())))
 }
 
-/// Composition boundary for the repair model: validates distribution/Slice
-/// compatibility, samples from the injected source, and binds provenance.
-pub fn sample_repair<R, S>(
-    validated: &ValidatedInput,
-    repair_validation: &dyn crate::validation::RepairCostValidation,
-    instance: &ActivityInstance,
-    period: YearMonth,
-    distribution: &RepairDistribution,
-    sampler: &mut S,
-    random: &mut R,
-) -> Result<ActivitySample<RepairSample>, RepairSamplingError<R::Error>>
-where
-    R: RandomSource,
-    S: Sampler<RepairDistribution>,
-{
-    if instance.configuration.sample_kind() != ActivitySampleKind::Repair
-        || repair_validation
-            .validate_distribution(distribution)
-            .is_err()
-        || distribution.cost.maximum != validated.repair_distribution().maximum
-    {
-        return Err(RepairSamplingError::InvalidDistribution);
-    }
-    if !validated.has_preflighted_activity(instance) {
-        return Err(RepairSamplingError::ActivitySetNotPreflighted);
-    }
-    if validated.frozen_input().period != period {
-        return Err(RepairSamplingError::PeriodMismatch);
-    }
-    let value = sampler
-        .sample(distribution, random)
-        .map_err(RepairSamplingError::Sampler)?;
-    Ok(ActivitySample::new(instance, period, value)
-        .with_purpose(Some(REPAIR_SAMPLE_PURPOSE.into())))
-}
 impl<T> ActivitySample<T> {
     pub fn new(instance: &ActivityInstance, period: YearMonth, value: T) -> Self {
         Self {
@@ -295,14 +257,7 @@ impl<T> ActivitySample<T> {
                 "sample provenance does not match activity instance or period",
             ));
         }
-        if instance.configuration.sample_kind() == ActivitySampleKind::Repair
-            && self.purpose.as_deref() != Some(REPAIR_SAMPLE_PURPOSE)
-        {
-            return Err(SimulationError::InvalidInput(
-                "repair sample purpose does not match the repair sampling contract",
-            ));
-        }
-        if instance.configuration.sample_kind() == ActivitySampleKind::Utility
+        if matches!(instance.configuration, ActivityConfiguration::Utility(_))
             && self.purpose.as_deref() != Some(UTILITY_SAMPLE_PURPOSE)
         {
             return Err(SimulationError::InvalidInput(
