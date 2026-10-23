@@ -6,7 +6,12 @@ members = [
     "accounting/reporting",
     "foundation/money",
     "foundation/month",
+    "simulation/context",
+    "simulation/domain-calculations",
     "simulation/random-engine",
+    "simulation/slice-catalogue",
+    "simulation/slice",
+    "simulation/snapshot",
 ]
 resolver = "3"
 

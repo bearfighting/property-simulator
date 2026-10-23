@@ -1,0 +1,56 @@
+use std::{fmt, num::NonZeroU32};
+
+use rust_decimal::Decimal;
+
+/// Settings required to calculate loan activity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoanParameters {
+    annual_interest_rate: Decimal,
+    remaining_term_months: NonZeroU32,
+}
+
+impl LoanParameters {
+    /// Create fixed-rate amortizing loan terms. The annual rate is a decimal
+    /// ratio, so `0.05` represents five percent.
+    pub fn new(
+        annual_interest_rate: Decimal,
+        remaining_term_months: NonZeroU32,
+    ) -> Result<Self, LoanParametersError> {
+        if annual_interest_rate < Decimal::ZERO {
+            return Err(LoanParametersError::NegativeAnnualInterestRate);
+        }
+
+        Ok(Self {
+            annual_interest_rate,
+            remaining_term_months,
+        })
+    }
+}
+
+impl LoanParameters {
+    pub const fn annual_interest_rate(&self) -> Decimal {
+        self.annual_interest_rate
+    }
+
+    pub const fn remaining_term_months(&self) -> NonZeroU32 {
+        self.remaining_term_months
+    }
+}
+
+/// Failure to construct valid loan parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoanParametersError {
+    NegativeAnnualInterestRate,
+}
+
+impl fmt::Display for LoanParametersError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NegativeAnnualInterestRate => {
+                f.write_str("annual interest rate cannot be negative")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoanParametersError {}
