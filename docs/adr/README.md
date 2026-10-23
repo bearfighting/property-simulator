@@ -18,6 +18,7 @@ Use the next unused number; do not reuse retired numbers. An ADR records context
 - [ADR-41](ADR-41-application-available-slice-kinds.md): supported Slice kinds include configured generated behavior; Slice grouping/order is deferred technical debt.
 - [ADR-42](ADR-42-user-settings-and-opening-values.md): user settings contain opening values, stop conditions, and Slice settings; the random root remains a separate system-provided Context field.
 - [ADR-43](ADR-43-required-simulation-name.md): Core Context requires a descriptive name; Application resolves omitted user input before construction.
+- [ADR-44](ADR-44-exclude-frozen-crates-from-root-workspace.md): retain legacy `crates/` sources but remove them from the active root workspace.
 
 ## Historical decisions
 

@@ -1,6 +1,6 @@
 # 项目结构
 
-本文记录当前讨论中的目标边界，不代表所有 crate 或接口已经实现。`core/README.md` 记录 Core 接口设计的后续顺序；Core、Application 和各 Presentation 入口使用各自的 Cargo workspace，可在同一仓库内独立维护并按依赖方向组合。
+本文记录当前讨论中的目标边界，不代表所有 crate 或接口已经实现。`core/README.md` 记录 Core 接口设计的后续顺序；冻结的旧实现保留在 `crates/` 作为参考，不属于活动 workspace。Core、Application 和各 Presentation 入口使用各自的 Cargo workspace，可在同一仓库内独立维护并按依赖方向组合。
 
 ## 模块与依赖方向
 

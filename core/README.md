@@ -1,6 +1,6 @@
 # New Core Design
 
-This is the standalone Cargo workspace for Core. It defines Core responsibilities and interfaces independently from Application and Presentation workspaces. Crates in the repository-root legacy workspace are references for domain behavior, not templates for this structure. This workspace currently contains exploratory crates grouped under `accounting/`, `foundation/`, and `simulation/`; the folders organize members of this one workspace and are not nested workspaces.
+This is the standalone Cargo workspace for Core. It defines Core responsibilities and interfaces independently from Application and Presentation workspaces. The frozen source crates under the repository's `crates/` directory are retained as references for domain behavior, not as members or templates for this structure. This workspace currently contains exploratory crates grouped under `accounting/`, `foundation/`, and `simulation/`; the folders organize members of this one workspace and are not nested workspaces.
 
 ## Interface design work
 

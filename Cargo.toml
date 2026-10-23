@@ -1,10 +1,11 @@
 [workspace]
-members = [
+members = []
+exclude = [
     "crates/domain",
     "crates/accounting",
-    "crates/simulation",
     "crates/models",
     "crates/randomness",
+    "crates/simulation",
 ]
 resolver = "3"
 
