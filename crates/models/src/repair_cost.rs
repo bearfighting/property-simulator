@@ -1,11 +1,82 @@
 use crate::sampling::{RandomSource, Sampler, SamplingError, uniform_inclusive};
 use property_simulation_domain::{DomainError, Money};
 
-/// Typed outcome shared with the simulation crate.
+/// Conditional monthly repair occurrence probability, represented in basis
+/// points (1/10,000). Age is the completed month difference from the latest
+/// known repair baseline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepairSample {
-    NoRepair,
-    Repair { cost: Money },
+pub struct RepairOccurrenceDistribution {
+    pub age_months: u64,
+}
+
+impl RepairOccurrenceDistribution {
+    pub const fn numerator(self) -> u64 {
+        (25 + (125_u128 * self.age_months as u128) / (self.age_months as u128 + 60)) as u64
+    }
+    pub const fn denominator(self) -> u64 {
+        10_000
+    }
+    pub const fn validate(self) -> bool {
+        self.numerator() < self.denominator()
+    }
+}
+impl super::Distribution for RepairOccurrenceDistribution {
+    type Sample = RepairOccurrenceSample;
+    fn validate(&self) -> bool {
+        (*self).validate()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairOccurrenceSample(pub bool);
+
+#[derive(Debug, Default)]
+pub struct RepairOccurrenceSampler;
+
+impl Sampler<RepairOccurrenceDistribution> for RepairOccurrenceSampler {
+    fn sample<R: RandomSource>(
+        &mut self,
+        distribution: &RepairOccurrenceDistribution,
+        random: &mut R,
+    ) -> Result<RepairOccurrenceSample, SamplingError<R::Error>> {
+        if !distribution.validate() {
+            return Err(SamplingError::InvalidDistribution);
+        }
+        Ok(RepairOccurrenceSample(
+            uniform_inclusive(random, distribution.denominator() - 1)? < distribution.numerator(),
+        ))
+    }
+}
+
+/// A repair amount is sampled independently, only after an occurrence has
+/// generated a cost instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairCostSample(pub Money);
+
+#[derive(Debug, Default)]
+pub struct RepairCostSampler;
+
+impl Sampler<RepairCostDistribution> for RepairCostSampler {
+    fn sample<R: RandomSource>(
+        &mut self,
+        distribution: &RepairCostDistribution,
+        random: &mut R,
+    ) -> Result<RepairCostSample, SamplingError<R::Error>> {
+        distribution
+            .validate_support()
+            .map_err(|_| SamplingError::InvalidDistribution)?;
+        let units = uniform_inclusive(
+            random,
+            distribution
+                .maximum_minor_units()
+                .map_err(|_| SamplingError::InvalidDistribution)?,
+        )?;
+        let amount = distribution
+            .money_for_minor_units(units)
+            .and_then(Money::rounded_for_posting)
+            .map_err(|_| SamplingError::InvalidDistribution)?;
+        Ok(RepairCostSample(amount))
+    }
 }
 
 /// A bounded discrete repair-cost distribution. The inclusive upper bound makes
@@ -68,77 +139,84 @@ impl RepairCostDistribution {
         )
     }
 }
-
-/// Repair occurs with an exact rational probability, then cost is uniform over
-/// every minor-unit amount from zero through the floored configured maximum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RepairDistribution {
-    pub occurrence_numerator: u64,
-    pub occurrence_denominator: u64,
-    pub cost: RepairCostDistribution,
-}
-
-impl RepairDistribution {
-    pub fn validate_distribution(&self) -> Result<(), DomainError> {
-        if self.occurrence_denominator == 0
-            || self.occurrence_numerator > self.occurrence_denominator
-        {
-            return Err(DomainError::InvalidMoneyAmount);
-        }
-        self.cost.validate_support()?;
-        self.cost.maximum_minor_units()?;
-        Ok(())
-    }
-}
-
-impl super::Distribution for RepairDistribution {
-    type Sample = RepairSample;
+impl super::Distribution for RepairCostDistribution {
+    type Sample = RepairCostSample;
     fn validate(&self) -> bool {
-        self.validate_distribution().is_ok()
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct RepairSampler;
-
-impl Sampler<RepairDistribution> for RepairSampler {
-    fn sample<R: RandomSource>(
-        &mut self,
-        distribution: &RepairDistribution,
-        random: &mut R,
-    ) -> Result<RepairSample, SamplingError<R::Error>> {
-        distribution
-            .validate_distribution()
-            .map_err(|_| SamplingError::InvalidDistribution)?;
-        let denominator = distribution.occurrence_denominator;
-        let fire = if distribution.occurrence_numerator == 0 {
-            false
-        } else if distribution.occurrence_numerator == denominator {
-            true
-        } else {
-            uniform_inclusive(random, denominator - 1)? < distribution.occurrence_numerator
-        };
-        if !fire {
-            return Ok(RepairSample::NoRepair);
-        }
-        let maximum = distribution
-            .cost
-            .maximum_minor_units()
-            .map_err(|_| SamplingError::InvalidDistribution)?;
-        let units = uniform_inclusive(random, maximum)?;
-        let cost = distribution
-            .cost
-            .money_for_minor_units(units)
-            .map_err(|_| SamplingError::InvalidDistribution)?
-            .rounded_for_posting()
-            .map_err(|_| SamplingError::InvalidDistribution)?;
-        Ok(RepairSample::Repair { cost })
+        self.validate_support().is_ok() && self.maximum_minor_units().is_ok()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn occurrence_probability_matches_basis_point_curve_without_overflow() {
+        assert_eq!(
+            RepairOccurrenceDistribution { age_months: 0 }.numerator(),
+            25
+        );
+        assert_eq!(
+            RepairOccurrenceDistribution { age_months: 1 }.numerator(),
+            27
+        );
+        assert_eq!(
+            RepairOccurrenceDistribution { age_months: 60 }.numerator(),
+            87
+        );
+        assert_eq!(
+            RepairOccurrenceDistribution {
+                age_months: u64::MAX
+            }
+            .numerator(),
+            149
+        );
+        let values = [0, 1, 60, 120, 1_000, u64::MAX]
+            .map(|age_months| RepairOccurrenceDistribution { age_months }.numerator());
+        assert!(values.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(values.into_iter().all(|rate| rate < 10_000));
+    }
+
+    #[test]
+    fn occurrence_sampler_draws_only_the_occurrence_decision() {
+        let distribution = RepairOccurrenceDistribution { age_months: 0 };
+        let mut sampler = RepairOccurrenceSampler;
+        let mut no_occurrence = Words(vec![25]);
+        assert_eq!(
+            sampler.sample(&distribution, &mut no_occurrence).unwrap(),
+            RepairOccurrenceSample(false)
+        );
+        assert!(no_occurrence.0.is_empty());
+        let mut occurrence = Words(vec![24]);
+        assert_eq!(
+            sampler.sample(&distribution, &mut occurrence).unwrap(),
+            RepairOccurrenceSample(true)
+        );
+        assert!(occurrence.0.is_empty());
+    }
+
+    #[test]
+    fn cost_sampler_is_independent_and_includes_zero_and_limit() {
+        let cad = property_simulation_domain::Currency::from_code("CAD").unwrap();
+        let distribution = RepairCostDistribution {
+            maximum: Money::parse("1.23", cad).unwrap(),
+        };
+        let mut sampler = RepairCostSampler;
+        assert_eq!(
+            sampler
+                .sample(&distribution, &mut Words(vec![0]))
+                .unwrap()
+                .0,
+            Money::parse("0", cad).unwrap()
+        );
+        assert_eq!(
+            sampler
+                .sample(&distribution, &mut Words(vec![123]))
+                .unwrap()
+                .0,
+            distribution.maximum
+        );
+    }
     #[test]
     fn bounded_repair_support_includes_edges_and_rejects_outside() {
         let cad = property_simulation_domain::Currency::from_code("CAD").unwrap();
@@ -181,93 +259,5 @@ mod tests {
                 Ok(self.0.remove(0))
             }
         }
-    }
-
-    fn distribution(n: u64, d: u64, maximum: &str) -> RepairDistribution {
-        let cad = property_simulation_domain::Currency::from_code("CAD").unwrap();
-        RepairDistribution {
-            occurrence_numerator: n,
-            occurrence_denominator: d,
-            cost: RepairCostDistribution {
-                maximum: Money::parse(maximum, cad).unwrap(),
-            },
-        }
-    }
-
-    #[test]
-    fn repair_distribution_validates_exact_probability_and_minor_unit_support() {
-        assert!(distribution(0, 1, "1").validate_distribution().is_ok());
-        assert!(distribution(1, 1, "1").validate_distribution().is_ok());
-        assert!(distribution(2, 3, "1.239").validate_distribution().is_ok());
-        assert!(
-            distribution(2, 3, "0.009")
-                .cost
-                .maximum_minor_units()
-                .unwrap()
-                == 0
-        );
-        assert_eq!(
-            distribution(1, 0, "1").validate_distribution(),
-            Err(DomainError::InvalidMoneyAmount)
-        );
-        assert_eq!(
-            distribution(2, 1, "1").validate_distribution(),
-            Err(DomainError::InvalidMoneyAmount)
-        );
-    }
-
-    #[test]
-    fn repair_sampler_obeys_probability_cost_bounds_and_propagates_source_errors() {
-        let mut sampler = RepairSampler;
-        let mut no_repair = Words(vec![]);
-        assert_eq!(
-            sampler
-                .sample(&distribution(0, 1, "1"), &mut no_repair)
-                .unwrap(),
-            RepairSample::NoRepair
-        );
-        let mut lower = Words(vec![0, 0]);
-        assert_eq!(
-            sampler
-                .sample(&distribution(1, 2, "1.239"), &mut lower)
-                .unwrap(),
-            RepairSample::Repair {
-                cost: Money::parse(
-                    "0",
-                    property_simulation_domain::Currency::from_code("CAD").unwrap()
-                )
-                .unwrap()
-            }
-        );
-        let mut upper = Words(vec![0, 123]);
-        assert_eq!(
-            sampler
-                .sample(&distribution(1, 2, "1.239"), &mut upper)
-                .unwrap(),
-            RepairSample::Repair {
-                cost: Money::parse(
-                    "1.23",
-                    property_simulation_domain::Currency::from_code("CAD").unwrap()
-                )
-                .unwrap()
-            }
-        );
-        let mut broken = Words(vec![]);
-        assert_eq!(
-            sampler.sample(&distribution(1, 2, "1"), &mut broken),
-            Err(SamplingError::RandomSource("empty"))
-        );
-    }
-
-    #[test]
-    fn repair_sampler_rejects_invalid_distribution_before_consuming_randomness() {
-        let mut sampler = RepairSampler;
-        let mut random = Words(vec![0]);
-
-        assert_eq!(
-            sampler.sample(&distribution(1, 0, "1"), &mut random),
-            Err(SamplingError::InvalidDistribution)
-        );
-        assert_eq!(random.0, vec![0]);
     }
 }

@@ -5,10 +5,9 @@ use crate::activity::{ActivitySample, ActivitySampleValue, SliceOutput};
 use crate::composition::validate_composition;
 use crate::error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
 use crate::proposals::{identify_proposal, merge_proposals};
-use crate::types::{AssetCondition, OutputIdFactory, ProposedEffect, TestMonthlyResult};
+use crate::types::{AssetCondition, OutputIdAllocator, ProposedEffect, TestMonthlyResult};
 use crate::validation::{
-    ValidatedInput, validate_cashflow_support, validate_proposal_transactions,
-    validate_transaction_batch,
+    ValidatedInput, validate_proposal_transactions, validate_transaction_batch,
 };
 
 /// Coordinates already evaluated Slice outputs into an atomic monthly result.
@@ -19,7 +18,7 @@ pub fn coordinate_month(
     outputs: Vec<SliceOutput>,
     trial_id: TrialId,
     branch_id: BranchId,
-    ids: &dyn OutputIdFactory,
+    ids: &dyn OutputIdAllocator,
 ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
     coordinate_month_inner(
         input,
@@ -39,7 +38,7 @@ pub(crate) fn coordinate_month_allow_empty_with_transactions(
     outputs: Vec<SliceOutput>,
     trial_id: TrialId,
     branch_id: BranchId,
-    ids: &dyn OutputIdFactory,
+    ids: &dyn OutputIdAllocator,
     additional_transactions: &[property_simulation_accounting::LedgerTransaction],
 ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
     coordinate_month_inner(
@@ -60,12 +59,13 @@ fn coordinate_month_inner(
     outputs: Vec<SliceOutput>,
     trial_id: TrialId,
     branch_id: BranchId,
-    ids: &dyn OutputIdFactory,
+    ids: &dyn OutputIdAllocator,
     additional_transactions: &[property_simulation_accounting::LedgerTransaction],
 ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
-    if outputs.iter().any(|output| {
-        output.instance.configuration.sample_kind() == crate::types::ActivitySampleKind::Loan
-    }) {
+    if outputs
+        .iter()
+        .any(|output| output.instance.configuration.is_loan())
+    {
         return Err(SimulationError::InvalidProposal(
             "loan activities must be coordinated through coordinate_month_with_loans",
         ));
@@ -90,7 +90,7 @@ fn coordinate_month_inner(
         samples.push(output.sample.clone());
         identified.push(identify_proposal(output, ids)?);
     }
-    validate_cashflow_support(input.frozen_input(), &activities)?;
+    crate::validation::validate_cashflow_support(input.frozen_input(), &activities)?;
     validate_sample_set(&activities, &samples, period)?;
     validate_composition(&declarations, &identified)?;
     let proposal = merge_proposals(identified)?;
@@ -186,25 +186,7 @@ fn validate_sample_set(
             .find(|activity| activity.id == sample.instance_id)
             .unwrap();
         if sample.slice_id != activity.slice_id
-            || !matches!(
-                (&sample.value, activity.configuration.sample_kind()),
-                (
-                    ActivitySampleValue::Rental,
-                    crate::types::ActivitySampleKind::Rental
-                ) | (
-                    ActivitySampleValue::Repair(_),
-                    crate::types::ActivitySampleKind::Repair
-                ) | (
-                    ActivitySampleValue::Loan(_),
-                    crate::types::ActivitySampleKind::Loan
-                ) | (
-                    ActivitySampleValue::PropertyTax,
-                    crate::types::ActivitySampleKind::PropertyTax
-                ) | (
-                    ActivitySampleValue::Utility(_),
-                    crate::types::ActivitySampleKind::Utility
-                )
-            )
+            || !sample.value.matches_configuration(&activity.configuration)
         {
             return Err(SimulationError::InvalidProposal(
                 "sample provenance or kind does not match activity",

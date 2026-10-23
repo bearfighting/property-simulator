@@ -1,12 +1,11 @@
 use property_simulation_accounting::{AccountCategory, AccountError};
 #[cfg(test)]
 use property_simulation_accounting::{Ledger, LedgerTransaction};
-use property_simulation_models::{RepairCostDistribution, RepairDistribution};
 
 use crate::SimulationError;
 #[cfg(test)]
 use crate::types::IdentifiedProposal;
-use crate::types::{ActivityInstance, ActivitySampleKind, FrozenInput, OpeningState};
+use crate::types::{ActivityConfiguration, ActivityInstance, FrozenInput, OpeningState};
 
 /// A correctable issue found while freezing a period's input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +29,10 @@ pub struct AccountFacts {
 
 /// Narrow accounting read interface used by simulation validation.
 /// Implementations belong to the caller that connects accounting data to a calculation.
+/// For a monthly calculation, this view must expose the same account definitions,
+/// currency, and signed balances as that calculation's `MonthlyInput::opening_ledger`.
+/// The simulation boundary cannot verify this identity because the view does not
+/// expose its source Ledger.
 pub trait LedgerRead {
     fn currency(&self) -> property_simulation_domain::Currency;
     fn account(&self, id: property_simulation_domain::AccountId) -> Option<AccountFacts>;
@@ -38,31 +41,6 @@ pub trait LedgerRead {
         &self,
         id: property_simulation_domain::AccountId,
     ) -> Result<property_simulation_domain::Money, AccountError>;
-}
-
-/// Repair model rules needed by simulation input and sample validation.
-/// Implementations are supplied by the caller that connects the model crate.
-pub trait RepairCostValidation {
-    fn validate_distribution(
-        &self,
-        distribution: &RepairDistribution,
-    ) -> Result<(), property_simulation_domain::DomainError>;
-
-    fn validate_support(
-        &self,
-        distribution: &RepairCostDistribution,
-    ) -> Result<(), property_simulation_domain::DomainError>;
-
-    fn maximum_minor_units(
-        &self,
-        distribution: &RepairCostDistribution,
-    ) -> Result<u64, property_simulation_domain::DomainError>;
-
-    fn validate_sample(
-        &self,
-        distribution: &RepairCostDistribution,
-        value: property_simulation_domain::Money,
-    ) -> Result<(), property_simulation_domain::DomainError>;
 }
 
 /// A transaction error found while preflighting an identified proposal.
@@ -83,7 +61,6 @@ pub struct ProposalValidationErrors(pub Vec<ProposalValidationIssue>);
 pub struct ValidatedInput {
     opening_state: OpeningState,
     frozen_input: FrozenInput,
-    repair_distribution: RepairCostDistribution,
     preflighted_activities: Option<Vec<ActivityInstance>>,
 }
 
@@ -93,9 +70,6 @@ impl ValidatedInput {
     }
     pub const fn frozen_input(&self) -> &FrozenInput {
         &self.frozen_input
-    }
-    pub const fn repair_distribution(&self) -> &RepairCostDistribution {
-        &self.repair_distribution
     }
 
     /// Validate the complete active activity set and its monthly cash-flow
@@ -117,6 +91,24 @@ impl ValidatedInput {
                 "active activity set was already preflighted for this month",
             ));
         }
+        self.validate_activity_configurations(activities, ledger)?;
+        validate_cashflow_support_with_additional(
+            &self.frozen_input,
+            activities,
+            additional_support,
+        )?;
+        self.preflighted_activities = Some(activities.to_vec());
+        Ok(())
+    }
+
+    /// Check activity identity and account/configuration rules before any
+    /// model calculation that depends on the active monthly composition.
+    /// Cash-flow support is checked later, once model-derived amounts exist.
+    pub(crate) fn validate_activity_configurations(
+        &self,
+        activities: &[ActivityInstance],
+        ledger: &impl LedgerRead,
+    ) -> Result<(), SimulationError> {
         let mut ids = std::collections::BTreeSet::new();
         for activity in activities {
             if !ids.insert(activity.id) {
@@ -126,12 +118,6 @@ impl ValidatedInput {
             }
             validate_activity_configuration(activity, &self.frozen_input, ledger)?;
         }
-        validate_cashflow_support_with_additional(
-            &self.frozen_input,
-            activities,
-            additional_support,
-        )?;
-        self.preflighted_activities = Some(activities.to_vec());
         Ok(())
     }
 
@@ -144,7 +130,7 @@ impl ValidatedInput {
 
 pub(crate) fn validate_activity_configuration(
     activity: &ActivityInstance,
-    _input: &FrozenInput,
+    input: &FrozenInput,
     ledger: &impl LedgerRead,
 ) -> Result<(), SimulationError> {
     let (cash_account, expense_account, amount_valid, error) = match &activity.configuration {
@@ -170,6 +156,22 @@ pub(crate) fn validate_activity_configuration(
                 "invalid utility unit, maximum charge, currency, or account role",
             )
         }
+        crate::ActivityConfiguration::RepairOccurrence(config) => (
+            input.cash_account,
+            config.cost_template.expense_account,
+            config.cost_template.maximum.currency() == ledger.currency()
+                && !config.cost_template.maximum.is_negative()
+                && config.cost_template.maximum.rounded_for_posting().is_ok(),
+            "invalid repair cost template amount, currency, or account role",
+        ),
+        crate::ActivityConfiguration::RepairCost(config) => (
+            input.cash_account,
+            config.expense_account,
+            config.maximum.currency() == ledger.currency()
+                && !config.maximum.is_negative()
+                && config.maximum.rounded_for_posting().is_ok(),
+            "invalid repair cost amount, currency, or account role",
+        ),
         _ => return Ok(()),
     };
     let cash_valid = ledger.account(cash_account).is_some_and(|account| {
@@ -186,43 +188,24 @@ pub(crate) fn validate_activity_configuration(
 }
 
 /// Validate frozen values and collect every independent issue discoverable at this boundary.
-pub fn validate_input(
+pub(crate) fn validate_slice_input(
     input: &FrozenInput,
-    repair_distribution: &RepairCostDistribution,
-    repair_validation: &dyn RepairCostValidation,
+    ledger: &impl LedgerRead,
+    state: &OpeningState,
+) -> Result<ValidatedInput, ValidationErrors> {
+    validate_input_inner(input, ledger, state)
+}
+
+fn validate_input_inner(
+    input: &FrozenInput,
     ledger: &impl LedgerRead,
     state: &OpeningState,
 ) -> Result<ValidatedInput, ValidationErrors> {
     let mut issues = Vec::new();
-    let repair_support_valid = repair_validation
-        .validate_support(repair_distribution)
-        .is_ok();
-    if !repair_support_valid {
-        issues.push(ValidationIssue {
-            field: "repair_distribution.maximum",
-            message: "repair distribution support must be non-negative",
-        });
-    }
-    if repair_support_valid
-        && repair_validation
-            .maximum_minor_units(repair_distribution)
-            .is_err()
-    {
-        issues.push(ValidationIssue {
-            field: "repair_distribution.maximum",
-            message: "repair distribution support exceeds the sampler's representable range",
-        });
-    }
     if input.rent.is_negative() {
         issues.push(ValidationIssue {
             field: "rent",
             message: "rent must be non-negative",
-        });
-    }
-    if input.repair_cost_limit.is_negative() {
-        issues.push(ValidationIssue {
-            field: "repair_cost_limit",
-            message: "repair cost limit must be non-negative",
         });
     }
     let currency = ledger.currency();
@@ -232,36 +215,13 @@ pub fn validate_input(
             message: "rent and ledger must use the same currency",
         });
     }
-    if input.repair_cost_limit.currency() != currency {
-        issues.push(ValidationIssue {
-            field: "repair_cost_limit",
-            message: "repair cost limit and ledger must use the same currency",
-        });
-    }
     if state.cash.currency() != currency {
         issues.push(ValidationIssue {
             field: "opening_state.cash",
             message: "opening cash and frozen amounts must use the same currency",
         });
     }
-    if repair_distribution.maximum.currency() != currency {
-        issues.push(ValidationIssue {
-            field: "repair_distribution.maximum",
-            message: "repair support and frozen amounts must use the same currency",
-        });
-    }
-    if repair_distribution.maximum != input.repair_cost_limit {
-        issues.push(ValidationIssue {
-            field: "repair_distribution.maximum",
-            message: "repair support must match the configured repair cost limit",
-        });
-    }
-
-    for (field, amount) in [
-        ("rent", input.rent),
-        ("repair_cost_limit", input.repair_cost_limit),
-        ("repair_distribution.maximum", repair_distribution.maximum),
-    ] {
+    for (field, amount) in [("rent", input.rent)] {
         if !amount.is_negative() && amount.rounded_for_posting().is_err() {
             issues.push(ValidationIssue {
                 field,
@@ -317,25 +277,10 @@ pub fn validate_input(
         }
         Some(_) => {}
     }
-    match ledger.account(input.repair_expense_account) {
-        None => issues.push(ValidationIssue {
-            field: "repair_expense_account",
-            message: "repair account does not exist",
-        }),
-        Some(account) if account.category != AccountCategory::Expense || account.contra => {
-            issues.push(ValidationIssue {
-                field: "repair_expense_account",
-                message: "repair account must be a non-contra expense account",
-            });
-        }
-        Some(_) => {}
-    }
-
     if issues.is_empty() {
         Ok(ValidatedInput {
             opening_state: state.clone(),
             frozen_input: *input,
-            repair_distribution: *repair_distribution,
             preflighted_activities: None,
         })
     } else {
@@ -368,7 +313,6 @@ pub(crate) fn validate_cashflow_support_with_additional(
 ) -> Result<(), SimulationError> {
     let currency = input.rent.currency();
     let rent = input.rent.rounded_for_posting()?;
-    let repair = input.repair_cost_limit.rounded_for_posting()?;
     let mut absolute_support = std::collections::BTreeMap::from([
         (
             property_simulation_accounting::CashFlowCategory::Operating,
@@ -384,37 +328,36 @@ pub(crate) fn validate_cashflow_support_with_additional(
         ),
     ]);
     for activity in activities {
-        let bound = match activity.configuration.sample_kind() {
-            ActivitySampleKind::Rental => rent,
-            ActivitySampleKind::Repair => repair,
-            ActivitySampleKind::Loan => {
+        let bound = match &activity.configuration {
+            ActivityConfiguration::Rental => rent,
+            ActivityConfiguration::RepairOccurrence(_) => {
                 property_simulation_domain::Money::from_parts(0, 0, currency)?
             }
-            ActivitySampleKind::PropertyTax => match &activity.configuration {
-                crate::ActivityConfiguration::PropertyTax(config)
-                    if config.is_due(input.period) =>
-                {
+            ActivityConfiguration::RepairCost(config) => config.maximum.rounded_for_posting()?,
+            ActivityConfiguration::Loan(_) => {
+                property_simulation_domain::Money::from_parts(0, 0, currency)?
+            }
+            ActivityConfiguration::PropertyTax(config) => {
+                if config.is_due(input.period) {
                     config.amount.rounded_for_posting()?
+                } else {
+                    property_simulation_domain::Money::from_parts(0, 0, currency)?
                 }
-                _ => property_simulation_domain::Money::from_parts(0, 0, currency)?,
-            },
-            ActivitySampleKind::Utility => match &activity.configuration {
-                crate::ActivityConfiguration::Utility(config) => config
-                    .rate_per_unit
-                    .checked_mul_u64(config.maximum_usage)
-                    .map_err(|_| {
-                        SimulationError::InvalidInput(
-                            "utility maximum exact charge exceeds the representable Money range",
-                        )
-                    })?
-                    .rounded_for_posting()
-                    .map_err(|_| {
-                        SimulationError::InvalidInput(
-                            "utility maximum charge cannot be rounded for posting",
-                        )
-                    })?,
-                _ => property_simulation_domain::Money::from_parts(0, 0, currency)?,
-            },
+            }
+            ActivityConfiguration::Utility(config) => config
+                .rate_per_unit
+                .checked_mul_u64(config.maximum_usage)
+                .map_err(|_| {
+                    SimulationError::InvalidInput(
+                        "utility maximum exact charge exceeds the representable Money range",
+                    )
+                })?
+                .rounded_for_posting()
+                .map_err(|_| {
+                    SimulationError::InvalidInput(
+                        "utility maximum charge cannot be rounded for posting",
+                    )
+                })?,
         };
         let total = absolute_support
             .get_mut(&property_simulation_accounting::CashFlowCategory::Operating)

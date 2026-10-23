@@ -7,36 +7,121 @@ use crate::proposals::identify_proposal_for;
 use crate::validation::LedgerRead;
 use crate::{
     FatalSimulationFailure, FatalSimulationPhase, IdentifiedProposal, LoanCalculation,
-    LoanContinuation, LoanEvent, LoanSlice, LoanStateEffect, MonthlyCashFlowContribution,
-    MonthlyInput, MonthlyResult, MonthlySliceAdapter, OutputIdFactory, RepairCostValidation,
-    SimulationError,
+    LoanContinuation, LoanEvent, LoanStateEffect, MonthlyCashFlowContribution, MonthlyInput,
+    MonthlyResult, OutputIdAllocator, SimulationError,
 };
+use property_simulation_models::{RandomSource, Sampler, UtilityUsageDistribution};
 
-/// Calculate and settle one complete month against a private Ledger candidate.
-/// Loan configurations must correspond one-to-one with the active loan activities.
-pub fn calculate_monthly_result(
+/// Internal services used by the shared month evaluation pipeline.
+struct MonthlyRuntime<'a, R, US, LC> {
+    pub utility_sampler: &'a mut US,
+    pub random: &'a mut R,
+    pub loan_calculation: &'a LC,
+    pub ids: &'a dyn OutputIdAllocator,
+    pub repair_history: Option<crate::RepairHistory>,
+    /// Independently derived streams keyed by activity, Slice, month and purpose.
+    pub repair_occurrence_random: &'a mut BTreeMap<crate::SliceRandomInputKey, R>,
+    pub repair_cost_random: &'a mut BTreeMap<crate::SliceRandomInputKey, R>,
+}
+
+/// Runtime services for the explicit RepairOccurrence and RepairCost slices.
+/// Caller-owned services for one synchronous calculation using the explicit
+/// RepairOccurrence and RepairCost activities.
+pub struct SliceMonthlyRuntime<'a, R, US, LC> {
+    pub utility_sampler: &'a mut US,
+    pub random: &'a mut R,
+    pub loan_calculation: &'a LC,
+    pub ids: &'a dyn OutputIdAllocator,
+    pub repair_history: Option<crate::RepairHistory>,
+    /// Independently derived streams keyed by activity, Slice, month and purpose.
+    pub repair_occurrence_random: &'a mut BTreeMap<crate::SliceRandomInputKey, R>,
+    pub repair_cost_random: &'a mut BTreeMap<crate::SliceRandomInputKey, R>,
+}
+
+/// Calculate and settle one month containing explicit activity configurations.
+pub fn calculate_monthly_slice_result<R, US, LC>(
     input: &MonthlyInput<'_>,
     ledger_read: &impl LedgerRead,
-    repair_validation: &dyn RepairCostValidation,
-    adapters: &[&dyn MonthlySliceAdapter],
-    loan_slices: &[LoanSlice],
-    loan_calculation: &impl LoanCalculation,
-    ids: &dyn OutputIdFactory,
-) -> Result<MonthlyResult, SimulationError> {
+    runtime: &mut SliceMonthlyRuntime<'_, R, US, LC>,
+) -> Result<MonthlyResult, SimulationError>
+where
+    R: RandomSource,
+    US: Sampler<UtilityUsageDistribution>,
+    LC: LoanCalculation,
+{
+    let mut monthly_runtime = MonthlyRuntime {
+        utility_sampler: runtime.utility_sampler,
+        random: runtime.random,
+        loan_calculation: runtime.loan_calculation,
+        ids: runtime.ids,
+        repair_history: runtime.repair_history,
+        repair_occurrence_random: runtime.repair_occurrence_random,
+        repair_cost_random: runtime.repair_cost_random,
+    };
+    calculate_monthly_slice_result_inner(input, ledger_read, &mut monthly_runtime)
+}
+
+fn calculate_monthly_slice_result_inner<R, US, LC>(
+    input: &MonthlyInput<'_>,
+    ledger_read: &impl LedgerRead,
+    runtime: &mut MonthlyRuntime<'_, R, US, LC>,
+) -> Result<MonthlyResult, SimulationError>
+where
+    R: RandomSource,
+    US: Sampler<UtilityUsageDistribution>,
+    LC: LoanCalculation,
+{
     let period = input.frozen_input.period;
     if ledger_read.currency() != input.opening_ledger.currency() {
         return Err(SimulationError::InvalidInput(
             "Ledger reader currency does not match opening Ledger",
         ));
     }
-    // Complete the correctable monthly and adapter preflight before invoking
-    // loan mathematics or any Slice transition implementation.
-    let prepared =
-        crate::monthly::prepare_monthly_slices(input, ledger_read, repair_validation, adapters)?;
+    for activity in input.activities {
+        match activity.configuration {
+            crate::ActivityConfiguration::RepairOccurrence(_)
+                if !runtime.repair_occurrence_random.contains_key(
+                    &crate::SliceRandomInputKey {
+                        activity_id: activity.id,
+                        slice_id: activity.slice_id,
+                        period,
+                        purpose: "repair.occurrence",
+                    },
+                ) =>
+            {
+                return Err(SimulationError::InvalidInput(
+                    "repair occurrence random input is missing for an active instance",
+                ));
+            }
+            crate::ActivityConfiguration::RepairCost(_)
+                if !runtime
+                    .repair_cost_random
+                    .contains_key(&crate::SliceRandomInputKey {
+                        activity_id: activity.id,
+                        slice_id: activity.slice_id,
+                        period,
+                        purpose: "repair.cost",
+                    }) =>
+            {
+                return Err(SimulationError::InvalidInput(
+                    "repair cost random input is missing for an active instance",
+                ));
+            }
+            _ => {}
+        }
+    }
+    // Complete all instance, account, and loan validation before sampling or
+    // invoking any Slice transition implementation.
+    let prepared = crate::monthly::prepare_monthly_slices(
+        input,
+        runtime.repair_history,
+        ledger_read,
+        runtime.loan_calculation,
+    )?;
     let loan_activities = input
         .activities
         .iter()
-        .filter(|a| a.configuration.sample_kind() == crate::ActivitySampleKind::Loan)
+        .filter(|a| matches!(a.configuration, crate::ActivityConfiguration::Loan(_)))
         .map(|a| (a.id, a))
         .collect::<BTreeMap<_, _>>();
     let continuations = input
@@ -44,60 +129,41 @@ pub fn calculate_monthly_result(
         .iter()
         .map(|c| (c.instance_id, c))
         .collect::<BTreeMap<_, _>>();
-    let slices = loan_slices
+    let slices = loan_activities
         .iter()
-        .map(|s| (s.instance_id, s))
+        .map(|(&id, activity)| {
+            let crate::ActivityConfiguration::Loan(config) = &activity.configuration else {
+                unreachable!("loan activity map contains only loan configurations")
+            };
+            (id, crate::monthly::loan_slice(activity, *config))
+        })
         .collect::<BTreeMap<_, _>>();
-    if loan_activities.len() != continuations.len()
-        || loan_activities.len() != slices.len()
-        || continuations.len() != input.loan_continuations.len()
-        || slices.len() != loan_slices.len()
-        || loan_activities
-            .keys()
-            .any(|id| !continuations.contains_key(id) || !slices.contains_key(id))
-    {
-        return Err(SimulationError::InvalidInput(
-            "each loan activity requires one matching LoanSlice and continuation",
-        ));
-    }
-    let liability_accounts = loan_slices
-        .iter()
-        .map(|slice| slice.liability_account)
-        .collect::<BTreeSet<_>>();
-    if liability_accounts.len() != loan_slices.len() {
-        return Err(SimulationError::InvalidInput(
-            "each loan activity must use its own liability account",
-        ));
-    }
-    for (instance_id, activity) in &loan_activities {
-        let slice = slices[instance_id];
-        let continuation = continuations[instance_id];
-        if slice.slice_id != activity.slice_id || continuation.slice_id != activity.slice_id {
-            return Err(SimulationError::InvalidInput(
-                "loan configuration and continuation identity mismatch",
-            ));
-        }
-        crate::validate_loan_input(slice, continuation.loan, ledger_read, loan_calculation)?;
-    }
+    let loan_outputs = prepared.loan_outputs().clone();
 
-    let mut proposal = crate::monthly::compose_prepared_monthly_slices(prepared, ids)?;
+    let (slice_outputs, samples) = crate::monthly::evaluate_prepared_monthly_slices(
+        prepared,
+        runtime.repair_history,
+        runtime.utility_sampler,
+        runtime.random,
+        runtime.repair_occurrence_random,
+        runtime.repair_cost_random,
+    )?;
+    let mut proposal = crate::monthly::compose_prepared_monthly_slices(slice_outputs, runtime.ids)?;
 
     let mut loan_events = Vec::new();
     let mut loan_effects = Vec::new();
     let mut closing_loans = Vec::new();
     let mut loan_proposals = Vec::new();
     for (instance_id, activity) in loan_activities {
-        let slice = slices[&instance_id];
         let continuation = continuations[&instance_id];
         let mut events = Vec::new();
         let mut effects = Vec::new();
         let proposal_for_loan = match continuation.loan {
             Some(loan) => {
-                let calculation = loan_calculation
-                    .calculate_month(loan)
-                    .map_err(crate::slices::map_model_error)?;
-                let output = slice.propose_month(period, loan, calculation, loan_calculation)?;
-                let identified = identify_proposal_for(output.proposal, ids, activity, period)?;
+                let output = &loan_outputs[&instance_id];
+                let calculation = output.result;
+                let identified =
+                    identify_proposal_for(output.proposal.clone(), runtime.ids, activity, period)?;
                 for event in &identified.events {
                     events.push(LoanEvent {
                         id: event.id,
@@ -117,7 +183,7 @@ pub fn calculate_monthly_result(
                 let updated = output.state_effect.updated;
                 for event in &events {
                     effects.push(LoanStateEffect {
-                        id: ids.effect_id(period, instance_id, "loan_payment"),
+                        id: runtime.ids.effect_id(period, instance_id, "loan_payment"),
                         instance_id,
                         slice_id: activity.slice_id,
                         period,
@@ -150,6 +216,66 @@ pub fn calculate_monthly_result(
     proposal
         .events
         .retain(|event| !loan_event_ids.contains(&event.id));
+    let mut lifecycle_changes = Vec::new();
+    for activity in input.activities {
+        match &activity.configuration {
+            crate::ActivityConfiguration::RepairOccurrence(config) => {
+                let occurred = samples.iter().any(|sample| {
+                    sample.instance_id == activity.id
+                        && sample.value
+                            == crate::ActivitySampleValue::RepairOccurrence(
+                                property_simulation_models::RepairOccurrenceSample(true),
+                            )
+                });
+                if occurred {
+                    let event = proposal
+                        .events()
+                        .iter()
+                        .find(|event| {
+                            event.instance_id == activity.id && event.key == "repair_occurrence"
+                        })
+                        .ok_or(SimulationError::InvalidProposal(
+                            "repair occurrence sample has no event",
+                        ))?;
+                    let delay = i32::try_from(config.cost_template.delay_months).map_err(|_| {
+                        SimulationError::InvalidInput("repair cost delay is out of range")
+                    })?;
+                    let effective_period = period.checked_add_months(delay)?;
+                    let instance = crate::ActivityInstance {
+                        id: runtime
+                            .ids
+                            .activity_instance_id(period, activity.id, "repair_cost"),
+                        slice_id: activity.slice_id,
+                        configuration: crate::ActivityConfiguration::RepairCost(
+                            crate::RepairCostConfig {
+                                source_event_id: event.id,
+                                source_instance_id: activity.id,
+                                source_slice_id: activity.slice_id,
+                                occurrence_period: period,
+                                delay_months: config.cost_template.delay_months,
+                                effective_period,
+                                maximum: config.cost_template.maximum,
+                                expense_account: config.cost_template.expense_account,
+                            },
+                        ),
+                    };
+                    lifecycle_changes.push(crate::InstanceLifecycleChange {
+                        effective_period,
+                        operation: crate::InstanceLifecycleOperation::Add(instance),
+                    });
+                }
+            }
+            crate::ActivityConfiguration::RepairCost(_) => {
+                lifecycle_changes.push(crate::InstanceLifecycleChange {
+                    effective_period: period,
+                    operation: crate::InstanceLifecycleOperation::Complete {
+                        instance_id: activity.id,
+                    },
+                })
+            }
+            _ => {}
+        }
+    }
     let mut events = proposal
         .events()
         .iter()
@@ -160,6 +286,14 @@ pub fn calculate_monthly_result(
             .iter()
             .map(|event| (event.id, (event.instance_id, event.slice_id))),
     );
+    for activity in input.activities {
+        if let crate::ActivityConfiguration::RepairCost(config) = &activity.configuration {
+            events.insert(
+                config.source_event_id,
+                (config.source_instance_id, config.source_slice_id),
+            );
+        }
+    }
     let mut transactions = Vec::new();
     for p in proposal.transactions() {
         transactions.push(
@@ -183,7 +317,7 @@ pub fn calculate_monthly_result(
         ))
     })?;
     for continuation in &closing_loans {
-        let slice = slices[&continuation.instance_id];
+        let slice = &slices[&continuation.instance_id];
         let expected_balance = continuation
             .loan
             .map(|loan| loan.opening_balance.checked_neg())
@@ -281,22 +415,28 @@ pub fn calculate_monthly_result(
         }
     }
     // Ensure transaction/event source references survived merging before constructing the success value.
-    if proposal.transactions().iter().any(|t| {
-        t.source_event_id
-            .is_some_and(|id| events.get(&id) != Some(&(t.instance_id, t.slice_id)))
-    }) {
+    if proposal.transactions().iter().any(|t| t.source_event_id.is_some_and(|id| {
+        events.get(&id) != Some(&(t.instance_id, t.slice_id))
+            && !input.activities.iter().any(|activity| {
+                activity.id == t.instance_id && matches!(&activity.configuration,
+                    crate::ActivityConfiguration::RepairCost(config)
+                        if config.source_event_id == id
+                            && events.get(&id) == Some(&(config.source_instance_id, config.source_slice_id)))
+            })
+    })) {
         return Err(SimulationError::InvalidProposal(
             "transaction source event is not in the monthly proposal",
         ));
     }
-    MonthlyResult::from_settled_parts(
+    MonthlyResult::from_settled_parts_with_lifecycle(
         period,
         input.opening_state.clone(),
         *input.frozen_input,
         input.activities.to_vec(),
-        input.samples.to_vec(),
+        samples,
         closing_state,
         proposal,
+        lifecycle_changes,
         transactions,
         cash_flows,
         input.loan_continuations.to_vec(),

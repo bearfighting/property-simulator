@@ -56,8 +56,6 @@ fn fixture(end: Option<YearMonth>, conditions: Vec<StopCondition>) -> Simulation
         rent: Money::new(0.into(), currency),
         rent_account,
         cash_account,
-        repair_expense_account: repair_account,
-        repair_cost_limit: Money::new(0.into(), currency),
     };
     let state = OpeningState {
         cash: Money::new(0.into(), currency),
@@ -117,8 +115,6 @@ fn make_fixture_ledger() -> (Ledger, FrozenInput, OpeningState) {
         rent: Money::new(0.into(), currency),
         rent_account,
         cash_account,
-        repair_expense_account: repair_account,
-        repair_cost_limit: Money::new(0.into(), currency),
     };
     let state = OpeningState {
         cash: Money::new(0.into(), currency),
@@ -179,22 +175,23 @@ impl SingleMonthExecutor for Executor {
         let state = input.opening_state().clone();
         let samples = activities
             .iter()
+            .filter(|activity| !activity.configuration.is_loan())
             .map(|activity| {
-                let value = match activity.configuration.sample_kind() {
-                    crate::ActivitySampleKind::Rental => ActivitySampleValue::Rental,
-                    crate::ActivitySampleKind::Repair => {
-                        ActivitySampleValue::Repair(crate::RepairSample::NoRepair)
+                let value = match activity.configuration.test_kind() {
+                    crate::TestActivityKind::Rental => ActivitySampleValue::Rental,
+                    crate::TestActivityKind::Loan => unreachable!("loan activities have no sample"),
+                    crate::TestActivityKind::PropertyTax => ActivitySampleValue::PropertyTax,
+                    crate::TestActivityKind::Utility => ActivitySampleValue::Utility(0),
+                    crate::TestActivityKind::RepairOccurrence => {
+                        panic!("repair occurrence requires explicit history")
                     }
-                    crate::ActivitySampleKind::Loan => ActivitySampleValue::Loan(None),
-                    crate::ActivitySampleKind::PropertyTax => ActivitySampleValue::PropertyTax,
-                    crate::ActivitySampleKind::Utility => ActivitySampleValue::Utility(0),
+                    crate::TestActivityKind::RepairCost => {
+                        panic!("repair cost requires a generated instance")
+                    }
                 };
                 let sample = ActivitySample::new(activity, input.frozen_input().period, value);
-                match activity.configuration.sample_kind() {
-                    crate::ActivitySampleKind::Repair => {
-                        sample.with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()))
-                    }
-                    crate::ActivitySampleKind::Utility => {
+                match activity.configuration.test_kind() {
+                    crate::TestActivityKind::Utility => {
                         sample.with_purpose(Some(crate::activity::UTILITY_SAMPLE_PURPOSE.into()))
                     }
                     _ => sample,
@@ -463,7 +460,7 @@ fn loan_run_requires_a_continuation_for_each_loan_activity() {
     let activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([31; 16]),
         slice_id: SliceId::from_bytes([32; 16]),
-        configuration: crate::ActivityConfiguration::Loan,
+        configuration: crate::ActivityConfiguration::Loan(crate::LoanConfig::default()),
     };
     let config = RunConfig {
         start: month(1),
@@ -568,7 +565,7 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
             let activity = crate::ActivityInstance {
                 id: instance_id,
                 slice_id,
-                configuration: crate::ActivityConfiguration::Repair,
+                configuration: crate::ActivityConfiguration::Rental,
             };
             if activities != [activity.clone()] {
                 return Err(SimulationError::InvalidInput(
@@ -604,7 +601,7 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
                 vec![ActivitySample::new(
                     &activity,
                     input.frozen_input().period,
-                    ActivitySampleValue::Repair(crate::RepairSample::NoRepair),
+                    ActivitySampleValue::Rental,
                 )],
                 closing,
                 proposal,
@@ -614,11 +611,11 @@ fn negative_month_end_cash_does_not_implicitly_stop_an_unbounded_run() {
     }
 
     let (ledger, mut input, state) = make_fixture_ledger();
-    input.repair_cost_limit = Money::new(15.into(), input.repair_cost_limit.currency());
+    input.rent = Money::new(1.into(), input.rent.currency());
     let activity = crate::ActivityInstance {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-        configuration: crate::ActivityConfiguration::Repair,
+        configuration: crate::ActivityConfiguration::Rental,
     };
     let mut run = SimulationRun::new_with_activities(
         RunConfig {
@@ -929,19 +926,10 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
         ) -> Result<(TestMonthlyResult, Ledger), SimulationError> {
             if self.reject_once {
                 self.reject_once = false;
-                let invalid = ActivitySample::new(
-                    &self.activity,
-                    input.frozen_input().period,
-                    crate::RepairSample::Repair {
-                        cost: Money::new(
-                            1.into(),
-                            input.frozen_input().repair_cost_limit.currency(),
-                        ),
-                    },
-                )
-                .with_purpose(Some(crate::activity::REPAIR_SAMPLE_PURPOSE.into()));
-                let slice = crate::RepairSlice {
-                    repair_validation: &crate::REPAIR_COST_RULES,
+                let mut invalid =
+                    ActivitySample::new(&self.activity, input.frozen_input().period, ());
+                invalid.instance_id = ActivityInstanceId::from_bytes([99; 16]);
+                let slice = crate::RentalSlice {
                     instance: self.activity.clone(),
                 };
                 return Err(crate::propose_slice(&slice, input, &invalid).unwrap_err());
@@ -955,7 +943,7 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
     let activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([7; 16]),
         slice_id: SliceId::from_bytes([8; 16]),
-        configuration: crate::ActivityConfiguration::Repair,
+        configuration: crate::ActivityConfiguration::Rental,
     };
     let mut run = SimulationRun::new_with_activities(
         RunConfig {
@@ -985,7 +973,9 @@ fn invalid_sample_from_executor_is_retryable_before_any_snapshot() {
     assert!(matches!(
         run.call(RunCommand::Continue, &[], &mut executor),
         Err(RunControlError::InvalidExecutionInput(
-            SimulationError::InvalidInput("repair sample outside support")
+            SimulationError::InvalidInput(
+                "sample provenance does not match activity instance or period"
+            )
         ))
     ));
     assert_eq!(
@@ -1121,8 +1111,6 @@ fn unrepresentable_loan_and_input_cashflow_support_rejects_before_executor() {
         rent: Money::new(0.into(), currency),
         rent_account: rent,
         cash_account: cash,
-        repair_expense_account: repairs,
-        repair_cost_limit: Money::new(0.into(), currency),
     };
     let state = OpeningState {
         cash: Money::new(0.into(), currency),
@@ -1131,7 +1119,7 @@ fn unrepresentable_loan_and_input_cashflow_support_rejects_before_executor() {
     let loan_activity = crate::ActivityInstance {
         id: ActivityInstanceId::from_bytes([46; 16]),
         slice_id: SliceId::from_bytes([47; 16]),
-        configuration: crate::ActivityConfiguration::Loan,
+        configuration: crate::ActivityConfiguration::Loan(crate::LoanConfig::default()),
     };
     let continuation = LoanContinuation {
         instance_id: loan_activity.id,
@@ -1291,7 +1279,7 @@ fn inconsistent_executor_output_fails_without_committing_a_snapshot() {
     let activity = crate::ActivityInstance {
         id: property_simulation_domain::ActivityInstanceId::from_bytes([7; 16]),
         slice_id: property_simulation_domain::SliceId::from_bytes([8; 16]),
-        configuration: crate::ActivityConfiguration::Repair,
+        configuration: crate::ActivityConfiguration::Rental,
     };
     let mut run = SimulationRun::new_with_activities(
         RunConfig {

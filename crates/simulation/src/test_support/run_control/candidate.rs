@@ -1,9 +1,7 @@
 use super::validation::{additional_cash_flow_support, has_duplicate_activity_ids};
 use super::*;
-use crate::validate_input;
 use property_simulation_accounting::BalanceSide;
 use property_simulation_domain::EffectId;
-use property_simulation_models::RepairCostDistribution;
 
 pub(super) struct PreparedMonth {
     pub(super) input: FrozenInput,
@@ -35,7 +33,6 @@ pub(super) fn prepare_month(
         }
         match &update.value {
             RunUpdateValue::Rent(value) => input.rent = *value,
-            RunUpdateValue::RepairCostLimit(value) => input.repair_cost_limit = *value,
             RunUpdateValue::Condition(value) => state.condition = *value,
             RunUpdateValue::Activities(value) => activities = value.clone(),
             RunUpdateValue::LoanTerms(value) => {
@@ -110,7 +107,7 @@ pub(super) fn prepare_month(
     }
     let loan_activity_map: std::collections::BTreeMap<_, _> = activities
         .iter()
-        .filter(|activity| activity.configuration.sample_kind() == crate::ActivitySampleKind::Loan)
+        .filter(|activity| activity.configuration.is_loan())
         .map(|activity| (activity.id, activity.slice_id))
         .collect();
     let prior_loans: std::collections::BTreeMap<_, _> = run
@@ -141,17 +138,8 @@ pub(super) fn prepare_month(
             "an active loan cannot be removed from the activity set",
         ));
     }
-    let distribution = RepairCostDistribution {
-        maximum: input.repair_cost_limit,
-    };
-    let mut validated = validate_input(
-        &input,
-        &distribution,
-        &crate::REPAIR_COST_RULES,
-        &candidate_ledger,
-        &state,
-    )
-    .map_err(RunControlError::Input)?;
+    let mut validated = crate::validation::validate_slice_input(&input, &candidate_ledger, &state)
+        .map_err(RunControlError::Input)?;
     let additional_support = additional_cash_flow_support(
         &candidate_loans,
         &loan_updates,

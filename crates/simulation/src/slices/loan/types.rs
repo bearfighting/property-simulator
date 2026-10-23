@@ -1,10 +1,11 @@
 #[cfg(test)]
 use crate::CashFlowContribution;
 #[cfg(test)]
-use crate::OutputIdFactory;
+use crate::OutputIdAllocator;
 use crate::SliceProposal;
 #[cfg(test)]
 use property_simulation_accounting::Ledger;
+#[cfg(test)]
 use property_simulation_accounting::LedgerTransaction;
 use property_simulation_domain::{
     AccountId, ActivityInstanceId, EffectId, EventId, Money, SliceId, YearMonth,
@@ -56,6 +57,7 @@ pub struct LoanCoordinatedMonth {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct LoanMonthInput {
     pub slice: LoanSlice,
     pub loan: Option<FixedRateLoan>,
@@ -96,6 +98,7 @@ pub struct LoanEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct LoanTermsUpdate {
     pub(super) expected_current: FixedRateLoan,
     pub(super) updated: Option<FixedRateLoan>,
@@ -112,9 +115,10 @@ pub struct LoanMonthCommand<'a> {
     pub opening_ledger: &'a Ledger,
     pub trial_id: TrialId,
     pub branch_id: BranchId,
-    pub ids: &'a dyn OutputIdFactory,
+    pub ids: &'a dyn OutputIdAllocator,
 }
 
+#[cfg(test)]
 impl LoanTermsUpdate {
     pub const fn expected_loan(&self) -> FixedRateLoan {
         self.expected_current

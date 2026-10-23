@@ -1,10 +1,15 @@
-use super::{LoanCalculation, LoanSlice, LoanTermsUpdate, map_model_error};
+#[cfg(test)]
+use super::LoanTermsUpdate;
+use super::{LoanCalculation, LoanSlice, map_model_error};
 use crate::SimulationError;
+use property_simulation_accounting::AccountCategory;
 #[cfg(test)]
 use property_simulation_accounting::Ledger;
-use property_simulation_accounting::{AccountCategory, BalanceSide, CashFlowCategory, LedgerEntry};
+#[cfg(test)]
+use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 #[cfg(test)]
 use property_simulation_domain::AccountId;
+#[cfg(test)]
 use property_simulation_domain::Money;
 
 #[cfg(test)]
@@ -13,11 +18,24 @@ use crate::validation::LedgerRead;
 
 /// Validate the configured loan accounts and active loan against the caller's ledger view.
 /// The caller supplies the model implementation so loan rules remain independently injectable.
+#[cfg(test)]
 pub fn validate_loan_input(
     slice: &LoanSlice,
     loan: Option<property_simulation_models::FixedRateLoan>,
     ledger: &impl LedgerRead,
     calculation: &impl LoanCalculation,
+) -> Result<(), SimulationError> {
+    validate_loan_opening_state(slice, loan, ledger)?;
+    if let Some(loan) = loan {
+        validate_loan_calculation(loan, calculation)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_loan_opening_state(
+    slice: &LoanSlice,
+    loan: Option<property_simulation_models::FixedRateLoan>,
+    ledger: &impl LedgerRead,
 ) -> Result<(), SimulationError> {
     validate_account_roles(slice, ledger)?;
     if let Some(loan) = loan {
@@ -32,9 +50,6 @@ pub fn validate_loan_input(
                 "loan opening balance must match its liability account balance",
             ));
         }
-        calculation.validate(loan).map_err(map_model_error)?;
-        calculation.derive_payment(loan).map_err(map_model_error)?;
-        calculation.calculate_month(loan).map_err(map_model_error)?;
     } else if !ledger.signed_balance(slice.liability_account)?.is_zero() {
         return Err(SimulationError::InvalidInput(
             "an absent or settled loan must have a zero liability account balance",
@@ -43,9 +58,33 @@ pub fn validate_loan_input(
     Ok(())
 }
 
+pub(crate) fn validate_loan_calculation(
+    loan: property_simulation_models::FixedRateLoan,
+    calculation: &impl LoanCalculation,
+) -> Result<property_simulation_models::LoanMonth, SimulationError> {
+    calculation.validate(loan).map_err(map_model_error)?;
+    let derived_payment = calculation.derive_payment(loan).map_err(map_model_error)?;
+    let result = calculation.calculate_month(loan).map_err(map_model_error)?;
+    let remaining_due = loan.opening_balance.checked_add(result.interest)?;
+    let expected_payment = if loan.remaining_months == 1
+        || derived_payment.checked_cmp(remaining_due)? == std::cmp::Ordering::Greater
+    {
+        remaining_due
+    } else {
+        derived_payment
+    };
+    if result.scheduled_payment != derived_payment || result.payment != expected_payment {
+        return Err(SimulationError::InvalidInput(
+            "loan month payment does not match its derived schedule and remaining balance",
+        ));
+    }
+    Ok(result)
+}
+
 /// Validate a prepared terms update against the receiving loan Slice and opening ledger.
 /// This checks the account references that cannot be verified by the account-agnostic
 /// `apply_loan_terms_update` constructor.
+#[cfg(test)]
 pub fn validate_loan_terms_update(
     slice: &LoanSlice,
     update: &LoanTermsUpdate,

@@ -1,35 +1,78 @@
 use std::collections::BTreeSet;
 
-use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
-use property_simulation_domain::Money;
-
 use crate::activity::{SimulationSlice, ValidatedActivitySample};
 use crate::composition::SliceResources;
 use crate::error::SimulationError;
 use crate::types::{
-    ActivityInstance, ActivitySampleKind, AssetCondition, EffectProposal, EventProposal,
-    FrozenInput, OpeningState, RepairSample, SliceProposal, TransactionProposal,
+    ActivityConfiguration, ActivityInstance, AssetCondition, EffectProposal, EventProposal,
+    FrozenInput, OpeningState, SliceProposal, TransactionProposal,
 };
-use crate::validation::{RepairCostValidation, ValidatedInput};
+use crate::validation::ValidatedInput;
+use property_simulation_accounting::{BalanceSide, CashFlowCategory, LedgerEntry};
 
-pub struct RepairSlice<'a> {
+/// Monthly event process. It never posts to the Ledger; an occurrence event is
+/// used by the monthly coordinator to create a delayed RepairCost instance.
+pub struct RepairOccurrenceSlice {
     pub instance: ActivityInstance,
-    pub repair_validation: &'a dyn RepairCostValidation,
 }
-impl SimulationSlice for RepairSlice<'_> {
-    type Sample = RepairSample;
-    const SAMPLE_KIND: ActivitySampleKind = ActivitySampleKind::Repair;
+
+impl SimulationSlice for RepairOccurrenceSlice {
+    type Sample = property_simulation_models::RepairOccurrenceSample;
+    fn instance(&self) -> &ActivityInstance {
+        &self.instance
+    }
+    fn resources(&self, _input: &FrozenInput) -> SliceResources {
+        SliceResources {
+            instance_id: self.instance.id,
+            slice_id: self.instance.slice_id,
+            reads: BTreeSet::new(),
+            writes: BTreeSet::new(),
+        }
+    }
+    fn sample_value(&self, sample: &Self::Sample) -> crate::activity::ActivitySampleValue {
+        crate::activity::ActivitySampleValue::RepairOccurrence(*sample)
+    }
+    fn propose_validated(
+        &self,
+        _state: &OpeningState,
+        input: &FrozenInput,
+        sample: &ValidatedActivitySample<'_, Self::Sample>,
+    ) -> Result<SliceProposal, SimulationError> {
+        if !sample.value().0 {
+            return Ok(SliceProposal::default());
+        }
+        Ok(SliceProposal {
+            events: vec![EventProposal {
+                period: input.period,
+                key: "repair_occurrence".into(),
+            }],
+            ..SliceProposal::default()
+        })
+    }
+}
+
+/// One-time cost settlement. The occurrence decision and amount distribution
+/// are separate, and the source event remains explicit on the instance.
+pub struct RepairCostSlice {
+    pub instance: ActivityInstance,
+}
+
+impl SimulationSlice for RepairCostSlice {
+    type Sample = property_simulation_models::RepairCostSample;
     fn instance(&self) -> &ActivityInstance {
         &self.instance
     }
     fn resources(&self, input: &FrozenInput) -> SliceResources {
+        let ActivityConfiguration::RepairCost(config) = &self.instance.configuration else {
+            unreachable!()
+        };
         SliceResources {
             instance_id: self.instance.id,
             slice_id: self.instance.slice_id,
             reads: BTreeSet::new(),
             writes: [
+                property_simulation_domain::ResourceKey::for_account(config.expense_account),
                 property_simulation_domain::ResourceKey::for_account(input.cash_account),
-                property_simulation_domain::ResourceKey::for_account(input.repair_expense_account),
                 property_simulation_domain::ResourceKey::new("property.condition")
                     .expect("static resource key"),
             ]
@@ -38,68 +81,56 @@ impl SimulationSlice for RepairSlice<'_> {
         }
     }
     fn sample_value(&self, sample: &Self::Sample) -> crate::activity::ActivitySampleValue {
-        crate::activity::ActivitySampleValue::Repair(*sample)
+        crate::activity::ActivitySampleValue::RepairCost(*sample)
     }
     fn validate_sample(
         &self,
-        input: &ValidatedInput,
+        _input: &ValidatedInput,
         sample: &Self::Sample,
     ) -> Result<(), SimulationError> {
-        if let RepairSample::Repair { cost } = sample {
-            self.repair_validation
-                .validate_sample(input.repair_distribution(), *cost)
-                .map_err(|_| SimulationError::InvalidInput("repair sample outside support"))?;
+        let ActivityConfiguration::RepairCost(config) = &self.instance.configuration else {
+            unreachable!()
+        };
+        property_simulation_models::RepairCostDistribution {
+            maximum: config.maximum,
         }
-        Ok(())
+        .validate_sample(sample.0)
+        .map_err(|_| SimulationError::InvalidInput("repair cost sample outside support"))
     }
     fn propose_validated(
         &self,
         _state: &OpeningState,
         input: &FrozenInput,
-        sample: &ValidatedActivitySample<'_, RepairSample>,
+        sample: &ValidatedActivitySample<'_, Self::Sample>,
     ) -> Result<SliceProposal, SimulationError> {
-        let (cost, repair) = match sample.value() {
-            RepairSample::NoRepair => (
-                Money::new(0.into(), input.repair_cost_limit.currency()),
-                false,
-            ),
-            RepairSample::Repair { cost } => (*cost, true),
+        let ActivityConfiguration::RepairCost(config) = &self.instance.configuration else {
+            unreachable!()
         };
-        let posted_cost = cost.rounded_for_posting()?;
-        if !repair {
-            return Ok(SliceProposal::default());
-        }
-        // A repair outcome is valid whether it resolves a known repair need or
-        // represents preventive work on an already available property.
-        let resulting_condition = AssetCondition::Available;
-        let tx = TransactionProposal {
-            key: "repair".into(),
-            period: input.period,
-            entries: vec![
-                LedgerEntry::new(
-                    input.repair_expense_account,
-                    BalanceSide::Debit,
-                    posted_cost,
-                ),
-                LedgerEntry::new(input.cash_account, BalanceSide::Credit, posted_cost)
-                    .with_cash_flow_category(CashFlowCategory::Operating),
-            ],
-            source_event_key: Some("repair_performed".into()),
-        };
+        let amount = sample.value().0.rounded_for_posting()?;
+        let condition = AssetCondition::Available;
         Ok(SliceProposal {
             events: vec![EventProposal {
                 period: input.period,
-                key: "repair_performed".to_owned(),
+                key: "repair_cost_settled".into(),
             }],
             effects: vec![EffectProposal {
                 period: input.period,
                 target: property_simulation_domain::ResourceKey::new("property.condition")
                     .expect("static resource key"),
-                key: "condition".to_owned(),
-                source_event_key: Some("repair_performed".to_owned()),
-                condition: resulting_condition,
+                key: "condition".into(),
+                source_event_key: Some("repair_cost_settled".into()),
+                condition,
             }],
-            transactions: vec![tx],
+            transactions: vec![TransactionProposal {
+                key: "repair_cost".into(),
+                period: input.period,
+                entries: vec![
+                    LedgerEntry::new(config.expense_account, BalanceSide::Debit, amount),
+                    LedgerEntry::new(input.cash_account, BalanceSide::Credit, amount)
+                        .with_cash_flow_category(CashFlowCategory::Operating),
+                ],
+                source_event_key: Some("repair_cost_settled".into()),
+            }],
         })
     }
 }

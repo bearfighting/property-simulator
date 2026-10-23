@@ -34,6 +34,8 @@ pub enum SimulationError {
     InvalidProposal(&'static str),
     Domain(DomainError),
     Accounting(AccountError),
+    /// A caller-provided sampler or random source failed after monthly preflight.
+    SamplingFailure,
     #[cfg(test)]
     InvalidTransactions(ProposalValidationErrors),
     DuplicateOutputId,

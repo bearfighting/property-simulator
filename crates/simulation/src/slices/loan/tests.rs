@@ -3,7 +3,7 @@ use crate::{
     ActivityConfiguration, ActivityInstance, ActivitySample, AssetCondition, FrozenInput,
     OpeningState, PropertyTaxCadence, PropertyTaxConfig, PropertyTaxSlice, propose_slice,
 };
-use crate::{OutputIdFactory, coordinate_loan_month, coordinate_month_with_loans};
+use crate::{OutputIdAllocator, coordinate_loan_month, coordinate_month_with_loans};
 use property_simulation_accounting::{
     Account, AccountCategory, AccountCode, ChartOfAccounts, OpeningBalance, OpeningBalances,
 };
@@ -36,7 +36,15 @@ fn prepare_loan_terms_update(
 }
 
 struct Ids;
-impl OutputIdFactory for Ids {
+impl OutputIdAllocator for Ids {
+    fn activity_instance_id(
+        &self,
+        _period: YearMonth,
+        _instance: ActivityInstanceId,
+        _key: &str,
+    ) -> ActivityInstanceId {
+        ActivityInstanceId::from_bytes([250; 16])
+    }
     fn event_id(&self, _: YearMonth, _: ActivityInstanceId, key: &str) -> EventId {
         EventId::from_bytes([if key == "loan_payment" { 1 } else { 2 }; 16])
     }
@@ -125,24 +133,12 @@ fn property_tax_composes_with_a_loan_in_the_same_month() {
         rent: Money::parse("0", currency).unwrap(),
         rent_account: AccountId::from_bytes([5; 16]),
         cash_account: loan_slice.cash_account,
-        repair_expense_account: loan_slice.interest_expense_account,
-        repair_cost_limit: Money::parse("0", currency).unwrap(),
     };
     let state = OpeningState {
         cash: Money::parse("0", currency).unwrap(),
         condition: AssetCondition::Available,
     };
-    let distribution = property_simulation_models::RepairCostDistribution {
-        maximum: frozen.repair_cost_limit,
-    };
-    let mut input = crate::validate_input(
-        &frozen,
-        &distribution,
-        &crate::REPAIR_COST_RULES,
-        &ledger,
-        &state,
-    )
-    .unwrap();
+    let mut input = crate::validation::validate_slice_input(&frozen, &ledger, &state).unwrap();
     let tax = ActivityInstance {
         id: ActivityInstanceId::from_bytes([40; 16]),
         slice_id: SliceId::from_bytes([41; 16]),
@@ -192,24 +188,12 @@ fn loan_aware_coordinator_accepts_a_month_with_no_active_activities() {
         rent: Money::parse("0", currency).unwrap(),
         rent_account: AccountId::from_bytes([5; 16]),
         cash_account: slice.cash_account,
-        repair_expense_account: slice.interest_expense_account,
-        repair_cost_limit: Money::parse("0", currency).unwrap(),
     };
     let state = OpeningState {
         cash: Money::parse("0", currency).unwrap(),
         condition: AssetCondition::Available,
     };
-    let distribution = property_simulation_models::RepairCostDistribution {
-        maximum: frozen.repair_cost_limit,
-    };
-    let input = crate::validate_input(
-        &frozen,
-        &distribution,
-        &crate::REPAIR_COST_RULES,
-        &ledger,
-        &state,
-    )
-    .unwrap();
+    let input = crate::validation::validate_slice_input(&frozen, &ledger, &state).unwrap();
     let (result, unchanged) = coordinate_month_with_loans(
         &input,
         &ledger,
@@ -286,9 +270,7 @@ fn proposes_separate_operating_interest_and_financing_principal() {
     };
     let period = YearMonth::new(2026, 1).unwrap();
     let month = loan.calculate_month().unwrap();
-    let output = slice
-        .propose_month(period, loan, month, &crate::tests::TestLoanCalculation)
-        .unwrap();
+    let output = slice.propose_month(period, loan, month).unwrap();
     let entries = &output.proposal.transactions[0].entries;
     assert_eq!(entries.len(), 4);
     assert_eq!(entries[0].amount(), Money::parse("100", currency).unwrap());
@@ -418,29 +400,19 @@ fn rejects_a_loan_month_whose_postings_do_not_reconcile_to_the_opening_loan() {
     invalid.principal = Money::parse("1", currency).unwrap();
     assert!(
         slice
-            .propose_month(
-                YearMonth::new(2026, 1).unwrap(),
-                loan,
-                invalid,
-                &crate::tests::TestLoanCalculation,
-            )
+            .propose_month(YearMonth::new(2026, 1).unwrap(), loan, invalid,)
             .is_err()
     );
 
     invalid.interest = Money::parse("100", currency).unwrap();
     invalid.payment = Money::parse("100", currency).unwrap();
-    invalid.principal = Money::parse("0", currency).unwrap();
+    invalid.principal = Money::parse("1", currency).unwrap();
     invalid.scheduled_payment = Money::parse("100", currency).unwrap();
     invalid.closing_balance = loan.opening_balance;
     invalid.remaining_months = loan.remaining_months - 1;
     assert!(
         slice
-            .propose_month(
-                YearMonth::new(2026, 1).unwrap(),
-                loan,
-                invalid,
-                &crate::tests::TestLoanCalculation,
-            )
+            .propose_month(YearMonth::new(2026, 1).unwrap(), loan, invalid,)
             .is_err()
     );
 
@@ -451,12 +423,7 @@ fn rejects_a_loan_month_whose_postings_do_not_reconcile_to_the_opening_loan() {
     invalid.closing_balance = loan.opening_balance;
     assert!(
         slice
-            .propose_month(
-                YearMonth::new(2026, 1).unwrap(),
-                loan,
-                invalid,
-                &crate::tests::TestLoanCalculation,
-            )
+            .propose_month(YearMonth::new(2026, 1).unwrap(), loan, invalid,)
             .is_err()
     );
 }
@@ -505,7 +472,6 @@ fn rejects_loan_calculation_amounts_that_cannot_be_posted_at_currency_precision(
                 YearMonth::new(2026, 1).unwrap(),
                 loan,
                 FractionalCalculation.calculate_month(loan).unwrap(),
-                &FractionalCalculation,
             )
             .is_err()
     );
@@ -850,24 +816,12 @@ fn loan_composition_is_retained_in_month_result_and_snapshot_payload() {
         rent: Money::parse("0", currency).unwrap(),
         rent_account: AccountId::from_bytes([5; 16]),
         cash_account: slice.cash_account,
-        repair_expense_account: slice.interest_expense_account,
-        repair_cost_limit: Money::parse("0", currency).unwrap(),
     };
     let state = OpeningState {
         cash: Money::parse("0", currency).unwrap(),
         condition: AssetCondition::Available,
     };
-    let distribution = property_simulation_models::RepairCostDistribution {
-        maximum: frozen.repair_cost_limit,
-    };
-    let input = crate::validate_input(
-        &frozen,
-        &distribution,
-        &crate::REPAIR_COST_RULES,
-        &ledger,
-        &state,
-    )
-    .unwrap();
+    let input = crate::validation::validate_slice_input(&frozen, &ledger, &state).unwrap();
     let (result, committed) = coordinate_month_with_loans(
         &input,
         &ledger,

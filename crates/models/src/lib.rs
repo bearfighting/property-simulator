@@ -6,6 +6,9 @@ mod sampling;
 mod utility_usage;
 
 pub use loan::{FixedRateLoan, LoanModelError, LoanMonth, calculate_optional_loan_month};
-pub use repair_cost::{RepairCostDistribution, RepairDistribution, RepairSample, RepairSampler};
+pub use repair_cost::{
+    RepairCostDistribution, RepairCostSample, RepairCostSampler, RepairOccurrenceDistribution,
+    RepairOccurrenceSample, RepairOccurrenceSampler,
+};
 pub use sampling::{Distribution, RandomSource, Sampler, SamplingError};
 pub use utility_usage::{UtilityUsageDistribution, UtilityUsageSampler};

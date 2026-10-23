@@ -12,67 +12,40 @@ mod error;
 mod monthly;
 mod proposals;
 #[cfg(test)]
-#[path = "test_support/repair_validation.rs"]
-mod repair_validation_test_support;
-#[cfg(test)]
 #[path = "test_support/run_control/mod.rs"]
 mod run_control;
 mod settlement;
 mod slices;
+#[cfg(test)]
+mod test_support_api;
 mod types;
 mod validation;
 
-pub use activity::*;
-#[cfg(test)]
-pub use archive::{
-    ArchiveError, BranchRecord, RunCashFlowSummary, SavedMonth, SimulationArchive, UserSettings,
-    saved_month,
-};
-pub use composition::{SliceResources, validate_composition};
-#[cfg(test)]
-pub use coordinator::coordinate_month;
+pub use activity::{ActivitySample, ActivitySampleValue};
 pub use error::{FatalSimulationFailure, FatalSimulationPhase, SimulationError};
-pub use monthly::{
-    BoundSliceAdapter, MonthlySliceAdapter, compose_monthly_slices, evaluate_monthly_slices,
+pub use settlement::{SliceMonthlyRuntime, calculate_monthly_slice_result};
+pub use slices::{LoanCalculation, LoanContinuation, LoanEvent, LoanStateEffect};
+pub use types::{
+    ActivityConfiguration, ActivityInstance, AssetCondition, FrozenInput, IdentifiedProposal,
+    InstanceLifecycleChange, InstanceLifecycleOperation, LoanConfig, MonthlyCashFlowContribution,
+    MonthlyInput, MonthlyResult, OpeningState, OutputIdAllocator, PropertyTaxCadence,
+    PropertyTaxConfig, ProposedEffect, ProposedEvent, ProposedTransaction, RepairCostConfig,
+    RepairCostTemplate, RepairHistory, RepairOccurrenceConfig, SliceRandomInputKey, UtilityConfig,
 };
-pub use proposals::{identify_proposal, merge_proposals};
-#[cfg(test)]
-pub use repair_validation_test_support::REPAIR_COST_RULES;
-#[cfg(test)]
-pub use run_control::{
-    MonthSnapshot, RunCallResult, RunCommand, RunConfig, RunControlError, RunIdentity, RunStatus,
-    RunUpdate, RunUpdateValue, SimulationRun, SingleMonthExecutor, StopCondition, StopReason,
-};
-pub use settlement::calculate_monthly_result;
-#[cfg(test)]
-pub use slices::LoanCoordinatedMonth;
-#[cfg(test)]
-pub use slices::LoanMonthCommand;
-#[cfg(test)]
-pub use slices::LoanRunUpdate;
-pub use slices::{
-    LoanCalculation, LoanContinuation, LoanEvent, LoanMonthInput, LoanMonthOutput, LoanSlice,
-    LoanStateEffect, LoanStateEffectProposal, LoanTermsUpdate, PropertyTaxSlice, RentalSlice,
-    RepairSlice, UtilitySlice, apply_loan_terms_update, validate_loan_input,
-    validate_loan_terms_update,
-};
-#[cfg(test)]
-pub use slices::{coordinate_loan_month, coordinate_month_with_loans};
-pub use types::*;
-#[cfg(test)]
-pub use validation::validate_proposal_transactions;
-pub use validation::{
-    AccountFacts, LedgerRead, RepairCostValidation, ValidatedInput, ValidationErrors,
-    ValidationIssue, validate_input,
-};
-#[cfg(test)]
-pub use validation::{ProposalValidationErrors, ProposalValidationIssue};
+pub use validation::{AccountFacts, LedgerRead};
 
+// Internal cross-module names. These are crate-private and are not part of the
+// supported caller interface above.
+pub(crate) use proposals::merge_proposals;
+pub(crate) use slices::{
+    PropertyTaxSlice, RentalSlice, RepairCostSlice, RepairOccurrenceSlice, UtilitySlice,
+};
+pub(crate) use types::{EventProposal, SliceProposal, TransactionProposal};
+
+// Test-only helpers are kept out of the production API above. These are
+// crate-visible only while compiling this crate's unit tests.
 #[cfg(test)]
-extern crate self as property_simulation_simulation;
+pub(crate) use test_support_api::*;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod monthly_composition_tests;
