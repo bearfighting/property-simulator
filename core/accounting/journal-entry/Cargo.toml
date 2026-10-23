@@ -1,0 +1,14 @@
+[package]
+name = "property-simulation-journal-entry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+property-simulation-account = { path = "../account" }
+property-simulation-money = { path = "../../foundation/money" }
+property-simulation-month = { path = "../../foundation/month" }
+
+[lints]
+workspace = true
