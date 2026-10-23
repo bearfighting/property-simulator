@@ -22,6 +22,7 @@ Project specification index. Use the following current documents as the source o
 - [User settings and opening values](docs/adr/ADR-42-user-settings-and-opening-values.md): opening inputs, stop-condition timing, and the separate system-provided random root.
 - [Required simulation name](docs/adr/ADR-43-required-simulation-name.md): Core requires a descriptive simulation name; Application supplies a fallback when the user omits one.
 - [Frozen legacy crates](docs/adr/ADR-44-exclude-frozen-crates-from-root-workspace.md): legacy sources remain in the repository but are excluded from the active root workspace.
+- [Core workspace discovery](docs/adr/ADR-45-use-root-workspace-for-core.md): active Core crates are members of the repository-root workspace; Application and Presentation remain separate.
 - [ADR guidance](docs/adr/README.md): how to record future consequential decisions.
 
 Code identifiers must not contain implementation-stage names or numbers. The architecture document records the current boundary direction and open interface questions. The roadmap starts with resolving those Core interfaces before Application/Data Access implementation. Historical decisions are retained only as decision history.

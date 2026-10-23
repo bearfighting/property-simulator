@@ -1,6 +1,6 @@
 # New Core Design
 
-This is the standalone Cargo workspace for Core. It defines Core responsibilities and interfaces independently from Application and Presentation workspaces. The frozen source crates under the repository's `crates/` directory are retained as references for domain behavior, not as members or templates for this structure. This workspace currently contains exploratory crates grouped under `accounting/`, `foundation/`, and `simulation/`; the folders organize members of this one workspace and are not nested workspaces.
+Core crates are members of the repository-root Cargo workspace, while their source files are grouped under this directory by responsibility. This keeps Core independently bounded from future Application and Presentation workspaces and lets Cargo tools discover active Core crates from the repository root. The frozen source crates under the repository's `crates/` directory are retained as references for domain behavior, not as active workspace members or templates for this structure. The `accounting/`, `foundation/`, and `simulation/` folders are organizational directories, not nested workspaces.
 
 ## Interface design work
 
@@ -17,4 +17,4 @@ Agree on module ownership, dependency direction, and the interfaces between Core
 9. Define which basic mathematical algorithms are genuinely shared and keep Slice-specific parameter derivation with its owning Slice.
 10. Review the Application-facing Core calls only after these module contracts and their dependency directions are stable.
 
-Do not migrate existing Core implementations into this workspace until the relevant contracts are agreed. Existing workspace code is domain-behavior reference material only.
+Use `cargo check --workspace` from the repository root to check active Core crates. Existing code under `crates/` is domain-behavior reference material only.

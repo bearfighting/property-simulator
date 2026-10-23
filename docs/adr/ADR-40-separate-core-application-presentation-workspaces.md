@@ -10,11 +10,11 @@ The repository contains an existing implementation and a newer Core design area.
 
 ## Decision
 
-- Use `core/` as the root of the new standalone Core Cargo workspace; rename the former `new_crate/` design area accordingly.
+- Keep Core source crates under `core/`, separate from Application and Presentation workspaces. Cargo workspace membership is defined separately by ADR-45.
 - Keep Application in its own Cargo workspace when that layer is introduced.
 - Keep each Presentation entrypoint (CLI, GUI, Web) in a separate Cargo workspace when introduced. These workspaces may live in this repository and depend on Application; Application may depend on Core.
 - Core must not depend on Application, Presentation, or Data Access. This decision defines repository/workspace boundaries, not the crate APIs between layers.
-- The existing repository-root Cargo workspace remains the legacy implementation workspace for now; it is not implicitly redefined as Core or Application by this decision.
+- Keep Application in its own Cargo workspace when that layer is introduced. The repository root can host Core membership without making Application or Presentation part of Core.
 
 ## Alternatives
 
@@ -24,11 +24,11 @@ The repository contains an existing implementation and a newer Core design area.
 
 ## Consequences
 
-- Core can be checked and developed through `core/Cargo.toml` independently of the legacy workspace.
+- Core source remains grouped under `core/`; its workspace root is defined by ADR-45.
 - Future layers can be built from sibling directories in one repository while keeping their manifests and dependency graphs separate.
 - Cross-workspace integration and shared build orchestration remain future implementation concerns; this ADR does not prescribe a monorepo build tool or workspace membership across directories.
 
 ## Verification examples
 
-- Core members are listed only in `core/Cargo.toml` and are checked with `cargo check --manifest-path core/Cargo.toml --workspace`.
+- Core members are listed in the repository-root `Cargo.toml` and are checked with `cargo check --workspace`.
 - A future Application manifest may depend on Core crates, while no Core manifest may depend on Application or Presentation crates.

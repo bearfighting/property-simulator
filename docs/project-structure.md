@@ -63,7 +63,7 @@ flowchart TD
     App -.-> Reporting
 ```
 
-`core/Cargo.toml` 是唯一 workspace 根；其成员按职责放在 `foundation/`、`accounting/` 和 `simulation/` 目录中，这些目录只是组织方式，不是嵌套 workspace。实线表示已声明的 Cargo crate 依赖：`slice → context/snapshot`、`snapshot → month`、`context → random-engine/slice-catalogue/money`、`journal-entry → account/money/month`、`ledger → account/journal-entry/money/month` 和 `reporting → account/journal-entry/ledger/money/month`。虚线表示目标但尚未接入的类型关系。`slice-catalogue` 已定义 kind 和设置集合；除贷款参数外，各 Slice 参数 struct 仍是显式占位。`random-engine` 和 `domain-calculations` 当前彼此独立。
+根目录 `Cargo.toml` 是活动 Core crates 的 workspace 根；成员按职责放在 `core/foundation/`、`core/accounting/` 和 `core/simulation/` 目录中，这些目录只是组织方式，不是嵌套 workspace。冻结的旧 crates 保留在 `crates/` 并从 workspace 排除。使用 `cargo check --workspace` 检查活动 Core。实线表示已声明的 Cargo crate 依赖：`slice → context/snapshot`、`snapshot → month`、`context → random-engine/slice-catalogue/money`、`journal-entry → account/money/month`、`ledger → account/journal-entry/money/month` 和 `reporting → account/journal-entry/ledger/money/month`。虚线表示目标但尚未接入的类型关系。`slice-catalogue` 已定义 kind 和设置集合；除贷款参数外，各 Slice 参数 struct 仍是显式占位。`random-engine` 和 `domain-calculations` 当前彼此独立。
 
 目标流程仍是由 Application 取得系统随机 root 并保存到 Context；Core 不访问系统熵。Random engine 根据 root 和语义身份派生显式随机输入。账务流程为 Slice 返回已验证的 `JournalEntry`、Ledger 校验其账户引用等账簿约束并追加、reporting 从 journal 派生结果。实线与虚线区分已实现依赖和目标关系，避免把计划中的 crate 依赖画成现状。
 

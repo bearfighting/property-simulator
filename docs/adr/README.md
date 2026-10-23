@@ -19,6 +19,7 @@ Use the next unused number; do not reuse retired numbers. An ADR records context
 - [ADR-42](ADR-42-user-settings-and-opening-values.md): user settings contain opening values, stop conditions, and Slice settings; the random root remains a separate system-provided Context field.
 - [ADR-43](ADR-43-required-simulation-name.md): Core Context requires a descriptive name; Application resolves omitted user input before construction.
 - [ADR-44](ADR-44-exclude-frozen-crates-from-root-workspace.md): retain legacy `crates/` sources but remove them from the active root workspace.
+- [ADR-45](ADR-45-use-root-workspace-for-core.md): list active Core crates in the repository-root Cargo workspace for tool discovery; keep frozen legacy crates excluded.
 
 ## Historical decisions
 
