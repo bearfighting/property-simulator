@@ -10,5 +10,8 @@ property-simulation-money = { path = "../../foundation/money" }
 property-simulation-random-engine = { path = "../random-engine" }
 property-simulation-slice-catalogue = { path = "../slice-catalogue" }
 
+[dev-dependencies]
+rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true
