@@ -9,5 +9,10 @@ rust-version.workspace = true
 property-simulation-month = { path = "../../foundation/month" }
 property-simulation-slice-catalogue = { path = "../slice-catalogue" }
 
+[dev-dependencies]
+property-simulation-account = { path = "../../accounting/account" }
+property-simulation-journal-entry = { path = "../../accounting/journal-entry" }
+property-simulation-money = { path = "../../foundation/money" }
+
 [lints]
 workspace = true
