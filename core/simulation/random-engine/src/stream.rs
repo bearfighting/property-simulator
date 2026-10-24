@@ -1,9 +1,7 @@
+use crate::{RandomInput, RandomRootKey, RandomStreamIdentity};
 use blake3::Hasher;
 use rand_chacha::ChaCha12Rng;
 use rand_core::{RngCore, SeedableRng};
-use std::convert::Infallible;
-
-use crate::{RandomInput, RandomRootKey, RandomStreamIdentity};
 
 /// Derive an independent pseudorandom stream from an explicit simulation root
 /// and semantic identity.
@@ -23,9 +21,7 @@ pub fn derive_stream(root_key: &RandomRootKey, identity: &RandomStreamIdentity) 
 pub struct RandomStream(ChaCha12Rng);
 
 impl RandomInput for RandomStream {
-    type Error = Infallible;
-
-    fn next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(self.0.next_u64())
+    fn next_u64(&mut self) -> u64 {
+        self.0.next_u64()
     }
 }

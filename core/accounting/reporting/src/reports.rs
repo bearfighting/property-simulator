@@ -273,26 +273,32 @@ impl IncomeStatement {
     }
 }
 
-/// Raw cash-account changes, without operating/investing/financing classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One cash-flow amount derived from a journal entry's classified counterpart line.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CashFlowMovement {
     journal_position: usize,
     month: Month,
-    account: AccountCode,
+    counterpart_account: AccountCode,
+    category: CashFlowCategory,
+    subcategory: String,
     amount: Money,
 }
 
 impl CashFlowMovement {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         journal_position: usize,
         month: Month,
-        account: AccountCode,
+        counterpart_account: AccountCode,
+        category: CashFlowCategory,
+        subcategory: String,
         amount: Money,
     ) -> Self {
         Self {
             journal_position,
             month,
-            account,
+            counterpart_account,
+            category,
+            subcategory,
             amount,
         }
     }
@@ -306,36 +312,143 @@ impl CashFlowMovement {
         self.month
     }
 
-    pub const fn account(&self) -> AccountCode {
-        self.account
+    pub const fn counterpart_account(&self) -> AccountCode {
+        self.counterpart_account
     }
 
-    /// Debit cash is positive; credit cash is negative.
+    pub const fn category(&self) -> CashFlowCategory {
+        self.category
+    }
+
+    pub fn subcategory(&self) -> &str {
+        &self.subcategory
+    }
+
+    /// Positive is a cash inflow; negative is a cash outflow.
     pub const fn amount(&self) -> Money {
         self.amount
     }
 }
 
-/// Cash-account line movements in an inclusive month interval.
+/// The three main sections of a cash-flow statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CashFlowCategory {
+    Operating,
+    Investing,
+    Financing,
+}
+
+/// Caller-supplied cash-flow classification for one counterpart account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashFlowAccountClassification {
+    account: AccountCode,
+    category: CashFlowCategory,
+    subcategory: String,
+}
+
+impl CashFlowAccountClassification {
+    pub fn new(
+        account: AccountCode,
+        category: CashFlowCategory,
+        subcategory: impl Into<String>,
+    ) -> Self {
+        Self {
+            account,
+            category,
+            subcategory: subcategory.into(),
+        }
+    }
+
+    pub const fn account(&self) -> AccountCode {
+        self.account
+    }
+
+    pub const fn category(&self) -> CashFlowCategory {
+        self.category
+    }
+
+    pub fn subcategory(&self) -> &str {
+        &self.subcategory
+    }
+}
+
+/// A total for one main cash-flow category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CashFlowCategoryTotal {
+    category: CashFlowCategory,
+    amount: Money,
+}
+
+impl CashFlowCategoryTotal {
+    pub(crate) const fn new(category: CashFlowCategory, amount: Money) -> Self {
+        Self { category, amount }
+    }
+
+    pub const fn category(&self) -> CashFlowCategory {
+        self.category
+    }
+
+    pub const fn amount(&self) -> Money {
+        self.amount
+    }
+}
+
+/// A total for one caller-defined subcategory within a main category.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashFlowSubcategoryTotal {
+    category: CashFlowCategory,
+    subcategory: String,
+    amount: Money,
+}
+
+impl CashFlowSubcategoryTotal {
+    pub(crate) fn new(category: CashFlowCategory, subcategory: String, amount: Money) -> Self {
+        Self {
+            category,
+            subcategory,
+            amount,
+        }
+    }
+
+    pub const fn category(&self) -> CashFlowCategory {
+        self.category
+    }
+
+    pub fn subcategory(&self) -> &str {
+        &self.subcategory
+    }
+
+    pub const fn amount(&self) -> Money {
+        self.amount
+    }
+}
+
+/// Categorized cash movements in an inclusive month interval.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CashFlowReport {
     start: Month,
     end: Month,
     movements: Vec<CashFlowMovement>,
+    category_totals: Vec<CashFlowCategoryTotal>,
+    subcategory_totals: Vec<CashFlowSubcategoryTotal>,
     total: Money,
 }
 
 impl CashFlowReport {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         start: Month,
         end: Month,
         movements: Vec<CashFlowMovement>,
+        category_totals: Vec<CashFlowCategoryTotal>,
+        subcategory_totals: Vec<CashFlowSubcategoryTotal>,
         total: Money,
     ) -> Self {
         Self {
             start,
             end,
             movements,
+            category_totals,
+            subcategory_totals,
             total,
         }
     }
@@ -350,6 +463,14 @@ impl CashFlowReport {
 
     pub fn movements(&self) -> &[CashFlowMovement] {
         &self.movements
+    }
+
+    pub fn category_totals(&self) -> &[CashFlowCategoryTotal] {
+        &self.category_totals
+    }
+
+    pub fn subcategory_totals(&self) -> &[CashFlowSubcategoryTotal] {
+        &self.subcategory_totals
     }
 
     pub const fn total(&self) -> Money {

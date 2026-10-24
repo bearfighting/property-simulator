@@ -9,8 +9,10 @@
 - 将 `Money`/`Currency` 和模拟内月份序号分别放入职责单一的 `money`、`month` crates。月份从 0 开始，首个计算月为 `Month(0)`；月份值同时作为一次模拟内的期间键。当前不预建通用 ID crate。
 - 不保留职责宽泛的通用 `models` crate。贷款计算、维修分布等行为与使用它们的领域 Slice 一起设计和维护。
 - 账务能力按 `account`、`journal-entry`、`ledger` 和 `reporting` 划分：账户值、Slice 返回的平衡账务记录、append-only journal、派生报告分别有明确责任。`journal-entry` 是 Slice 与 Ledger 共享的值契约；Slice 创建并验证记录，Ledger 校验账户引用等 Ledger 专属约束后追加。Reporting 接收只读账簿数据并纯计算试算平衡、资产负债表、期间损益、原始现金账户变动和审计结果；Ledger 不调用 Reporting，Reporting 不接收或修改 Ledger 对象。
-- Context 与 Snapshot 分别承载模拟设置/随机 root 和已完成月份结果。Context 已确定初始设置、可选最新设置、root key 三个字段；设置值结构与 Snapshot 完整输出仍待代表性 Slice 确定。
-- Application 管理一次模拟的跨月流程、有效实例生命周期与数据读写，并决定何时推进计算。Slice 的调用接口、跨 Slice 组合及 Ledger 结算之间的具体分工仍需先定义，再实现。
+- `slice-catalogue` 定义可用 Slice 及其参数、每期输入、事件、effects 和带来源 kind 的结果契约。Context 与 Snapshot 消费该契约；catalogue 不依赖它们或 Slice 实现。
+- Context 与 Snapshot 分别承载模拟设置/随机 root 和已完成月份结果。Application 从 Context 选择当月有效设置并创建 Slice；各 Slice 独立计算并返回自己的结果和 JournalEntry。Snapshot 按 SliceKind 保留这些结果及类型化 Effects，不复制 Context 设置或某个 Slice 专属的延续字段。
+- Application 管理一次模拟的跨月流程、Slice 实例生命周期和本月执行协调：选择、创建并调用所需 Slice，收集结果，将 JournalEntry 追加到候选 Ledger，再形成当月 Snapshot。Core 不提供统一的跨 Slice 业务聚合器；Slice 之间不依赖执行顺序。当前范围不实现并行调度。
+- Core 提供独立的 Slice 计算、Ledger 更新和 reporting 投影能力。现金流从 Ledger 分录和调用方提供的现金科目/分类映射推导；不要求 Slice 活动实例来源信息。
 - Application 在创建 Context 时取得并保存模拟级随机 root；Random engine 根据 root 和语义身份派生随机输入，不访问系统熵。领域分布和计算模型消费显式随机输入。root 的具体类型、持久化映射和派生接口在新 crate 中定义。
 
 ## 依赖原则
@@ -33,11 +35,11 @@ flowchart TD
 |---|---|---|
 | Money / Currency | 精确金额、币种和舍入不变量 | 与会计分录精度规则的接口 |
 | Month | 一次模拟内从 0 开始的月份序号 | 月份递增、间隔及 Snapshot 期间键；不是全局 ID |
-| Account / JournalEntry / Ledger / Reporting | 账户规则、Slice 返回的平衡分录、append-only journal 和派生报表 | 来源追溯、现金流分类及更完整的报表语义 |
-| Slice | 单项领域行为及其配置、样本、计算和输出；`SliceKind` 限定由 Context 提供设置的受支持行为 | Application 如何选择、创建、结束和调用 Slice；依赖分组/顺序暂列技术债，待有具体依赖时再设计 |
+| Account / JournalEntry / Ledger / Reporting | 账户规则、Slice 返回的平衡分录、append-only journal 和派生报表 | 高层注入现金流科目分类；Reporting 校验分类明细与 Ledger 现金变动相符 |
+| Slice | 单项领域行为及其配置、样本、计算和输出；`SliceKind` 限定由 Context 提供设置的受支持行为 | Application 如何选择、创建、结束和调用 Slice；具体生命周期规则仍需明确 |
 | Random engine | 从 Context 中的 root 派生随机输入 | root 类型、派生算法及随机输入 trait |
 | Context / Snapshot | Context 保存必需的模拟名称、用户初始值、停止条件、Slice 设置及独立的系统随机 root；Snapshot 保存已完成月份结果 | Core 值与持久化 DTO 的映射边界；名称由 Application 解析并注入，初始值在模拟开始后不变 |
-| Application | 用户用例、跨月流程、数据读写协调 | 与逐 Slice 调用及单月结算的接口 |
+| Application | 用户用例、跨月流程、逐 Slice 调用协调、候选 Ledger 结算和数据读写协调 | 具体用例及窄的 Core 调用接口 |
 
 ## 上下层边界
 

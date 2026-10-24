@@ -6,16 +6,16 @@ pub struct Account {
     code: AccountCode,
     name: String,
     class: AccountClass,
-    role: Option<AccountRole>,
+    role: AccountRole,
 }
 
 impl Account {
-    /// Create an account with a valid code, non-empty name, and accounting class.
+    /// Create an account with a posting code, display name, class, and semantic role.
     pub fn new(
         code: AccountCode,
         name: impl Into<String>,
         class: AccountClass,
-        role: Option<AccountRole>,
+        role: AccountRole,
     ) -> Result<Self, AccountError> {
         let name = name.into();
         if name.trim().is_empty() {
@@ -42,7 +42,7 @@ impl Account {
         self.class
     }
 
-    pub fn role(&self) -> Option<&AccountRole> {
-        self.role.as_ref()
+    pub const fn role(&self) -> &AccountRole {
+        &self.role
     }
 }

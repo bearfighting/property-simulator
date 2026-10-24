@@ -1,7 +1,7 @@
-//! Completed-month calculation results and continuation state.
+//! Completed-month calculation results.
 
-mod event;
+mod error;
 mod snapshot;
 
-pub use event::Event;
+pub use error::SnapshotError;
 pub use snapshot::Snapshot;

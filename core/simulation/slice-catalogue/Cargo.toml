@@ -6,6 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+property-simulation-account = { path = "../../accounting/account" }
+property-simulation-journal-entry = { path = "../../accounting/journal-entry" }
+property-simulation-month = { path = "../../foundation/month" }
+property-simulation-money = { path = "../../foundation/money" }
 rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
 
 [lints]

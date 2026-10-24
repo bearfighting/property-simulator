@@ -32,11 +32,11 @@ impl Context {
         }
     }
 
-    /// Return a new Context with updated latest settings, preserving initial values and root.
+    /// Return a new Context with these complete settings as the latest value.
     ///
     /// Initial property, loan, and loan-term inputs cannot be changed after
-    /// initialization; other setting changes are represented by the supplied
-    /// complete `UserSettings` value.
+    /// initialization. All other settings are replaced by the supplied value;
+    /// the original Context is left unchanged.
     pub fn with_latest_settings(
         &self,
         latest_settings: UserSettings,

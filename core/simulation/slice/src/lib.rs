@@ -1,8 +1,12 @@
-//! Slice instance creation and evaluation contracts.
+//! Independent Slice implementations for one-period calculations.
 
-mod collection;
 mod evaluation;
 mod slices;
 
-pub use collection::create_slices;
-pub use evaluation::{SliceEvaluationError, SliceInstance, SliceResult};
+pub use evaluation::{DeterministicSlice, StochasticSlice};
+pub use property_simulation_slice_catalogue::SliceResult;
+pub use slices::{
+    FixedExpenseSlice, FixedExpenseSliceError, LoanSlice, LoanSliceError, RentalSlice,
+    RentalSliceError, RepairCostSlice, RepairCostSliceError, RepairOccurrenceSlice,
+    RepairOccurrenceSliceError,
+};

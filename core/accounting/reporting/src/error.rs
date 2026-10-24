@@ -7,6 +7,13 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReportingError {
     UnknownAccount(AccountCode),
+    MissingCashFlowClassification(AccountCode),
+    DuplicateCashFlowClassification(AccountCode),
+    CashFlowClassificationMismatch {
+        journal_position: usize,
+        cash_amount: Money,
+        classified_amount: Money,
+    },
     DuplicateOpeningBalance(AccountCode),
     CurrencyMismatch {
         expected: Currency,
@@ -50,6 +57,22 @@ impl fmt::Display for ReportingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownAccount(account) => write!(f, "unknown reporting account {account}"),
+            Self::MissingCashFlowClassification(account) => write!(
+                f,
+                "cash-flow classification is missing for counterpart account {account}"
+            ),
+            Self::DuplicateCashFlowClassification(account) => write!(
+                f,
+                "cash-flow classification is duplicated for account {account}"
+            ),
+            Self::CashFlowClassificationMismatch {
+                journal_position,
+                cash_amount,
+                classified_amount,
+            } => write!(
+                f,
+                "cash-flow classifications for journal entry {journal_position} total {classified_amount}, but cash lines total {cash_amount}"
+            ),
             Self::DuplicateOpeningBalance(account) => {
                 write!(f, "duplicate opening balance for account {account}")
             }

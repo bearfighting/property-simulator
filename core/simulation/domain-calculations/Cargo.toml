@@ -5,5 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+property-simulation-money = { path = "../../foundation/money" }
+rust_decimal = { version = "1.43", default-features = false, features = ["maths", "std"] }
+
 [lints]
 workspace = true

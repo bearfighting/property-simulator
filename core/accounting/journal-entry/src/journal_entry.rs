@@ -1,4 +1,4 @@
-use crate::{JournalEntryError, JournalEntryNote, JournalLine};
+use crate::{JournalEntryError, JournalLine};
 use property_simulation_account::DebitCredit;
 use property_simulation_money::Money;
 use property_simulation_month::Month;
@@ -8,7 +8,6 @@ use property_simulation_month::Month;
 pub struct JournalEntry {
     month: Month,
     lines: Vec<JournalLine>,
-    note: Option<JournalEntryNote>,
 }
 
 impl JournalEntry {
@@ -40,11 +39,7 @@ impl JournalEntry {
             return Err(JournalEntryError::Unbalanced { debits, credits });
         }
 
-        Ok(Self {
-            month,
-            lines,
-            note: None,
-        })
+        Ok(Self { month, lines })
     }
 }
 
@@ -55,17 +50,5 @@ impl JournalEntry {
 
     pub fn lines(&self) -> &[JournalLine] {
         &self.lines
-    }
-
-    pub fn note(&self) -> Option<&JournalEntryNote> {
-        self.note.as_ref()
-    }
-}
-
-impl JournalEntry {
-    /// Attach an optional standardized note after the accounting entry is valid.
-    pub fn with_note(mut self, note: JournalEntryNote) -> Self {
-        self.note = Some(note);
-        self
     }
 }

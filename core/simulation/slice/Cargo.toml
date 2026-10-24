@@ -6,8 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-property-simulation-context = { path = "../context" }
-property-simulation-snapshot = { path = "../snapshot" }
+property-simulation-account = { path = "../../accounting/account" }
+property-simulation-domain-calculations = { path = "../domain-calculations" }
+property-simulation-journal-entry = { path = "../../accounting/journal-entry" }
+property-simulation-month = { path = "../../foundation/month" }
+property-simulation-money = { path = "../../foundation/money" }
+property-simulation-random-engine = { path = "../random-engine" }
+property-simulation-slice-catalogue = { path = "../slice-catalogue" }
+rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

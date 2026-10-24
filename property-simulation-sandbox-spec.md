@@ -23,6 +23,13 @@ Project specification index. Use the following current documents as the source o
 - [Required simulation name](docs/adr/ADR-43-required-simulation-name.md): Core requires a descriptive simulation name; Application supplies a fallback when the user omits one.
 - [Frozen legacy crates](docs/adr/ADR-44-exclude-frozen-crates-from-root-workspace.md): legacy sources remain in the repository but are excluded from the active root workspace.
 - [Core workspace discovery](docs/adr/ADR-45-use-root-workspace-for-core.md): active Core crates are members of the repository-root workspace; Application and Presentation remain separate.
+- [Explicit Slice construction](docs/adr/ADR-46-explicit-slice-construction-and-application-composition.md): Slice construction receives explicit typed inputs; Application coordinates enabled Slice composition.
+- [Pure loan calculations](docs/adr/ADR-47-pure-loan-calculations.md): pure amortization arithmetic lives in `domain-calculations`; Loan Slice validates and assembles domain/accounting outputs.
+- [Monthly Snapshot contents](docs/adr/ADR-48-monthly-snapshot-content-and-continuation.md): Snapshot stores effective inputs and completed-month outputs, with continuation state distinct from Ledger-derived balances.
+- [Slice contract catalogue](docs/adr/ADR-49-slice-catalogue-owns-slice-contracts.md): `slice-catalogue` defines Slice kinds, settings, per-period inputs, and typed outputs shared by Context, Slice, and Snapshot.
+- [Required account roles](docs/adr/ADR-52-account-role-is-required-and-unique.md): each account has a unique semantic role in its catalogue; JournalEntry postings use the corresponding AccountCode.
+- [Recurring fixed expense Slice](docs/adr/ADR-53-recurring-fixed-expense-slice.md): combine property-related taxes and utility costs into one recurring Slice, configured by monthly amount or annual property-value rate.
+- [Slice-specific evaluation interfaces](docs/adr/ADR-54-slice-specific-evaluation-interfaces.md): inject random input only into stochastic Slices and keep evaluation methods/errors concrete.
 - [ADR guidance](docs/adr/README.md): how to record future consequential decisions.
 
 Code identifiers must not contain implementation-stage names or numbers. The architecture document records the current boundary direction and open interface questions. The roadmap starts with resolving those Core interfaces before Application/Data Access implementation. Historical decisions are retained only as decision history.

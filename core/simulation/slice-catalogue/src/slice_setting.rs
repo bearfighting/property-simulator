@@ -1,7 +1,4 @@
-use crate::{
-    PropertyTaxParameters, RentalParameters, RepairCostParameters, RepairOccurrenceParameters,
-    SliceKind, UtilityParameters,
-};
+use crate::{FixedExpenseParameters, RentalParameters, RepairCostParameters, SliceKind};
 
 /// User settings for one supported Slice kind.
 ///
@@ -17,9 +14,9 @@ pub enum SliceSetting {
     Loan {
         enabled: bool,
     },
-    PropertyTax {
+    FixedExpense {
         enabled: bool,
-        parameters: PropertyTaxParameters,
+        parameters: FixedExpenseParameters,
     },
     Rental {
         enabled: bool,
@@ -27,14 +24,9 @@ pub enum SliceSetting {
     },
     RepairOccurrence {
         enabled: bool,
-        parameters: RepairOccurrenceParameters,
     },
     RepairCost {
         parameters: RepairCostParameters,
-    },
-    Utility {
-        enabled: bool,
-        parameters: UtilityParameters,
     },
 }
 
@@ -43,11 +35,10 @@ impl SliceSetting {
     pub const fn kind(&self) -> SliceKind {
         match self {
             Self::Loan { .. } => SliceKind::Loan,
-            Self::PropertyTax { .. } => SliceKind::PropertyTax,
+            Self::FixedExpense { .. } => SliceKind::FixedExpense,
             Self::Rental { .. } => SliceKind::Rental,
             Self::RepairOccurrence { .. } => SliceKind::RepairOccurrence,
             Self::RepairCost { .. } => SliceKind::RepairCost,
-            Self::Utility { .. } => SliceKind::Utility,
         }
     }
 }
