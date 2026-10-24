@@ -12,4 +12,4 @@ pub use context_error::ContextError;
 pub use initial_values::{InitialValues, InitialValuesError};
 pub use simulation_name::{SimulationName, SimulationNameError};
 pub use stop_condition::StopCondition;
-pub use user_settings::{UserSettings, UserSettingsChange, UserSettingsError};
+pub use user_settings::UserSettings;

@@ -6,7 +6,6 @@ use std::fmt;
 pub enum JournalEntryError {
     TooFewLines,
     NonPositiveAmount,
-    InvalidNoteCode,
     Unbalanced { debits: Money, credits: Money },
     Money(MoneyError),
 }
@@ -22,7 +21,6 @@ impl fmt::Display for JournalEntryError {
         match self {
             Self::TooFewLines => f.write_str("journal entry must contain at least two lines"),
             Self::NonPositiveAmount => f.write_str("journal line amount must be positive"),
-            Self::InvalidNoteCode => f.write_str("journal entry note code is invalid"),
             Self::Unbalanced { debits, credits } => {
                 write!(
                     f,

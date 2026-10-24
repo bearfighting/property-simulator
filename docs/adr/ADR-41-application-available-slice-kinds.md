@@ -1,6 +1,6 @@
 # ADR-41: Application-available Slice kinds
 
-- **Status:** Accepted direction; parameter APIs remain open
+- **Status:** Accepted direction; initial kind list amended by [ADR-53](ADR-53-recurring-fixed-expense-slice.md)
 - **Date:** 2026-10-23
 - **Related:** [Domain model](../domain-model.md), [ADR-33](ADR-33-core-boundaries-and-slice-cohesion.md)
 - **Verification:** `SliceKind` exhaustively names supported Slice behaviors; `SliceSetting` binds each kind to applicable per-Slice parameters and user enablement, while immutable loan terms are part of `InitialValues`.
@@ -12,7 +12,7 @@ The Slice implementation may contain internal calculations and generated instanc
 ## Decision
 
 - Define `SliceKind` in the `slice-catalogue` crate as a closed enum of Slice kinds whose parameters are supplied through Context and may be used by Application's simulation flow.
-- The initial kinds are `Loan`, `PropertyTax`, `Rental`, `RepairOccurrence`, `RepairCost`, and `Utility`.
+- The initial kinds were `Loan`, `PropertyTax`, `Rental`, `RepairOccurrence`, `RepairCost`, and `Utility`; ADR-53 replaces `PropertyTax` and `Utility` with `FixedExpense`.
 - A kind's presence in `SliceKind` means the simulation supports its behavior and settings. It does not imply that the user directly enables it; settings and invocation lifecycle determine use.
 - `RepairOccurrence` has user-controlled enablement. Disabling it prevents new repair occurrences from generating cost instances.
 - Include `RepairCost`: although instances may be generated from a repair occurrence, the kind has its own Context-supplied settings and no independent user enable flag. Already generated instances follow their own lifecycle.

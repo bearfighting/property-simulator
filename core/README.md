@@ -13,7 +13,7 @@ Agree on module ownership, dependency direction, and the interfaces between Core
 5. `ledger` now retains account definitions and opening facts, appends `JournalEntry` values atomically in month order, and exposes balances derived from the journal and opening facts.
 6. `reporting` now accepts read-only account, opening-balance, and journal data and derives trial balance, balance sheet, period income/expense, raw cash-account movements, and audit counts. Operating/investing/financing categories await explicit account-role and source semantics.
 7. Complete Snapshot's event and journal result fields after Ledger's interface is defined. Keep each month's events in that month's Snapshot; do not model historical events as an active/inactive queue.
-8. Finalize Slice creation and evaluation contracts. Each Slice kind owns the rule for creating zero or more instances; instances share one evaluation interface and return events and zero or more `JournalEntry` values.
+8. Keep Slice constructors and evaluation methods typed to each behavior. Deterministic Slices implement `DeterministicSlice::calculate`; stochastic Slices implement `StochasticSlice::simulate` with an explicit random source. Every Slice returns the shared `SliceResult` value to Application without a universal Core dispatcher.
 9. Define which basic mathematical algorithms are genuinely shared and keep Slice-specific parameter derivation with its owning Slice.
 10. Review the Application-facing Core calls only after these module contracts and their dependency directions are stable.
 

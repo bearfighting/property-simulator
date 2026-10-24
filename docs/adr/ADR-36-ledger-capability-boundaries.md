@@ -1,6 +1,6 @@
 # ADR-36: Ledger capability boundaries
 
-- **Status:** Superseded in its transaction/posting flow by [ADR-37](ADR-37-slice-journal-entry-contract.md); account, ledger, and reporting responsibility boundaries remain useful context
+- **Status:** Superseded in its transaction/posting flow by [ADR-37](ADR-37-slice-journal-entry-contract.md) and in its optional-role clause by [ADR-52](ADR-52-account-role-is-required-and-unique.md); account, ledger, and reporting responsibility boundaries remain useful context
 - **Date:** 2026-10-23
 - **Related:** [Domain model](../domain-model.md), [Architecture](../architecture.md), [ADR-33](ADR-33-core-boundaries-and-slice-cohesion.md), [ADR-35](ADR-35-ordinal-month-periods.md)
 - **Verification examples:** Confirm Application supplies the account set and Month; posting validates a candidate without calling Ledger; Ledger appends only accepted transactions; reports derive values from opening facts and journal entries.
@@ -12,7 +12,7 @@ The broad `accounting` label mixed account definitions, transaction data, postin
 ## Decision
 
 - Use the capability names `account`, `transaction`, `posting`, `ledger`, and `reporting` for the current design direction; do not create a broad `accounting` crate by default.
-- `account` defines account values and their accounting meaning, including account class and debit/credit balance behavior. Application selects and supplies the concrete account set at initialization. An optional opaque `AccountRole` key may carry configured business/reporting meaning; reporting explicitly maps roles it supports and does not parse names or account codes.
+- `account` defines account values and their accounting meaning, including account class and debit/credit balance behavior. Application selects and supplies the concrete account set at initialization. An optional opaque `AccountRole` key may carry configured business/reporting meaning; this optionality was superseded by ADR-52, which makes each role required and unique per catalogue.
 - `transaction` defines candidate transaction and entry values, including `Month`, account references, money, and provenance.
 - `posting` validates candidate transactions against the supplied account definitions and double-entry rules. It produces a value that Ledger may append and does not call or mutate Ledger.
 - `ledger` receives account definitions and opening facts at initialization, then appends accepted transactions to an append-only journal. It does not create accounts or Month values. Balances are derived from opening facts and journal entries.

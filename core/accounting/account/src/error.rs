@@ -1,14 +1,15 @@
 use std::fmt;
 
-use crate::AccountCode;
+use crate::{AccountCode, AccountRole};
 
 /// Invalid account definition or catalogue input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountError {
     InvalidCode,
     EmptyName,
     EmptyRole,
     DuplicateCode(AccountCode),
+    DuplicateRole(AccountRole),
 }
 
 impl fmt::Display for AccountError {
@@ -18,6 +19,9 @@ impl fmt::Display for AccountError {
             Self::EmptyName => f.write_str("account name cannot be empty"),
             Self::EmptyRole => f.write_str("account role cannot be empty"),
             Self::DuplicateCode(code) => write!(f, "duplicate account code: {code}"),
+            Self::DuplicateRole(role) => {
+                write!(f, "duplicate account role: {}", role.as_str())
+            }
         }
     }
 }

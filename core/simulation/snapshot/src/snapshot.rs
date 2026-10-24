@@ -1,18 +1,43 @@
 use property_simulation_month::Month;
+use property_simulation_slice_catalogue::SliceResult;
 
-/// **Incomplete:** this currently stores only a Month and event tags. It does
-/// not yet retain the actual inputs, effects, journal entries, or continuation
-/// state produced during that month. Earlier events remain in their monthly
-/// snapshots; this is not an active-event queue.
+use crate::SnapshotError;
+
+/// The completed result for one simulation month.
 ///
-/// Complete the type after representative Slice results are defined, ensuring
-/// it can persist the effective inputs, events/effects, Ledger increment, and
-/// the state needed to continue the following month without inventing history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
-    /// The unique period key for this snapshot within one simulation.
-    pub month: Month,
-    pub events: Vec<crate::Event>,
-    // TODO(incomplete): add the committed JournalEntry values and other monthly
-    // outputs once Slice result and persistence ownership are settled.
+    month: Month,
+    slice_results: Vec<SliceResult>,
+}
+
+impl Snapshot {
+    /// Create a completed-month record after the caller has settled its Ledger
+    /// entries.
+    pub fn new(month: Month, slice_results: Vec<SliceResult>) -> Result<Self, SnapshotError> {
+        for result in &slice_results {
+            for entry in result.journal_entries() {
+                if entry.month() != month {
+                    return Err(SnapshotError::JournalEntryMonthMismatch {
+                        snapshot_month: month,
+                        entry_month: entry.month(),
+                    });
+                }
+            }
+        }
+        Ok(Self {
+            month,
+            slice_results,
+        })
+    }
+}
+
+impl Snapshot {
+    pub const fn month(&self) -> Month {
+        self.month
+    }
+
+    pub fn slice_results(&self) -> &[SliceResult] {
+        &self.slice_results
+    }
 }

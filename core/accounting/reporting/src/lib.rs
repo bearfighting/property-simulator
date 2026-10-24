@@ -10,6 +10,7 @@ pub use error::ReportingError;
 pub use input::ReportingInput;
 pub(crate) use reports::BalanceSheetTotals;
 pub use reports::{
-    AccountBalanceLine, AuditReport, BalanceSheet, BalanceSheetLine, CashFlowMovement,
-    CashFlowReport, IncomeStatement, IncomeStatementLine, TrialBalance,
+    AccountBalanceLine, AuditReport, BalanceSheet, BalanceSheetLine, CashFlowAccountClassification,
+    CashFlowCategory, CashFlowCategoryTotal, CashFlowMovement, CashFlowReport,
+    CashFlowSubcategoryTotal, IncomeStatement, IncomeStatementLine, TrialBalance,
 };

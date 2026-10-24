@@ -1,6 +1,4 @@
-/// A source of random words consumed by domain calculation models.
+/// An explicit, infallible source of random words consumed by domain calculations.
 pub trait RandomInput {
-    type Error;
-
-    fn next_u64(&mut self) -> Result<u64, Self::Error>;
+    fn next_u64(&mut self) -> u64;
 }
