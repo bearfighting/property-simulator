@@ -242,16 +242,6 @@ name = "property-simulation-account"
 version = "0.1.0"
 
 [[package]]
-name = "property-simulation-context"
-version = "0.1.0"
-dependencies = [
- "property-simulation-money",
- "property-simulation-random-engine",
- "property-simulation-slice-catalogue",
- "rust_decimal",
-]
-
-[[package]]
 name = "property-simulation-domain-calculations"
 version = "0.1.0"
 dependencies = [
@@ -305,7 +295,6 @@ version = "0.1.0"
 dependencies = [
  "property-simulation-account",
  "property-simulation-journal-entry",
- "property-simulation-ledger",
  "property-simulation-money",
  "property-simulation-month",
 ]
@@ -336,14 +325,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "property-simulation-snapshot"
+name = "property-simulation-stop-condition"
 version = "0.1.0"
 dependencies = [
- "property-simulation-account",
- "property-simulation-journal-entry",
- "property-simulation-money",
  "property-simulation-month",
- "property-simulation-slice-catalogue",
 ]
 
 [[package]]

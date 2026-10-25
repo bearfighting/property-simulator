@@ -1,35 +1,41 @@
 use std::fmt;
 
-use crate::{Effect, Event, SliceKind};
+use crate::{Event, SliceKind};
+use property_simulation_month::Month;
 
-/// Failure to match a Slice result's contents to its declared kind.
+/// Failure to match Slice result contents to their declared kind or month.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SliceResultError {
+    InitialMonthIsNotCalculated,
     EventKindMismatch {
         slice_kind: SliceKind,
         event: Event,
     },
-    EffectKindMismatch {
-        slice_kind: SliceKind,
-        effect: Effect,
+    JournalEntryMonthMismatch {
+        result_month: Month,
+        entry_month: Month,
     },
 }
 
 impl fmt::Display for SliceResultError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InitialMonthIsNotCalculated => {
+                f.write_str("Month 0 is initialization, not a calculated Slice period")
+            }
             Self::EventKindMismatch { slice_kind, event } => {
                 write!(
                     f,
                     "event {event:?} does not belong to Slice kind {slice_kind:?}"
                 )
             }
-            Self::EffectKindMismatch { slice_kind, effect } => {
-                write!(
-                    f,
-                    "effect {effect:?} does not belong to Slice kind {slice_kind:?}"
-                )
-            }
+            Self::JournalEntryMonthMismatch {
+                result_month,
+                entry_month,
+            } => write!(
+                f,
+                "journal entry month {entry_month} does not match Slice result month {result_month}"
+            ),
         }
     }
 }

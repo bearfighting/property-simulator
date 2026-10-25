@@ -6,7 +6,8 @@ use rust_decimal::Decimal;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoanParameters {
     annual_interest_rate: Decimal,
-    remaining_term_months: NonZeroU32,
+    /// Remaining payment term at the simulation start, used for scheduled payment.
+    remaining_term_months_at_start: NonZeroU32,
 }
 
 impl LoanParameters {
@@ -14,7 +15,7 @@ impl LoanParameters {
     /// ratio, so `0.05` represents five percent.
     pub fn new(
         annual_interest_rate: Decimal,
-        remaining_term_months: NonZeroU32,
+        remaining_term_months_at_start: NonZeroU32,
     ) -> Result<Self, LoanParametersError> {
         if annual_interest_rate < Decimal::ZERO {
             return Err(LoanParametersError::NegativeAnnualInterestRate);
@@ -22,7 +23,7 @@ impl LoanParameters {
 
         Ok(Self {
             annual_interest_rate,
-            remaining_term_months,
+            remaining_term_months_at_start,
         })
     }
 }
@@ -32,8 +33,8 @@ impl LoanParameters {
         self.annual_interest_rate
     }
 
-    pub const fn remaining_term_months(&self) -> NonZeroU32 {
-        self.remaining_term_months
+    pub const fn remaining_term_months_at_start(&self) -> NonZeroU32 {
+        self.remaining_term_months_at_start
     }
 }
 

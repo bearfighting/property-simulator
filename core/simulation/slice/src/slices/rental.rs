@@ -33,7 +33,7 @@ impl DeterministicSlice for RentalSlice {
                 .rounded_for_posting()
                 .map_err(JournalEntryError::from)?;
             if amount.is_zero() {
-                return Ok(SliceResult::empty(SliceKind::Rental));
+                return Ok(SliceResult::empty(self.input.month, SliceKind::Rental)?);
             }
 
             let cash_line = JournalLine::new(self.input.cash_account, DebitCredit::Debit, amount)?;
@@ -43,12 +43,12 @@ impl DeterministicSlice for RentalSlice {
                 amount,
             )?;
             let entry = JournalEntry::new(self.input.month, vec![cash_line, rental_income_line])?;
-            let event = Event::RentCollected { amount };
+            let event = Event::RentCollected;
 
             Ok(SliceResult::new(
+                self.input.month,
                 SliceKind::Rental,
                 vec![event],
-                Vec::new(),
                 vec![entry],
             )?)
         })()

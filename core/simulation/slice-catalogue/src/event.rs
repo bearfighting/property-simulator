@@ -1,21 +1,17 @@
-use property_simulation_money::Money;
-
-/// A domain event produced by an evaluated Slice and retained in Snapshot.
+/// An event kind produced by a Slice evaluation.
+///
+/// The containing SliceResult supplies the Month. Monetary values are read
+/// from the Ledger projection and are not duplicated in event values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
-    RentCollected {
-        amount: Money,
-    },
+    /// Rent was collected during the month.
+    RentCollected,
+    /// A repair occurrence was generated for later cost settlement.
     RepairOccurred,
-    RepairCostSettled {
-        amount: Money,
-    },
-    LoanPayment {
-        principal: Money,
-        interest: Money,
-        closing_balance: Money,
-    },
-    FixedExpensePaid {
-        amount: Money,
-    },
+    /// A repair cost instance settled during the month, including a zero amount.
+    RepairCostSettled,
+    /// A scheduled loan payment was made during the month.
+    LoanPayment,
+    /// A recurring fixed expense was paid during the month.
+    FixedExpensePaid,
 }

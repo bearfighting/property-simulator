@@ -42,7 +42,10 @@ impl DeterministicSlice for FixedExpenseSlice {
             .rounded_for_posting()?;
 
             if monthly_amount.is_zero() {
-                return Ok(SliceResult::empty(SliceKind::FixedExpense));
+                return Ok(SliceResult::empty(
+                    self.input.month,
+                    SliceKind::FixedExpense,
+                )?);
             }
 
             let expense_line = JournalLine::new(
@@ -53,14 +56,12 @@ impl DeterministicSlice for FixedExpenseSlice {
             let cash_line =
                 JournalLine::new(self.input.cash_account, DebitCredit::Credit, monthly_amount)?;
             let entry = JournalEntry::new(self.input.month, vec![expense_line, cash_line])?;
-            let event = Event::FixedExpensePaid {
-                amount: monthly_amount,
-            };
+            let event = Event::FixedExpensePaid;
 
             Ok(SliceResult::new(
+                self.input.month,
                 SliceKind::FixedExpense,
                 vec![event],
-                Vec::new(),
                 vec![entry],
             )?)
         })()

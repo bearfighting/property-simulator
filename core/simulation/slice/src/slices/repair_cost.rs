@@ -6,8 +6,7 @@ use property_simulation_money::{Money, MoneyError};
 use property_simulation_month::{Month, MonthError};
 use property_simulation_random_engine::RandomInput;
 use property_simulation_slice_catalogue::{
-    Effect, Event, RepairCostParameters, RepairCostSliceInput, SliceKind, SliceResult,
-    SliceResultError,
+    Event, RepairCostParameters, RepairCostSliceInput, SliceKind, SliceResult, SliceResultError,
 };
 
 use crate::StochasticSlice;
@@ -67,11 +66,9 @@ impl StochasticSlice for RepairCostSlice {
             }
 
             Ok(SliceResult::new(
+                self.input.month,
                 SliceKind::RepairCost,
-                vec![Event::RepairCostSettled { amount }],
-                vec![Effect::RepairCostBaselineUpdated {
-                    month: self.input.month,
-                }],
+                vec![Event::RepairCostSettled],
                 journal_entries,
             )?)
         })()
@@ -84,7 +81,10 @@ fn validate_effective_month(
     effective_month: Month,
 ) -> Result<(), RepairCostSliceError> {
     let expected_month = occurrence_month
-        .checked_add(u64::from(delay_months.get()))
+        .checked_add(
+            u16::try_from(delay_months.get())
+                .map_err(|_| RepairCostSliceError::Month(MonthError::OutOfRange))?,
+        )
         .map_err(RepairCostSliceError::Month)?;
     if effective_month != expected_month {
         return Err(RepairCostSliceError::InvalidEffectiveMonth {

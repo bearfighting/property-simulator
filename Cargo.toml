@@ -6,12 +6,11 @@ members = [
     "core/accounting/reporting",
     "core/foundation/money",
     "core/foundation/month",
-    "core/simulation/context",
     "core/simulation/domain-calculations",
     "core/simulation/random-engine",
+    "core/simulation/stop-condition",
     "core/simulation/slice-catalogue",
     "core/simulation/slice",
-    "core/simulation/snapshot",
 ]
 exclude = [
     "crates/domain",

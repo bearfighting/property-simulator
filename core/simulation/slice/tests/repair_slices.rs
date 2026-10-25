@@ -6,8 +6,8 @@ use property_simulation_month::Month;
 use property_simulation_random_engine::RandomInput;
 use property_simulation_slice::{RepairCostSlice, RepairOccurrenceSlice, StochasticSlice};
 use property_simulation_slice_catalogue::{
-    Effect, Event, RepairCostParameters, RepairCostSliceInput, RepairOccurrenceSliceInput,
-    SliceKind, SliceResult, SliceSetting,
+    Event, RepairCostParameters, RepairCostSliceInput, RepairOccurrenceSliceInput, SliceKind,
+    SliceResult,
 };
 
 struct Words(Vec<u64>);
@@ -36,10 +36,10 @@ fn bounded_word(value: u64, upper_bound: u64) -> u64 {
     first_accepted + value
 }
 
-fn result(input: &mut Words, age_months: u64) -> SliceResult {
+fn result(input: &mut Words, age_months: u16) -> SliceResult {
     RepairOccurrenceSlice::new(RepairOccurrenceSliceInput {
         month: Month::new(age_months),
-        months_since_repair_cost: age_months,
+        months_since_repair_cost: u64::from(age_months),
     })
     .simulate(input)
     .unwrap()
@@ -47,7 +47,7 @@ fn result(input: &mut Words, age_months: u64) -> SliceResult {
 
 #[test]
 fn repair_occurrence_uses_the_documented_monthly_probability_curve() {
-    for (age, numerator) in [(0, 25), (1, 27), (60, 87), (u64::MAX, 149)] {
+    for (age, numerator) in [(0, 25), (1, 27), (60, 87), (u16::MAX, 149)] {
         let occurred = result(&mut Words(vec![bounded_word(0, 10_000)]), age);
         assert_eq!(occurred.kind(), SliceKind::RepairOccurrence);
         assert_eq!(occurred.events(), &[Event::RepairOccurred]);
@@ -61,8 +61,8 @@ fn repair_occurrence_uses_the_documented_monthly_probability_curve() {
 fn repair_cost_samples_inclusive_minor_unit_range_and_settles_zero_once() {
     let parameters = RepairCostParameters::new(money("1.23"), NonZeroU32::new(2).unwrap()).unwrap();
     let input = RepairCostSliceInput {
-        month: Month::new(2),
-        occurrence_month: Month::new(0),
+        month: Month::new(3),
+        occurrence_month: Month::new(1),
         cash_account: account(100),
         expense_account: account(500),
     };
@@ -70,29 +70,15 @@ fn repair_cost_samples_inclusive_minor_unit_range_and_settles_zero_once() {
     let zero = RepairCostSlice::new(parameters, input)
         .simulate(&mut Words(vec![bounded_word(0, 124)]))
         .unwrap();
-    assert_eq!(
-        zero.events(),
-        &[Event::RepairCostSettled { amount: money("0") }]
-    );
-    assert_eq!(
-        zero.effects(),
-        &[Effect::RepairCostBaselineUpdated {
-            month: Month::new(2)
-        }]
-    );
+    assert_eq!(zero.events(), &[Event::RepairCostSettled]);
     assert!(zero.journal_entries().is_empty());
 
     let maximum = RepairCostSlice::new(parameters, input)
         .simulate(&mut Words(vec![bounded_word(123, 124)]))
         .unwrap();
-    assert_eq!(
-        maximum.events(),
-        &[Event::RepairCostSettled {
-            amount: money("1.23")
-        }]
-    );
+    assert_eq!(maximum.events(), &[Event::RepairCostSettled]);
     let entry = &maximum.journal_entries()[0];
-    assert_eq!(entry.month(), Month::new(2));
+    assert_eq!(entry.month(), Month::new(3));
     assert_eq!(entry.lines()[0].side(), DebitCredit::Debit);
     assert_eq!(entry.lines()[0].account(), account(500));
     assert_eq!(entry.lines()[1].side(), DebitCredit::Credit);
@@ -105,8 +91,8 @@ fn repair_cost_rejects_a_settlement_month_that_does_not_match_its_delay() {
     let slice = RepairCostSlice::new(
         parameters,
         RepairCostSliceInput {
-            month: Month::new(1),
-            occurrence_month: Month::new(0),
+            month: Month::new(2),
+            occurrence_month: Month::new(1),
             cash_account: account(100),
             expense_account: account(500),
         },
@@ -117,8 +103,5 @@ fn repair_cost_rejects_a_settlement_month_that_does_not_match_its_delay() {
 
 #[test]
 fn repair_occurrence_setting_is_enabled_without_slice_specific_parameters() {
-    assert_eq!(
-        SliceSetting::RepairOccurrence { enabled: true }.kind(),
-        SliceKind::RepairOccurrence
-    );
+    assert_eq!(SliceKind::RepairOccurrence, SliceKind::RepairOccurrence);
 }

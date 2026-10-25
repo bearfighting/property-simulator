@@ -7,7 +7,7 @@ use property_simulation_domain_calculations::{
 use property_simulation_journal_entry::{JournalEntry, JournalEntryError, JournalLine};
 use property_simulation_money::{Money, MoneyError};
 use property_simulation_slice_catalogue::{
-    Effect, Event, LoanParameters, LoanSliceInput, SliceKind, SliceResult, SliceResultError,
+    Event, LoanParameters, LoanSliceInput, SliceKind, SliceResult, SliceResultError,
 };
 
 use crate::DeterministicSlice;
@@ -26,7 +26,7 @@ impl LoanSlice {
         let LoanSliceInput {
             initial_principal,
             opening_balance,
-            remaining_term_months,
+            remaining_term_months_at_month_start,
             ..
         } = input;
 
@@ -42,7 +42,7 @@ impl LoanSlice {
         if opening_balance.is_zero() {
             return Err(LoanSliceError::OpeningBalanceWithoutActiveLoan);
         }
-        if remaining_term_months > parameters.remaining_term_months() {
+        if remaining_term_months_at_month_start > parameters.remaining_term_months_at_start() {
             return Err(LoanSliceError::RemainingTermExceedsOriginal);
         }
         if opening_balance.checked_cmp(initial_principal)?.is_gt() {
@@ -52,7 +52,7 @@ impl LoanSlice {
         let scheduled_payment = calculate_scheduled_payment(
             initial_principal,
             parameters.annual_interest_rate(),
-            parameters.remaining_term_months(),
+            parameters.remaining_term_months_at_start(),
         )?;
         if scheduled_payment.is_zero() {
             return Err(LoanSliceError::PaymentRoundsToZero);
@@ -75,13 +75,11 @@ impl DeterministicSlice for LoanSlice {
                 self.input.opening_balance,
                 self.parameters.annual_interest_rate(),
                 self.scheduled_payment,
-                self.input.remaining_term_months,
+                self.input.remaining_term_months_at_month_start,
             )?;
             let payment = installment.payment();
             let interest = installment.interest();
             let principal = installment.principal();
-            let closing_balance = installment.closing_balance();
-
             if principal.is_zero() || principal.is_negative() {
                 return Err(LoanSliceError::PaymentDoesNotReducePrincipal);
             }
@@ -109,22 +107,11 @@ impl DeterministicSlice for LoanSlice {
             )?);
 
             let entry = JournalEntry::new(self.input.month, lines)?;
-            let event = Event::LoanPayment {
-                principal,
-                interest,
-                closing_balance,
-            };
-            let remaining_months = if closing_balance.is_zero() {
-                0
-            } else {
-                self.input.remaining_term_months.get() - 1
-            };
-            let effect = Effect::LoanRemainingTermUpdated { remaining_months };
-
+            let event = Event::LoanPayment;
             Ok(SliceResult::new(
+                self.input.month,
                 SliceKind::Loan,
                 vec![event],
-                vec![effect],
                 vec![entry],
             )?)
         })()

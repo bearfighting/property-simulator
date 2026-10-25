@@ -8,7 +8,7 @@ impl RandomRootKey {
         Self(bytes)
     }
 
-    /// Return the bytes needed to persist this root in Context.
+    /// Return the bytes for caller-managed persistence of this root.
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }

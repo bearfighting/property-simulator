@@ -30,12 +30,7 @@ fn rental_rounds_half_up_and_posts_income_against_cash() {
     let result = slice.calculate().unwrap();
 
     assert_eq!(result.kind(), SliceKind::Rental);
-    assert_eq!(
-        result.events(),
-        &[Event::RentCollected {
-            amount: money("10.01")
-        }]
-    );
+    assert_eq!(result.events(), &[Event::RentCollected]);
     let entry = &result.journal_entries()[0];
     assert_eq!(entry.month(), Month::new(2));
     assert_eq!(entry.lines()[0].side(), DebitCredit::Debit);
@@ -49,7 +44,7 @@ fn fixed_expense_supports_monthly_amount_and_annual_property_rate() {
     let monthly = FixedExpenseSlice::new(
         FixedExpenseParameters::new(FixedExpenseMethod::MonthlyAmount(money("10.005"))).unwrap(),
         FixedExpenseSliceInput {
-            month: Month::new(0),
+            month: Month::new(1),
             property_value: money("300000"),
             cash_account: code(100),
             expense_account: code(500),
@@ -61,7 +56,7 @@ fn fixed_expense_supports_monthly_amount_and_annual_property_rate() {
         )))
         .unwrap(),
         FixedExpenseSliceInput {
-            month: Month::new(0),
+            month: Month::new(1),
             property_value: money("300000"),
             cash_account: code(100),
             expense_account: code(500),
@@ -71,18 +66,8 @@ fn fixed_expense_supports_monthly_amount_and_annual_property_rate() {
     let monthly_result = monthly.calculate().unwrap();
     let annual_result = annual_rate.calculate().unwrap();
 
-    assert_eq!(
-        monthly_result.events(),
-        &[Event::FixedExpensePaid {
-            amount: money("10.01")
-        }]
-    );
-    assert_eq!(
-        annual_result.events(),
-        &[Event::FixedExpensePaid {
-            amount: money("300")
-        }]
-    );
+    assert_eq!(monthly_result.events(), &[Event::FixedExpensePaid]);
+    assert_eq!(annual_result.events(), &[Event::FixedExpensePaid]);
     let entry = &annual_result.journal_entries()[0];
     assert_eq!(entry.lines()[0].side(), DebitCredit::Debit);
     assert_eq!(entry.lines()[0].account(), code(500));

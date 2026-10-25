@@ -31,13 +31,16 @@ impl StochasticSlice for RepairOccurrenceSlice {
             let threshold = occurrence_threshold(self.input.months_since_repair_cost);
             let sample = sample_below(random_input, 10_000);
             if sample >= threshold {
-                return Ok(SliceResult::empty(SliceKind::RepairOccurrence));
+                return Ok(SliceResult::empty(
+                    self.input.month,
+                    SliceKind::RepairOccurrence,
+                )?);
             }
 
             Ok(SliceResult::new(
+                self.input.month,
                 SliceKind::RepairOccurrence,
                 vec![Event::RepairOccurred],
-                Vec::new(),
                 Vec::new(),
             )?)
         })()

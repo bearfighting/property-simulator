@@ -2,11 +2,11 @@ use std::fmt;
 
 /// A zero-based month in a simulation.
 ///
-/// `Month::first()` is the first calculated month. The value is also suitable
-/// as a key for data that is unique within one simulation, such as its monthly
-/// snapshot. It is not a globally unique identifier.
+/// `Month::initial()` is the simulation initialization boundary. Month 1 is the
+/// first calculated month. The value is a key within one simulation, not a
+/// globally unique identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Month(u64);
+pub struct Month(u16);
 
 /// Failure while performing month arithmetic or constructing a month range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,18 +17,28 @@ pub enum MonthError {
 }
 
 impl Month {
-    /// The first month in a simulation.
-    pub const fn first() -> Self {
+    /// The initialization boundary before the first calculated month.
+    pub const fn initial() -> Self {
         Self(0)
     }
 
+    /// The first calculated month in a simulation.
+    pub const fn first_calculated() -> Self {
+        Self(1)
+    }
+
+    /// Whether this value represents the initialization boundary.
+    pub const fn is_initial(self) -> bool {
+        self.0 == 0
+    }
+
     /// Construct a zero-based simulation month.
-    pub const fn new(number: u64) -> Self {
+    pub const fn new(number: u16) -> Self {
         Self(number)
     }
 
     /// Return this month's zero-based position in the simulation.
-    pub const fn number(self) -> u64 {
+    pub const fn number(self) -> u16 {
         self.0
     }
 }
@@ -40,7 +50,7 @@ impl Month {
     }
 
     /// Move forward by a number of months, checking for overflow.
-    pub const fn checked_add(self, months: u64) -> Result<Self, MonthError> {
+    pub const fn checked_add(self, months: u16) -> Result<Self, MonthError> {
         match self.0.checked_add(months) {
             Some(number) => Ok(Self(number)),
             None => Err(MonthError::OutOfRange),
@@ -48,7 +58,7 @@ impl Month {
     }
 
     /// Move backward by a number of months, checking for underflow.
-    pub const fn checked_sub(self, months: u64) -> Result<Self, MonthError> {
+    pub const fn checked_sub(self, months: u16) -> Result<Self, MonthError> {
         match self.0.checked_sub(months) {
             Some(number) => Ok(Self(number)),
             None => Err(MonthError::OutOfRange),
@@ -56,7 +66,7 @@ impl Month {
     }
 
     /// Return the number of months elapsed since `earlier`.
-    pub const fn months_since(self, earlier: Self) -> Result<u64, MonthError> {
+    pub const fn months_since(self, earlier: Self) -> Result<u16, MonthError> {
         match self.0.checked_sub(earlier.0) {
             Some(months) => Ok(months),
             None => Err(MonthError::EarlierMonth),
