@@ -2,7 +2,6 @@ use property_simulation_account::{
     Account, AccountCatalogue, AccountClass, AccountCode, AccountRole, DebitCredit,
 };
 use property_simulation_journal_entry::{JournalEntry, JournalLine};
-use property_simulation_ledger::OpeningBalance;
 use property_simulation_money::{Currency, Money};
 use property_simulation_month::Month;
 use property_simulation_reporting::{
@@ -37,13 +36,14 @@ fn cash_flow_reconciles_classified_activity_and_excludes_opening_cash() {
         account(500, "Repairs", AccountClass::Expense, "repair-expense"),
     ])
     .unwrap();
-    let opening = vec![
-        OpeningBalance::new(code(100), DebitCredit::Debit, money("100")).unwrap(),
-        OpeningBalance::new(code(300), DebitCredit::Credit, money("100")).unwrap(),
-    ];
     let journal = vec![
+        JournalEntry::initial(vec![
+            JournalLine::new(code(100), DebitCredit::Debit, money("100")).unwrap(),
+            JournalLine::new(code(300), DebitCredit::Credit, money("100")).unwrap(),
+        ])
+        .unwrap(),
         JournalEntry::new(
-            Month::new(0),
+            Month::new(1),
             vec![
                 JournalLine::new(code(500), DebitCredit::Debit, money("20")).unwrap(),
                 JournalLine::new(code(100), DebitCredit::Credit, money("20")).unwrap(),
@@ -51,7 +51,7 @@ fn cash_flow_reconciles_classified_activity_and_excludes_opening_cash() {
         )
         .unwrap(),
         JournalEntry::new(
-            Month::new(1),
+            Month::new(2),
             vec![
                 JournalLine::new(code(100), DebitCredit::Debit, money("50")).unwrap(),
                 JournalLine::new(code(400), DebitCredit::Credit, money("50")).unwrap(),
@@ -65,11 +65,11 @@ fn cash_flow_reconciles_classified_activity_and_excludes_opening_cash() {
     ];
 
     let report = cash_flow(
-        ReportingInput::new(&accounts, currency, &opening, &journal),
+        ReportingInput::new(&accounts, currency, &journal),
         &[code(100)],
         &classifications,
-        Month::new(0),
         Month::new(1),
+        Month::new(2),
     )
     .unwrap();
 

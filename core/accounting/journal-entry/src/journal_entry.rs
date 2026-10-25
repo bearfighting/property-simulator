@@ -3,7 +3,9 @@ use property_simulation_account::DebitCredit;
 use property_simulation_money::Money;
 use property_simulation_month::Month;
 
-/// A balanced set of accounting lines for one simulation month.
+/// A balanced set of accounting lines at one simulation Month.
+///
+/// Month 0 records initialization facts; Slice calculations use Month 1 or later.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalEntry {
     month: Month,
@@ -11,8 +13,20 @@ pub struct JournalEntry {
 }
 
 impl JournalEntry {
-    /// Construct an entry after verifying that its lines balance.
+    /// Construct a simulated-period entry (Month 1 or later) after verifying balance.
     pub fn new(month: Month, lines: Vec<JournalLine>) -> Result<Self, JournalEntryError> {
+        if month.is_initial() {
+            return Err(JournalEntryError::InitialMonthRequiresOpeningEntry);
+        }
+        Self::from_lines(month, lines)
+    }
+
+    /// Construct the Month 0 initialization entry after verifying balance.
+    pub fn initial(lines: Vec<JournalLine>) -> Result<Self, JournalEntryError> {
+        Self::from_lines(Month::initial(), lines)
+    }
+
+    fn from_lines(month: Month, lines: Vec<JournalLine>) -> Result<Self, JournalEntryError> {
         if lines.len() < 2 {
             return Err(JournalEntryError::TooFewLines);
         }

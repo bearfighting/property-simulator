@@ -4,6 +4,7 @@ use std::fmt;
 /// Failure to construct a valid, balanced journal entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JournalEntryError {
+    InitialMonthRequiresOpeningEntry,
     TooFewLines,
     NonPositiveAmount,
     Unbalanced { debits: Money, credits: Money },
@@ -19,6 +20,9 @@ impl From<MoneyError> for JournalEntryError {
 impl fmt::Display for JournalEntryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InitialMonthRequiresOpeningEntry => {
+                f.write_str("Month 0 must be created as an initialization entry")
+            }
             Self::TooFewLines => f.write_str("journal entry must contain at least two lines"),
             Self::NonPositiveAmount => f.write_str("journal line amount must be positive"),
             Self::Unbalanced { debits, credits } => {

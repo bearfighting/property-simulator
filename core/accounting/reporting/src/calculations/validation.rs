@@ -3,10 +3,10 @@ use property_simulation_account::{AccountCode, DebitCredit};
 use property_simulation_journal_entry::JournalEntry;
 use property_simulation_money::Money;
 use property_simulation_month::Month;
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
 pub(super) fn validate_period(start: Month, end: Month) -> Result<(), ReportingError> {
-    if start > end {
+    if start.is_initial() || start > end {
         Err(ReportingError::InvalidPeriod { start, end })
     } else {
         Ok(())
@@ -17,51 +17,22 @@ pub(super) fn validate_all(input: ReportingInput<'_>) -> Result<(), ReportingErr
     super::audit::audit(input).map(|_| ())
 }
 
-pub(super) fn validated_opening_balances(
+pub(super) fn zero_balances(
     input: ReportingInput<'_>,
-) -> Result<(HashMap<AccountCode, Money>, usize), ReportingError> {
+) -> Result<BTreeMap<AccountCode, Money>, ReportingError> {
     let zero = zero(input)?;
-    let mut balances = HashMap::with_capacity(input.accounts().len());
-    for account in input.accounts().iter() {
-        balances.insert(account.code(), zero);
-    }
-
-    let mut seen = HashSet::with_capacity(input.opening_balances().len());
-    let mut debits = zero;
-    let mut credits = zero;
-
-    for opening in input.opening_balances() {
-        if input.accounts().get(opening.account()).is_none() {
-            return Err(ReportingError::UnknownAccount(opening.account()));
-        }
-        if !seen.insert(opening.account()) {
-            return Err(ReportingError::DuplicateOpeningBalance(opening.account()));
-        }
-        validate_currency(input, opening.amount())?;
-        apply_amount(
-            &mut balances,
-            opening.account(),
-            opening.side(),
-            opening.amount(),
-        )?;
-        match opening.side() {
-            DebitCredit::Debit => debits = debits.checked_add(opening.amount())?,
-            DebitCredit::Credit => credits = credits.checked_add(opening.amount())?,
-        }
-    }
-
-    if debits.checked_cmp(credits)? != std::cmp::Ordering::Equal {
-        return Err(ReportingError::UnbalancedOpeningBalances { debits, credits });
-    }
-
-    Ok((balances, seen.len()))
+    Ok(input
+        .accounts()
+        .iter()
+        .map(|account| (account.code(), zero))
+        .collect())
 }
 
 pub(super) fn balances_through(
     input: ReportingInput<'_>,
     as_of: Month,
-) -> Result<HashMap<AccountCode, Money>, ReportingError> {
-    let (mut balances, _) = validated_opening_balances(input)?;
+) -> Result<BTreeMap<AccountCode, Money>, ReportingError> {
+    let mut balances = zero_balances(input)?;
     let mut previous_month = None;
 
     for entry in input.journal() {
@@ -105,7 +76,10 @@ pub(super) fn validate_entry(
     Ok(())
 }
 
-fn validate_currency(input: ReportingInput<'_>, amount: Money) -> Result<(), ReportingError> {
+pub(super) fn validate_currency(
+    input: ReportingInput<'_>,
+    amount: Money,
+) -> Result<(), ReportingError> {
     let expected = input.currency();
     let actual = amount.currency();
     if expected == actual {
@@ -132,7 +106,7 @@ pub(super) fn validate_month_order(
 }
 
 pub(super) fn apply_entry(
-    balances: &mut HashMap<AccountCode, Money>,
+    balances: &mut BTreeMap<AccountCode, Money>,
     entry: &JournalEntry,
 ) -> Result<(), ReportingError> {
     for line in entry.lines() {
@@ -143,7 +117,7 @@ pub(super) fn apply_entry(
 
 pub(super) fn apply_selected_lines(
     input: ReportingInput<'_>,
-    balances: &mut HashMap<AccountCode, Money>,
+    balances: &mut BTreeMap<AccountCode, Money>,
     entry: &JournalEntry,
     mut select: impl FnMut(property_simulation_account::AccountClass) -> bool,
 ) -> Result<(), ReportingError> {
@@ -160,7 +134,7 @@ pub(super) fn apply_selected_lines(
 }
 
 fn apply_amount(
-    balances: &mut HashMap<AccountCode, Money>,
+    balances: &mut BTreeMap<AccountCode, Money>,
     account: AccountCode,
     side: DebitCredit,
     amount: Money,

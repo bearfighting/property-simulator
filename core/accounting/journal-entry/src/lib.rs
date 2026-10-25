@@ -1,4 +1,4 @@
-//! Balanced, month-scoped accounting entries returned by domain slices.
+//! Balanced accounting entries shared by initialization, domain Slices, and Ledger.
 
 mod error;
 mod journal_entry;

@@ -8,7 +8,6 @@ rust-version.workspace = true
 [dependencies]
 property-simulation-account = { path = "../account" }
 property-simulation-journal-entry = { path = "../journal-entry" }
-property-simulation-ledger = { path = "../ledger" }
 property-simulation-money = { path = "../../foundation/money" }
 property-simulation-month = { path = "../../foundation/month" }
 

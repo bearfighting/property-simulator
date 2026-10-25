@@ -2,7 +2,7 @@ use super::validation::{apply_selected_lines, validate_all, validate_period, zer
 use crate::{IncomeStatement, IncomeStatementLine, ReportingError, ReportingInput};
 use property_simulation_account::{AccountClass, DebitCredit};
 use property_simulation_month::Month;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Derive income and expense account activity over the inclusive month interval.
 pub fn income_statement(
@@ -14,7 +14,7 @@ pub fn income_statement(
     validate_all(input)?;
 
     let zero = zero(input)?;
-    let mut activity = HashMap::with_capacity(input.accounts().len());
+    let mut activity = BTreeMap::new();
     for account in input.accounts().iter() {
         if matches!(
             account.class(),
@@ -25,7 +25,8 @@ pub fn income_statement(
     }
 
     for entry in input.journal() {
-        if entry.month() < start || entry.month() > end {
+        let month = entry.month();
+        if month < start || month > end {
             continue;
         }
         apply_selected_lines(input, &mut activity, entry, |class| {

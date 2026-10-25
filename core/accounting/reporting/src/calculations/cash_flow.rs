@@ -52,7 +52,8 @@ pub fn cash_flow(
     let mut subcategory_totals = HashMap::new();
 
     for (journal_position, entry) in input.journal().iter().enumerate() {
-        if entry.month() < start || entry.month() > end {
+        let month = entry.month();
+        if month < start || month > end {
             continue;
         }
 
@@ -90,7 +91,7 @@ pub fn cash_flow(
             entry_classified_total = entry_classified_total.checked_add(amount)?;
             movements.push(CashFlowMovement::new(
                 journal_position,
-                entry.month(),
+                month,
                 line.account(),
                 classification.category(),
                 classification.subcategory().to_owned(),

@@ -482,7 +482,7 @@ impl CashFlowReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuditReport {
     account_count: usize,
-    opening_balance_count: usize,
+    opening_entry_count: usize,
     journal_entry_count: usize,
     journal_line_count: usize,
 }
@@ -490,13 +490,13 @@ pub struct AuditReport {
 impl AuditReport {
     pub(crate) const fn new(
         account_count: usize,
-        opening_balance_count: usize,
+        opening_entry_count: usize,
         journal_entry_count: usize,
         journal_line_count: usize,
     ) -> Self {
         Self {
             account_count,
-            opening_balance_count,
+            opening_entry_count,
             journal_entry_count,
             journal_line_count,
         }
@@ -506,8 +506,8 @@ impl AuditReport {
         self.account_count
     }
 
-    pub const fn opening_balance_count(&self) -> usize {
-        self.opening_balance_count
+    pub const fn opening_entry_count(&self) -> usize {
+        self.opening_entry_count
     }
 
     pub const fn journal_entry_count(&self) -> usize {

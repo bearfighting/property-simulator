@@ -14,14 +14,9 @@ pub enum ReportingError {
         cash_amount: Money,
         classified_amount: Money,
     },
-    DuplicateOpeningBalance(AccountCode),
     CurrencyMismatch {
         expected: Currency,
         actual: Currency,
-    },
-    UnbalancedOpeningBalances {
-        debits: Money,
-        credits: Money,
     },
     UnbalancedJournalEntry {
         month: Month,
@@ -73,16 +68,9 @@ impl fmt::Display for ReportingError {
                 f,
                 "cash-flow classifications for journal entry {journal_position} total {classified_amount}, but cash lines total {cash_amount}"
             ),
-            Self::DuplicateOpeningBalance(account) => {
-                write!(f, "duplicate opening balance for account {account}")
-            }
             Self::CurrencyMismatch { expected, actual } => {
                 write!(f, "report currency is {expected}, received {actual}")
             }
-            Self::UnbalancedOpeningBalances { debits, credits } => write!(
-                f,
-                "opening balances are unbalanced: debits {debits}, credits {credits}"
-            ),
             Self::UnbalancedJournalEntry {
                 month,
                 debits,
@@ -110,7 +98,10 @@ impl fmt::Display for ReportingError {
                 "journal month {attempted} precedes the latest journal month {previous}"
             ),
             Self::InvalidPeriod { start, end } => {
-                write!(f, "report period starts at {start} after it ends at {end}")
+                write!(
+                    f,
+                    "report period {start}..={end} must start at Month 1 or later and be ordered"
+                )
             }
             Self::Money(error) => write!(f, "report money arithmetic failed: {error}"),
         }
