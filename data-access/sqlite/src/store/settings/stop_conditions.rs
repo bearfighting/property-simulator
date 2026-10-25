@@ -7,7 +7,7 @@ use crate::{SqliteDataAccessError, mapping, store::SqliteDataAccess};
 use super::common::validate_effective_month;
 
 impl SqliteDataAccess {
-    pub async fn save_stop_condition_set(
+    pub(crate) async fn save_stop_condition_set(
         &self,
         settings: &StopConditionSetDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -51,7 +51,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_stop_condition_sets(
+    pub(crate) async fn load_stop_condition_sets(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<StopConditionSetDto>, SqliteDataAccessError> {

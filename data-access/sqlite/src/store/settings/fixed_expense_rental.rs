@@ -5,7 +5,7 @@ use property_simulation_slice_catalogue::FixedExpenseMethod;
 use super::common::{bind_money, optional_payload, validate_currency, validate_effective_month};
 
 impl SqliteDataAccess {
-    pub async fn save_fixed_expense_settings(
+    pub(crate) async fn save_fixed_expense_settings(
         &self,
         settings: &FixedExpenseSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -53,7 +53,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_fixed_expense_settings(
+    pub(crate) async fn load_fixed_expense_settings(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<FixedExpenseSettingsDto>, SqliteDataAccessError> {
@@ -69,7 +69,7 @@ impl SqliteDataAccess {
             .collect()
     }
 
-    pub async fn save_rental_settings(
+    pub(crate) async fn save_rental_settings(
         &self,
         settings: &RentalSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -108,7 +108,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_rental_settings(
+    pub(crate) async fn load_rental_settings(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<RentalSettingsDto>, SqliteDataAccessError> {

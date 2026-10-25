@@ -2,5 +2,7 @@
 
 pub mod dto;
 mod error;
+mod persistence;
 
-pub use error::DtoError;
+pub use error::{DataAccessError, DtoError};
+pub use persistence::{DataAccess, MonthlyFactsStore, SettingsStore, SimulationStore};

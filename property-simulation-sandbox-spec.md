@@ -6,7 +6,7 @@ Project specification index. Use the following current documents as the source o
 - [Domain model](docs/domain-model.md): state, monthly calculation, accounting, randomness and persistence invariants.
 - [Architecture](docs/architecture.md): runtime responsibilities and dependency direction.
 - [UI input defaults](docs/ui-ux-design.md): user-owned settings, default scenario and enabled Slice behavior.
-- [Current work plan](docs/implementation-roadmap.md): Core boundary clarification followed by Application/Data Access work.
+- [Current work plan](docs/implementation-roadmap.md): Core is the current implementation baseline; work proceeds on Application and the Data Access contract.
 - [Engineering practices](docs/engineering-practices.md): code boundaries, tests and quality commands.
 - [Ledger and mortgage vectors](docs/test-vectors.md): compact numerical examples defining current accounting and loan behavior.
 - [Architecture decision](docs/adr/ADR-29-layered-calculation-and-application-boundaries.md): concise rationale for the application/data-access boundary.
@@ -41,4 +41,4 @@ Project specification index. Use the following current documents as the source o
 - [Persist pending repair costs](docs/adr/ADR-65-persist-pending-repair-cost-instances.md): persist generated repair cost instances and prevent retroactive edits to settings used by completed months.
 - [Application and Data Access static-dispatch boundary](docs/adr/ADR-66-application-data-access-static-dispatch.md): define storage-neutral semantic persistence traits and inject SQLite through generic static dispatch.
 
-Code identifiers must not contain implementation-stage names or numbers. The architecture document records the current boundary direction and open interface questions. The roadmap starts with resolving those Core interfaces before Application/Data Access implementation. Historical decisions are retained only as decision history.
+Code identifiers must not contain implementation-stage names or numbers. The architecture document records the current boundary direction and open interface questions. The roadmap tracks Application/Data Access work; Core may evolve incrementally as concrete needs arise. Historical decisions are retained only as decision history.

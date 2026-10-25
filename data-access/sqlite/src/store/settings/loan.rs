@@ -4,7 +4,7 @@ use property_simulation_data_access::dto::LoanSettingsDto;
 use super::common::{optional_payload, validate_effective_month};
 
 impl SqliteDataAccess {
-    pub async fn save_loan_settings(
+    pub(crate) async fn save_loan_settings(
         &self,
         settings: &LoanSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -40,7 +40,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_loan_settings(
+    pub(crate) async fn load_loan_settings(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<LoanSettingsDto>, SqliteDataAccessError> {

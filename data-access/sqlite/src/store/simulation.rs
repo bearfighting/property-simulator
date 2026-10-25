@@ -6,7 +6,7 @@ use sqlx::{Row, Sqlite, Transaction};
 use crate::{SqliteDataAccessError, mapping, store::SqliteDataAccess};
 
 impl SqliteDataAccess {
-    pub async fn create_simulation(
+    pub(crate) async fn create_simulation(
         &self,
         simulation: &SimulationDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -19,7 +19,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_simulation(
+    pub(crate) async fn load_simulation(
         &self,
         simulation_id: &str,
     ) -> Result<Option<SimulationDto>, SqliteDataAccessError> {
@@ -30,7 +30,7 @@ impl SqliteDataAccess {
         row.as_ref().map(mapping::simulation).transpose()
     }
 
-    pub async fn save_root_key(
+    pub(crate) async fn save_root_key(
         &self,
         root_key: &SimulationRootKeyDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -59,7 +59,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_root_key(
+    pub(crate) async fn load_root_key(
         &self,
         simulation_id: &str,
     ) -> Result<Option<SimulationRootKeyDto>, SqliteDataAccessError> {
@@ -77,7 +77,7 @@ impl SqliteDataAccess {
         .transpose()
     }
 
-    pub async fn save_account(
+    pub(crate) async fn save_account(
         &self,
         account: &SimulationAccountDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -92,7 +92,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_accounts(
+    pub(crate) async fn load_accounts(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<SimulationAccountDto>, SqliteDataAccessError> {
@@ -117,7 +117,7 @@ impl SqliteDataAccess {
             .collect()
     }
 
-    pub async fn load_months(
+    pub(crate) async fn load_months(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<SimulationMonthDto>, SqliteDataAccessError> {

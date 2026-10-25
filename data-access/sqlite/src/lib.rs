@@ -2,6 +2,7 @@
 
 mod error;
 mod mapping;
+mod persistence;
 mod store;
 
 pub use error::SqliteDataAccessError;

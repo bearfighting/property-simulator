@@ -20,6 +20,12 @@ impl fmt::Display for SqliteDataAccessError {
 
 impl std::error::Error for SqliteDataAccessError {}
 
+impl From<SqliteDataAccessError> for property_simulation_data_access::DataAccessError {
+    fn from(error: SqliteDataAccessError) -> Self {
+        Self::storage(error.to_string())
+    }
+}
+
 impl From<sqlx::Error> for SqliteDataAccessError {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error)

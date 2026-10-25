@@ -15,7 +15,7 @@ use crate::{
 impl SqliteDataAccess {
     /// Save one month's events, JournalEntries, and repair instance lifecycle changes atomically.
     ///
-    pub async fn save_accounting_month(
+    pub(crate) async fn save_accounting_month(
         &self,
         simulation_id: &str,
         month: Month,
@@ -140,18 +140,50 @@ impl SqliteDataAccess {
     }
 
     /// Load all journal entries in append order and validate them through Core.
-    pub async fn load_journal_entries(
+    pub(crate) async fn load_journal_entries(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<JournalEntryDto>, SqliteDataAccessError> {
+        self.load_journal_entries_for_period(simulation_id, None)
+            .await
+    }
+
+    pub(crate) async fn load_journal_entries_for_month(
+        &self,
+        simulation_id: &str,
+        month: property_simulation_month::Month,
+    ) -> Result<Vec<JournalEntryDto>, SqliteDataAccessError> {
+        self.load_journal_entries_for_period(simulation_id, Some(month))
+            .await
+    }
+
+    async fn load_journal_entries_for_period(
+        &self,
+        simulation_id: &str,
+        month: Option<property_simulation_month::Month>,
+    ) -> Result<Vec<JournalEntryDto>, SqliteDataAccessError> {
         let currency = self.simulation_currency(simulation_id).await?;
-        let headers = sqlx::query(
-            "SELECT id, simulation_id, month, sequence FROM journal_entries \
-             WHERE simulation_id = ? ORDER BY sequence",
-        )
-        .bind(simulation_id)
-        .fetch_all(&self.pool)
-        .await?;
+        let headers = match month {
+            Some(month) => {
+                sqlx::query(
+                    "SELECT id, simulation_id, month, sequence FROM journal_entries \
+                 WHERE simulation_id = ? AND month = ? ORDER BY sequence",
+                )
+                .bind(simulation_id)
+                .bind(i64::from(month.number()))
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    "SELECT id, simulation_id, month, sequence FROM journal_entries \
+                 WHERE simulation_id = ? ORDER BY sequence",
+                )
+                .bind(simulation_id)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
         let mut entries = Vec::with_capacity(headers.len());
         for header in headers {
             let id: i64 = header.try_get("id")?;

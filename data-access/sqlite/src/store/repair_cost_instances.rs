@@ -4,7 +4,7 @@ use crate::{SqliteDataAccessError, mapping, store::SqliteDataAccess};
 
 impl SqliteDataAccess {
     /// Load generated repair cost instances, including their due and settlement months.
-    pub async fn load_repair_cost_instances(
+    pub(crate) async fn load_repair_cost_instances(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<RepairCostInstanceDto>, SqliteDataAccessError> {

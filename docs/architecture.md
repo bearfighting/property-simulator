@@ -2,7 +2,7 @@
 
 ## 当前方向
 
-当前 Core 的 crate 与模块边界尚未定稿。重构先厘清概念职责、接口和依赖方向，再迁移代码；不以当前 crate 布局作为目标结构，也不以尽早得到一个可运行版本为先。
+当前 Core crate 与主要模块职责已形成实现基线，供 Application 接线使用。后续按具体用例、领域规则和验证结果增量调整，不要求在 Application 开始前再进行一轮全面重构。已确认的依赖方向和职责如下：
 
 已确认的设计方向：
 
@@ -44,12 +44,12 @@ flowchart TD
 | Random engine | 从调用方持有的 root 和显式语义身份派生随机输入 | root 生成与持久化归 Application/Data Access；派生算法及随机输入 trait 由 Core 提供 |
 | Application simulation state / monthly output | 保存模拟级配置与 root，并组织已完成月份的 Slice 结果 | 应用状态和持久化 DTO 的字段边界；Core 只定义单项计算契约 |
 | Application | 用户用例、跨月流程、逐 Slice 调用协调、候选 Ledger 结算和数据读写协调 | 具体用例及窄的 Core 调用接口 |
-| Data Access contract | storage-neutral DTO 与 Application 所需的异步语义持久化操作 | trait 拆分、完整方法签名及 Future 的 `Send` 约束，待 Application 用例和运行时边界确定 |
+| Data Access contract | storage-neutral DTO 与异步持久化操作 | DTO、SQLite schema 和按模拟、设置、月度事实划分的 store trait 已实现；组合 `DataAccess` trait 供需要完整能力的调用方使用。月度事实支持全量读取和按指定 Month 读取事件/分录。未来若运行时需要跨线程派发，再决定是否增加 Future 的 `Send` 约束 |
 
 ## 上下层边界
 
 - **Application** 是 Presentation、Data Access 和计算能力之间的协调点。它处理期初初始化、跨月推进、停止条件、配置更新、随机 root 生命周期和月度结果保存与查询。
-- **Data Access** 在 storage-neutral 契约 crate 中定义 DTO、语义持久化 trait 和后端中立错误；SQLite adapter 实现该接口，SQLx 和 schema 细节不进入 Application 或 Core。
+- **Data Access** 的 DTO、统一持久化 trait 和 SQLite adapter 已实现。SQLx 和 schema 细节不进入调用方或 Core；程序运行流程仍由 Data Access 之外负责。
 - **Presentation** 负责用户输入格式、默认值和结果展示，不直接调用 Data Access 或领域计算模块。
 - **Core** 由基础值类型、单项领域行为、Accounting/Ledger 和随机输入能力组成。模拟级状态与月度结果的组织属于 Application。最终 crates 数量以职责与依赖验证结果为准。
 
@@ -57,4 +57,4 @@ flowchart TD
 
 ## 验收原则
 
-在迁移实现前，每个模块都应能说明其负责的数据、不变量、操作、输入输出和依赖对象。以独立、可验证的接口和代表性计算为基础，再逐步迁移旧代码；旧实现只作业务规则参考，不作为模块边界模板。
+Core 当前实现作为可独立验证的工作基线。增加或调整模块时，说明其负责的数据、不变量、操作、输入输出和依赖对象，并以领域测试验证；不要求为满足预先固定的 crate 布局而机械拆分或迁移。

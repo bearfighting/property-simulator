@@ -4,7 +4,7 @@ use property_simulation_data_access::dto::{RepairCostSettingsDto, RepairOccurren
 use super::common::{bind_money, validate_currency, validate_effective_month};
 
 impl SqliteDataAccess {
-    pub async fn save_repair_occurrence_settings(
+    pub(crate) async fn save_repair_occurrence_settings(
         &self,
         settings: &RepairOccurrenceSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -22,7 +22,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_repair_occurrence_settings(
+    pub(crate) async fn load_repair_occurrence_settings(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<RepairOccurrenceSettingsDto>, SqliteDataAccessError> {
@@ -37,7 +37,7 @@ impl SqliteDataAccess {
             .collect()
     }
 
-    pub async fn save_repair_cost_settings(
+    pub(crate) async fn save_repair_cost_settings(
         &self,
         settings: &RepairCostSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
@@ -74,7 +74,7 @@ impl SqliteDataAccess {
         Ok(())
     }
 
-    pub async fn load_repair_cost_settings(
+    pub(crate) async fn load_repair_cost_settings(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<RepairCostSettingsDto>, SqliteDataAccessError> {

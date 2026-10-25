@@ -26,6 +26,29 @@ impl fmt::Display for DtoError {
 
 impl std::error::Error for DtoError {}
 
+/// Failure reported by a Data Access adapter without exposing backend types.
+#[derive(Debug)]
+pub struct DataAccessError {
+    message: String,
+}
+
+impl DataAccessError {
+    /// Create a storage failure from an adapter-provided diagnostic message.
+    pub fn storage(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for DataAccessError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "data access operation failed: {}", self.message)
+    }
+}
+
+impl std::error::Error for DataAccessError {}
+
 impl From<property_simulation_money::MoneyError> for DtoError {
     fn from(error: property_simulation_money::MoneyError) -> Self {
         Self::Money(error)

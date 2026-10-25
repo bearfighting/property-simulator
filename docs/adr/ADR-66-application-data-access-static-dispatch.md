@@ -6,32 +6,30 @@
 
 ## Context
 
-Application must use asynchronous persistence while remaining independent of
-SQLite and SQLx. A concrete SQLite adapter should be created by the program's
-composition root and supplied to Application. The current storage-neutral
-`data-access` crate already owns DTOs but does not yet define Application-facing
-persistence traits.
+Callers use asynchronous persistence while remaining independent of SQLite
+and SQLx. The storage-neutral `data-access` crate owns DTOs and the `DataAccess`
+trait; a concrete SQLite adapter implements that contract. The caller's
+composition root creates the adapter and supplies it to the runtime layer.
 
 ## Decision
 
-- Define Application-facing persistence traits in the storage-neutral
-  `data-access` crate alongside DTOs. Keep this crate independent of SQLite,
-  SQLx, Application, and Presentation.
-- Express persistence in stable semantic operations over DTOs, such as loading
-  simulation facts, accepting effective settings, and saving a completed
-  Month atomically with its Events, JournalEntries, and activity lifecycle
-  changes. Do not expose table-level generic CRUD operations.
-- Keep the concrete methods and any trait split aligned with Application
-  use-cases; this ADR fixes the boundary and style, not the final method list.
+- Define storage-neutral store traits alongside DTOs, grouped by simulation
+  facts, settings, and monthly facts. Provide a composed `DataAccess` trait for
+  callers that need every group. Keep this crate independent of SQLite, SQLx,
+  Application, and Presentation.
+- Expose operations over the persisted facts represented by the schema:
+  simulation identity/root/account/month data, per-Slice settings,
+  stop-condition sets, monthly events, repair cost instances, and JournalEntries.
+  Month-scoped event and JournalEntry reads are available alongside full-history reads.
+  Do not expose table-level generic CRUD operations.
 - Have `data-access/sqlite` depend on and implement the contract crate. The
   composition root creates the SQLx pool and adapter, then injects the adapter
   into `Application<D>` where `D` implements the persistence trait(s).
 - Use generic static dispatch. Do not use `dyn Trait`, boxed futures, or an
   `async-trait` abstraction unless a later requirement needs runtime selection
   of implementations.
-- Keep errors in the contract backend-neutral. Decide whether public async
-  trait futures require `Send` when the Application executor and task-spawning
-  boundary are designed.
+- Keep errors in the contract backend-neutral. Do not require `Send` on public
+  async trait futures until a caller's executor or task-spawning boundary needs it.
 
 ## Alternatives considered
 
@@ -52,8 +50,9 @@ persistence traits.
   vtable and per-call boxed-future allocation.
 - Fake in-memory implementations can satisfy the same trait for Application
   tests without adding SQLite to Application.
-- Exact trait grouping, method signatures, and Future `Send` bounds remain
-  open until Application use-cases and executor requirements are specified.
+- The current trait maps to the existing SQLite persistence operations. A
+  future caller may motivate narrower trait bounds or a `Send` future contract;
+  neither is required by the current persistence boundary.
 
 ## Verification examples
 
@@ -61,5 +60,5 @@ persistence traits.
   without the Application crate importing the SQLite crate.
 - An in-memory adapter can implement the same persistence contract and be
   injected into `Application<MemoryDataAccess>`.
-- The monthly persistence operation commits the Month, events, journal
-  entries, and generated repair activity lifecycle changes atomically.
+- The monthly persistence operation accepts the Month, events, journal
+  entries, and generated repair activity lifecycle facts through the contract.

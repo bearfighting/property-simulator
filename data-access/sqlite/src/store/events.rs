@@ -37,7 +37,7 @@ pub(super) async fn insert_month_events(
 
 impl SqliteDataAccess {
     /// Load recorded events by month, preserving duplicate events and their stored order.
-    pub async fn load_month_events(
+    pub(crate) async fn load_month_events(
         &self,
         simulation_id: &str,
     ) -> Result<Vec<MonthlyEventsDto>, SqliteDataAccessError> {
@@ -65,5 +65,32 @@ impl SqliteDataAccess {
                 events,
             })
             .collect())
+    }
+
+    pub(crate) async fn load_month_events_for_month(
+        &self,
+        simulation_id: &str,
+        month: Month,
+    ) -> Result<MonthlyEventsDto, SqliteDataAccessError> {
+        let rows = sqlx::query(
+            "SELECT event_kind FROM month_events \
+             WHERE simulation_id = ? AND month = ? ORDER BY event_ordinal",
+        )
+        .bind(simulation_id)
+        .bind(i64::from(month.number()))
+        .fetch_all(&self.pool)
+        .await?;
+        let events = rows
+            .iter()
+            .map(|row| {
+                let kind: String = row.try_get("event_kind")?;
+                mapping::event(&kind)
+            })
+            .collect::<Result<Vec<_>, SqliteDataAccessError>>()?;
+        Ok(MonthlyEventsDto {
+            simulation_id: simulation_id.to_owned(),
+            month,
+            events,
+        })
     }
 }
