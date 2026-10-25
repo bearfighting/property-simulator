@@ -18,8 +18,9 @@ Core 基础实现已达到当前阶段目标，作为后续 Application 接线�
 - Application 管理已接受的配置更新和活动启用状态。每个完成月份的实际输入与 Slice 结果按 Month 分别持久化，供续算和审计。
 - 不要求统一 Snapshot 聚合。Month 0 与后续月度 JournalEntry 可重建 Ledger 余额；现金流按调用方提供的科目分类映射保留逐分录明细，不要求来源实例 ID。
 - 存储或致命计算错误停止本次推进并报告系统错误；不增加重试、恢复、回滚或补偿机制。
-- Data Access 使用窄的类型化接口；SQLite 和序列化仅由 Data Access 承担。Presentation 只调用 Application。
-- Data Access 的 DTO、SQLite schema、storage-neutral store traits 和 SQLite adapter 已实现。接口按模拟基础事实、设置、月度事实分组，并提供组合 `DataAccess` trait；较小 work unit 可只依赖所需分组。接口覆盖 schema 中模拟、随机 root、账户、月份、设置、停止条件、事件、维修实例和 JournalEntry 的读写，不包含从 Ledger 派生的现金流或报告。Application 和内存适配器尚未实现；后续按上层实际调用需要接入，不扩展到 schema 外的持久化事实。
+- Data Access 使用窄的类型化接口；SQLite 和序列化仅由 Data Access 承担。desktop 组合入口负责连接 Presentation UI、Application 与 Data Access。
+- 当前先完成初始化模拟的 GPUI 垂直切片：`presentation/gpui/ui` 只依赖 GPUI Kit 并提交普通表单数据；`presentation/gpui/desktop` 是程序组合入口，负责创建 SQLite pool、安装 schema、构造账户目录，并协调 UI 与 Application。UI 不直接依赖 Application 或 Data Access。入口通过 Tokio runtime 驱动 SQLx，提交结果异步返回 UI。
+- Data Access 的 DTO、SQLite schema、storage-neutral store traits 和 SQLite adapter 已实现。接口按模拟基础事实、设置、月度事实分组，并提供组合 `DataAccess` trait；较小 work unit 可只依赖所需分组。接口覆盖 schema 中模拟、随机 root、账户、月份、设置、停止条件、事件、维修实例和 JournalEntry 的读写，不包含从 Ledger 派生的现金流或报告。Application crate 的初始化模拟用例已实现；其他用例和内存适配器尚未实现，后续按上层实际调用需要接入，不扩展到 schema 外的持久化事实。
 - UI 用例包括设置初始值、推进一个月、获取统计报告和读取指定月份结果。报告从已保存的月度事实与 Ledger 派生，不触发重算。
 
 ## Application/Data Access 验收
@@ -27,5 +28,5 @@ Core 基础实现已达到当前阶段目标，作为后续 Application 接线�
 - 用可替换的内存适配器验证 Application 的读取、随机输入、计算、停止和保存顺序。
 - 用领域测试覆盖 Slice 的输入输出、不变量、来源追踪、随机边界、复式交易及生命周期规则，不依赖 IO。
 - 用 SQLite 边界验证序列化、重载和 Ledger/现金流分类明细一致性。
-- 检查 Presentation → Application → Data Access/Core 的依赖方向；Core 不依赖 IO、SQLite 或 Presentation。
+- 检查 GPUI UI → GPUI Kit、desktop 入口 → UI/Application/SQLite Data Access/Core 的依赖方向；Core 不依赖 IO、SQLite 或 Presentation。
 - 运行 `./scripts/check.sh` 和 `git diff --check`，只报告实际执行的验证。

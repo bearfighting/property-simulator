@@ -1,5 +1,7 @@
 [workspace]
+default-members = ["presentation/gpui/desktop"]
 members = [
+    "application",
     "core/accounting/account",
     "core/accounting/journal-entry",
     "core/accounting/ledger",
@@ -11,6 +13,10 @@ members = [
     "core/simulation/stop-condition",
     "core/simulation/slice-catalogue",
     "core/simulation/slice",
+    "data-access",
+    "data-access/sqlite",
+    "presentation/gpui/desktop",
+    "presentation/gpui/ui",
 ]
 exclude = [
     "crates/domain",
@@ -29,3 +35,6 @@ rust-version = "1.85"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+[workspace.dependencies]
+gpui-kit = "=0.8.0"

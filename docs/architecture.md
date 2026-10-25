@@ -31,7 +31,7 @@ flowchart TD
     Slices --> Values[Money / Month]
 ```
 
-图中是方向约束，不代表已经确定的全部 crate 划分或最终调用协议。Application 依赖 `data-access` 契约 crate，而不依赖具体 SQLite adapter；adapter 和 Application 各自依赖该契约，程序初始化层负责创建 pool、adapter 和 Application 并完成注入。Application 用泛型参数承载 adapter 的具体类型，保持静态分发。Core、Application 和 CLI/GUI/Web Presentation 可在同一仓库的不同 Cargo workspace 中维护。依赖须指向提供值类型或规则的一侧；领域计算不得依赖 Application、Presentation、数据库、文件或系统随机熵。具体模块接口应在 `core/` 的设计过程中验证。
+图中是方向约束，不代表已经确定的全部 crate 划分或最终调用协议。Application 依赖 `data-access` 契约 crate，而不依赖具体 SQLite adapter；adapter 和 Application 各自依赖该契约，程序初始化层负责创建 pool、adapter 和 Application 并完成注入。Application 用泛型参数承载 adapter 的具体类型，保持静态分发。Core、Application、Data Access 和 Presentation crate 统一登记在仓库根 Cargo workspace 中；crate 依赖仍按层次约束，GPUI UI crate 不直接依赖 Application 或 Data Access。根 workspace 的默认成员是 desktop binary，因此可从仓库根目录运行 `cargo run`。依赖须指向提供值类型或规则的一侧；领域计算不得依赖 Application、Presentation、数据库、文件或系统随机熵。具体模块接口应在 `core/` 的设计过程中验证。
 
 ## 概念职责
 

@@ -38,7 +38,7 @@ fn bounded_word(value: u64, upper_bound: u64) -> u64 {
 
 fn result(input: &mut Words, age_months: u16) -> SliceResult {
     RepairOccurrenceSlice::new(RepairOccurrenceSliceInput {
-        month: Month::new(age_months),
+        month: Month::new(age_months.max(1)),
         months_since_repair_cost: u64::from(age_months),
     })
     .simulate(input)

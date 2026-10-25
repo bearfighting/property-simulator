@@ -14,12 +14,12 @@ Use the next unused number; do not reuse retired numbers. An ADR records context
 - [ADR-37](ADR-37-slice-journal-entry-contract.md): Slice returns balanced JournalEntry values through a focused shared crate.
 - [ADR-38](ADR-38-reporting-projections.md): reporting derives initial projections from read-only Ledger facts without calling Ledger.
 - [ADR-39](ADR-39-context-settings-and-month-zero-start.md): historical Context design; Core aggregate ownership superseded by ADR-60, root placement by ADR-59.
-- [ADR-40](ADR-40-separate-core-application-presentation-workspaces.md): Core, Application, and Presentation entrypoints use separate Cargo workspaces in one repository.
+- [ADR-40](ADR-40-separate-core-application-presentation-workspaces.md): historical decision to keep Core, Application, and Presentation in separate Cargo workspaces; dependency boundaries remain relevant.
 - [ADR-41](ADR-41-application-available-slice-kinds.md): use a closed static `SliceKind` set; generated repair behavior remains supported.
 - [ADR-42](ADR-42-user-settings-and-opening-values.md): historical UserSettings design; root placement superseded by ADR-59.
 - [ADR-43](ADR-43-required-simulation-name.md): historical Core name value; simulation names are Application metadata.
 - [ADR-44](ADR-44-exclude-frozen-crates-from-root-workspace.md): retain legacy `crates/` sources but remove them from the active root workspace.
-- [ADR-45](ADR-45-use-root-workspace-for-core.md): list active Core crates in the repository-root Cargo workspace for tool discovery; keep frozen legacy crates excluded.
+- [ADR-45](ADR-45-use-root-workspace-for-core.md): list active Core crates in the repository-root Cargo workspace for tool discovery; later expanded by ADR-68.
 - [ADR-46](ADR-46-explicit-slice-construction-and-application-composition.md): construct Slice behavior from explicit typed inputs and leave cross-Slice assembly to Application.
 - [ADR-47](ADR-47-pure-loan-calculations.md): keep fixed-rate loan arithmetic in pure domain calculations and Slice-specific validation/output mapping in Loan Slice.
 - [ADR-48](ADR-48-monthly-snapshot-content-and-continuation.md): historical Snapshot design superseded by ADR-60.
@@ -41,6 +41,8 @@ Use the next unused number; do not reuse retired numbers. An ADR records context
 - [ADR-64](ADR-64-derive-slice-continuation-from-domain-facts.md): remove generic Slice Effects while current continuation inputs are derivable from Month, Events, configuration, and Ledger.
 - [ADR-65](ADR-65-persist-pending-repair-cost-instances.md): persist generated repair costs until settlement and protect completed-month settings history.
 - [ADR-66](ADR-66-application-data-access-static-dispatch.md): define semantic Data Access traits separately from SQLite and inject adapters through generic static dispatch.
+- [ADR-67](ADR-67-gpui-composition-root-and-ui-boundary.md): keep GPUI views dependent on plain form contracts and let the desktop entrypoint initialize persistence and coordinate Application.
+- [ADR-68](ADR-68-unified-root-cargo-workspace.md): register all active crates in one root Cargo workspace and make the desktop binary the default `cargo run` target.
 
 ## Historical decisions
 

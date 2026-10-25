@@ -1,11 +1,9 @@
 [package]
 name = "property-simulation-data-access-sqlite"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
-rust-version = "1.85"
-
-[workspace]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 property-simulation-data-access = { path = ".." }
@@ -17,5 +15,5 @@ property-simulation-stop-condition = { path = "../../core/simulation/stop-condit
 rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
 sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true

@@ -14,13 +14,13 @@ Core is the active implementation and lives under `core/`. Keeping it in a neste
 - Define the active workspace in the repository-root `Cargo.toml` and list Core crates under `core/` as its members.
 - Remove the nested `core/Cargo.toml` and `core/Cargo.lock`; the root manifest and lockfile own active Core workspace configuration.
 - Keep frozen legacy crates under `crates/` and explicitly exclude them from the root workspace.
-- Keep future Application and Presentation workspaces separate, as described in ADR-40.
+- Application, Data Access, and Presentation crates have since joined the root workspace; ADR-68 supersedes the earlier workspace-separation decision for Cargo membership while preserving the dependency boundaries.
 
 ## Alternatives considered
 
 - Keep a nested Core workspace: rejected because Cargo tools launched from the repository root may not discover the active crates.
 - Include the frozen legacy crates in the root workspace: rejected because they are no longer active and should not participate in normal workspace checks.
-- Put future Application and Presentation crates in this workspace: rejected because those layers have separate ownership and dependency boundaries.
+- Put every crate into one Cargo workspace: was rejected at the time because the layers had separate ownership; ADR-68 later established that Cargo workspace membership can be unified without changing those dependency boundaries.
 
 ## Consequences
 

@@ -67,7 +67,7 @@ flowchart TD
     App -.-> Reporting
 ```
 
-根目录 `Cargo.toml` 是活动 Core crates 的 workspace 根；成员按职责放在 `core/foundation/`、`core/accounting/` 和 `core/simulation/` 目录中，这些目录只是组织方式，不是嵌套 workspace。冻结的旧 crates 保留在 `crates/` 并从 workspace 排除。使用 `cargo check --workspace` 检查活动 Core。实线表示已声明的 Cargo crate 依赖：`slice → account/domain-calculations/journal-entry/month/money/slice-catalogue`、`slice-catalogue → account/journal-entry/month/money`、`domain-calculations → money`、`stop-condition → month`、`journal-entry → account/money/month`、`ledger → account/journal-entry/money/month` 和 `reporting → account/journal-entry/ledger/money/month`。虚线表示目标但尚未接入的类型关系。Slice 参数和每期输入由 catalogue 定义；模拟级配置与月度结果聚合由 Application 负责。
+根目录 `Cargo.toml` 是活动 Core、Application、Data Access 和 GPUI Presentation crates 的统一 workspace 根；成员按职责放在 `core/`、`application/`、`data-access/` 和 `presentation/` 目录中，这些目录只是组织方式，不是嵌套 workspace。workspace 默认成员是 `presentation/gpui/desktop`，所以可在仓库根目录用 `cargo run` 启动桌面程序；`cargo check --workspace` 检查所有活动 crate。冻结的旧 crates 保留在 `crates/` 并从 workspace 排除。实线表示已声明的 Cargo crate 依赖：`slice → account/domain-calculations/journal-entry/month/money/slice-catalogue`、`slice-catalogue → account/journal-entry/month/money`、`domain-calculations → money`、`stop-condition → month`、`journal-entry → account/money/month`、`ledger → account/journal-entry/money/month` 和 `reporting → account/journal-entry/ledger/money/month`。虚线表示目标但尚未接入的类型关系。Slice 参数和每期输入由 catalogue 定义；模拟级配置与月度结果聚合由 Application 负责。
 
 目标流程是由 Application 取得系统随机 root 并作为独立模拟状态持有，Data Access 单独持久化；Core 不访问系统熵。Random engine 根据调用方传入的 root 和语义身份派生显式随机输入。账务流程为 Slice 返回已验证的 `JournalEntry`、Ledger 校验其账户引用等账簿约束并追加、reporting 从 journal 派生结果。实线与虚线区分已实现依赖和目标关系，避免把计划中的 crate 依赖画成现状。
 

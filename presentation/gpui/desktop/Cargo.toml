@@ -1,0 +1,22 @@
+[package]
+name = "property-simulation-desktop"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+property-simulation-application = { path = "../../../application" }
+property-simulation-account = { path = "../../../core/accounting/account" }
+property-simulation-data-access-sqlite = { path = "../../../data-access/sqlite" }
+property-simulation-gpui-ui = { path = "../ui" }
+property-simulation-money = { path = "../../../core/foundation/money" }
+property-simulation-slice-catalogue = { path = "../../../core/simulation/slice-catalogue" }
+property-simulation-stop-condition = { path = "../../../core/simulation/stop-condition" }
+rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true
