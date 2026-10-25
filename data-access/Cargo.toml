@@ -1,0 +1,19 @@
+[package]
+name = "property-simulation-data-access"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace]
+
+[dependencies]
+property-simulation-account = { path = "../core/accounting/account" }
+property-simulation-journal-entry = { path = "../core/accounting/journal-entry" }
+property-simulation-month = { path = "../core/foundation/month" }
+property-simulation-money = { path = "../core/foundation/money" }
+property-simulation-random-engine = { path = "../core/simulation/random-engine" }
+property-simulation-slice-catalogue = { path = "../core/simulation/slice-catalogue" }
+property-simulation-stop-condition = { path = "../core/simulation/stop-condition" }
+[lints.rust]
+unsafe_code = "forbid"

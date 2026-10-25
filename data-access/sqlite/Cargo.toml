@@ -1,0 +1,21 @@
+[package]
+name = "property-simulation-data-access-sqlite"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace]
+
+[dependencies]
+property-simulation-data-access = { path = ".." }
+property-simulation-account = { path = "../../core/accounting/account" }
+property-simulation-money = { path = "../../core/foundation/money" }
+property-simulation-month = { path = "../../core/foundation/month" }
+property-simulation-slice-catalogue = { path = "../../core/simulation/slice-catalogue" }
+property-simulation-stop-condition = { path = "../../core/simulation/stop-condition" }
+rust_decimal = { version = "1.43", default-features = false, features = ["std"] }
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+
+[lints.rust]
+unsafe_code = "forbid"
