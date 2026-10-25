@@ -20,6 +20,6 @@ Use the dependency direction `Presentation → Application → Data Access` and 
 
 ## Consequences
 
-Application loads the persisted values needed for each use case, performs the work in memory for that call, and persists accepted input changes or completed monthly output. It does not require resident simulation state. The application version is the only software version identifier; schema migration and cross-upgrade compatibility are outside scope. Failed-run recovery, replay guarantees, branches, multiple scenarios, and parallel scheduling are outside scope.
+Application loads the persisted values needed for each use case, performs the work in memory for that call, and persists accepted input changes or completed monthly output. It does not require resident simulation state. The application does not persist a software or schema version: the application is updated as a whole and simulation data is not required to survive an application-version change. Schema migration and cross-upgrade compatibility are outside scope. Failed-run recovery, replay guarantees, branches, multiple scenarios, and parallel scheduling are outside scope.
 
 The current use cases, persistence behavior, domain state semantics, and remaining design tasks are maintained in the [roadmap](../implementation-roadmap.md), [architecture](../architecture.md), and [domain model](../domain-model.md). This ADR records the boundary decision and its rationale; those documents own operational details.

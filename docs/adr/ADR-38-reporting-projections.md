@@ -7,16 +7,16 @@
 
 ## Context
 
-Reporting needs to derive views from account definitions, opening facts, and the journal. It should not own Ledger state or create a reverse dependency from Ledger to Reporting. The higher layer owns account selection and cash-flow category semantics; Reporting applies classifications supplied with the account set.
+Reporting needs to derive views from account definitions and the ordered journal. It should not own Ledger state or create a reverse dependency from Ledger to Reporting. The higher layer owns account selection and cash-flow category semantics; Reporting applies classifications supplied with the account set.
 
 ## Decision
 
-- Reporting functions accept read-only account catalogue, Ledger currency, opening-balance slice, and journal-entry slice as explicit input. Reporting does not accept or mutate a `Ledger` object and Ledger does not call Reporting.
+- Reporting functions accept a read-only account catalogue, Ledger currency, and journal-entry slice as explicit input. Reporting does not accept or mutate a `Ledger` object and Ledger does not call Reporting. Opening balances are derived from the Month 0 JournalEntry; period reports begin at Month 1.
 - The projections are trial balance and balance sheet through an inclusive Month, income/expense activity over an inclusive Month interval, categorized cash-flow movements, and an audit validation/count result.
 - The caller supplies cash account codes and a classification for each counterpart account: operating, investing, or financing plus a caller-defined subcategory. Reporting derives signed categorized movements from counterpart journal lines; debit counterparts are cash outflows and credit counterparts are cash inflows.
 - Each classified movement carries Month, counterpart account, category, subcategory, and zero-based journal position. This position is a locator, not a persistent transaction ID. Category and subcategory totals are projections of these movements and must reconcile to selected cash-account movements for each journal entry.
 - Reporting does not infer cash-flow classifications from account names, codes, or roles. It requires an explicit classification for every non-cash counterpart account in an entry that moves a selected cash account.
-- Reporting depends on account, journal-entry, ledger opening-balance, money, and month value types. No reverse dependency is introduced.
+- Reporting depends on account, journal-entry, money, and month value types. It does not depend on Ledger.
 
 ## Alternatives
 

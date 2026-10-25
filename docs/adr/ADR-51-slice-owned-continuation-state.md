@@ -1,6 +1,6 @@
 # ADR-51: Keep continuation state with Slice results
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-64](ADR-64-derive-slice-continuation-from-domain-facts.md)
 - **Date:** 2026-10-23
 - **Related:** [ADR-37](ADR-37-slice-journal-entry-contract.md), [ADR-48](ADR-48-monthly-snapshot-content-and-continuation.md), [Domain model](../domain-model.md)
 

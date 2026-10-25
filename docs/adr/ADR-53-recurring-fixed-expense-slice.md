@@ -1,6 +1,6 @@
 # ADR-53: Recurring fixed-expense Slice
 
-- **Status:** Accepted
+- **Status:** Accepted; Event amount payload superseded by [ADR-62](ADR-62-month-scoped-event-facts.md)
 - **Date:** 2026-10-23
 - **Related:** [ADR-41](ADR-41-application-available-slice-kinds.md), [ADR-49](ADR-49-slice-catalogue-owns-slice-contracts.md), [Domain model](../domain-model.md)
 
@@ -24,7 +24,7 @@ The initial catalogue listed PropertyTax and Utility as separate Slice kinds, bu
 ## Consequences
 
 - `SliceKind` and `SliceSetting` expose one `FixedExpense` configuration.
-- Its typed input includes the unchanged property value, cash account, expense account, and month; its event reports the amount paid.
+- Its typed input includes the unchanged property value, cash account, expense account, and month; its event records that payment occurred. Displayed amounts are derived from Ledger as decided in ADR-62.
 - The Slice does not require simulated usage data or random samples. A future variable-usage model would require a separate explicit decision.
 - ADR-41's separate `PropertyTax` and `Utility` kinds are superseded.
 

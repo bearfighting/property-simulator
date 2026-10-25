@@ -3,7 +3,7 @@
 - **Status:** Accepted direction; initial kind list amended by [ADR-53](ADR-53-recurring-fixed-expense-slice.md)
 - **Date:** 2026-10-23
 - **Related:** [Domain model](../domain-model.md), [ADR-33](ADR-33-core-boundaries-and-slice-cohesion.md)
-- **Verification:** `SliceKind` exhaustively names supported Slice behaviors; `SliceSetting` binds each kind to applicable per-Slice parameters and user enablement, while immutable loan terms are part of `InitialValues`.
+- **Verification:** `SliceKind` exhaustively names supported Slice behaviors; `SliceSetting` binds each kind to applicable per-Slice parameters and user enablement, including immutable Loan terms.
 
 ## Context
 
@@ -30,5 +30,5 @@ The Slice implementation may contain internal calculations and generated instanc
 - Adding a supported Slice with Context-supplied settings requires adding a `SliceKind` variant and updating exhaustive consumers.
 - Internal Slice modules can change without expanding the Application-facing catalogue.
 - Which kinds the user can directly enable, and which are invoked only as generated activity instances, remains a separate setting/lifecycle decision.
-- Concrete parameter fields and validation rules for most kinds remain open design work; the closed `SliceSetting` enum binds each kind to its per-Slice setting and `SliceSettings` derives map keys from the enum variant. Loan terms are immutable opening settings.
+- Concrete parameter fields and validation rules for most kinds remain open design work; the closed `SliceSetting` enum binds each kind to its per-Slice setting and `SliceSettings` derives map keys from the enum variant. Loan terms are immutable after initialization and belong to the Loan setting; see ADR-57.
 - If actual Slice dependencies require ordering or grouping, a later decision must define that behavior without assuming arbitrary order for independent Slices.

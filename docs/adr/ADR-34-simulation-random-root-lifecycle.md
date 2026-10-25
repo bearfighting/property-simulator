@@ -1,9 +1,9 @@
 # ADR-34: Simulation random root lifecycle
 
-- **Status:** Accepted
+- **Status:** Superseded for root ownership by [ADR-59](ADR-59-application-owned-random-root.md)
 - **Date:** 2026-10-22
 - **Related:** [Domain model](../domain-model.md), [Architecture](../architecture.md), [ADR-33](ADR-33-core-boundaries-and-slice-cohesion.md)
-- **Verification:** Confirm Core calculation interfaces consume explicit random input and do not access system entropy; confirm Context initialization stores the generated root.
+- **Verification:** Confirm Core calculation interfaces consume explicit random input and do not access system entropy. The original Context storage decision is superseded by ADR-59.
 
 ## Context
 

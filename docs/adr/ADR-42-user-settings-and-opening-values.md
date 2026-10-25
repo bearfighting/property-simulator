@@ -3,7 +3,7 @@
 - **Status:** Accepted direction; remaining Slice parameter fields are open
 - **Date:** 2026-10-23
 - **Related:** [Domain model](../domain-model.md), [ADR-39](ADR-39-context-settings-and-month-zero-start.md), [ADR-41](ADR-41-application-available-slice-kinds.md)
-- **Verification:** opening equity is derived as property value less loan balance; `AfterMonths(1)` allows Month 0 and prevents Month 1 from starting.
+- **Verification:** opening equity is derived as property value less loan balance; loan terms remain immutable in the Loan setting; `AfterMonths(1)` allows Month 1 and prevents Month 2 from starting.
 
 ## Context
 
@@ -13,9 +13,9 @@ Context needs to retain both user-provided simulation settings and a system-prov
 
 - Keep `root_key` as a separate Context field. Application obtains it from the system at initialization; it is not user-editable and settings updates preserve it.
 - Structure `UserSettings` with `InitialValues`, `Vec<StopCondition>`, and `SliceSettings`.
-- `InitialValues` contains the simulation currency, property value, opening loan balance, and fixed loan terms (`annual_interest_rate` and non-zero remaining term). Initial cash is zero and has no input field. Opening equity is derived as property value minus loan balance.
+- `InitialValues` contains the simulation currency, property value, and opening loan balance. Initial cash is zero and has no input field. Opening equity is derived as property value minus loan balance. Fixed loan terms belong to the Loan `SliceSetting`, not to opening facts; see ADR-57.
 - Initial values are immutable after simulation initialization. A latest settings update may change stop conditions and Slice settings but must preserve initial values.
-- Stop conditions are typed enum values. Any satisfied condition stops the simulation. Check them before starting a month using the most recently completed Snapshot; Month 0 is calculated before a completed-Snapshot check can stop the next month. A manual stop remains a command, not a stop condition.
+- Stop conditions are typed enum values. Any satisfied condition prevents the next month from starting. Check them at the month boundary using the latest completed state; Month 0 is the initialization boundary, so `AfterMonths(1)` permits Month 1 and prevents Month 2. Manual stop is represented by the `UserStop` condition, applied before the next month starts. This amends the earlier command distinction; see ADR-56.
 - Slice settings include per-kind parameters and user-controlled enablement where applicable. `RepairCost` has settings but no independent enable flag; generated instances follow their own lifecycle.
 
 ## Alternatives considered
@@ -27,7 +27,7 @@ Context needs to retain both user-provided simulation settings and a system-prov
 
 ## Consequences
 
-- Application initialization converts `InitialValues` into the opening Ledger facts and derived equity.
+- Application initialization converts `InitialValues` into the Month 0 JournalEntry and derived equity.
 - `Context::with_latest_settings` rejects settings that alter `InitialValues` and preserves the original root key.
 - Stop-condition evaluation belongs to Application's month-boundary flow; this ADR defines condition values and timing, not the evaluator API.
 - Concrete parameter fields for the remaining Slice kinds and full settings validation remain open.

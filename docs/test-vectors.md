@@ -7,10 +7,10 @@ These values specify domain behavior and remain usable by future tests. They are
 | ID | 输入/过程 | 必须结果 |
 |---|---|---|
 | T-01 月份归属 | 月初冻结本月输入；Slice 在本月判定并输出事件与账务提案；月末统一结算 | 事件、效果、交易和现金流均归属当前 `Month`；月末结果成为下一月的显式期初状态；不在月末重跑普通 Slice。 |
-| T-02 维修费用延迟 | 维修发生 Slice 在 Month 0 输出 RepairOccurred，RepairCost 延迟参数 N=2 | Application 据事件创建待结算实例；Month 0 快照不含该费用的交易或现金流；发生 Slice 在 Month 1、Month 2 仍正常判断；费用在 Month 2 生效结算。现金流不要求追溯到 Slice 实例或发生事件。若模拟在 Month 1 停止，不伪造 Month 2 的 Ledger 记录。 |
-| T-03 维修间隔 | 模拟从 Month 0 开始，且没有已知维修费用事实 | Month 0 的间隔年龄为 0，Month 1 为 1；如 Month 1 发生维修，发生月不重置间隔，之后仍从最近一次已结算维修费用月份（此时仍为起始月）累计。若该 RepairCost 于 Month 3 结算，因当月输入已在月初冻结，Month 3 的发生判断仍使用月初 snapshot 中的旧基准；结算后的 snapshot 将 Month 3 记为新基准，Month 4 的间隔年龄为 1。结算月仍只由费用实例自身延迟参数和来源事件月份决定。 |
+| T-02 维修费用延迟 | 维修发生 Slice 在首个计算月 Month 1 输出 RepairOccurred，RepairCost 延迟参数 N=2 | Application 据事件创建待结算实例；Month 1 月度记录不含该费用的交易或现金流；发生 Slice 在 Month 2、Month 3 仍正常判断；费用在 Month 3 生效结算。现金流不要求追溯到 Slice 实例或发生事件。若模拟在 Month 2 停止，不伪造 Month 3 的 Ledger 记录。 |
+| T-03 维修间隔 | 模拟在 Month 0 初始化，且没有已知维修费用事实 | Month 1 的间隔年龄为 1，Month 2 为 2；如 Month 1 发生维修，发生月不重置间隔，之后仍从最近一次已结算维修费用月份（此时仍为 Month 0 起始边界）累计。若该 RepairCost 于 Month 3 结算，因当月输入已在月初冻结，Month 3 的发生判断仍使用月初已保存结果中的旧基准；月末将 Month 3 记为新基准，Month 4 的间隔年龄为 1。结算月仍只由费用实例自身延迟参数和来源事件月份决定。 |
 | T-03a 维修条件发生率 | 年龄 `a` 以完整月份计，单月率为 `(25 + floor(125 × a / (a + 60))) / 10,000` | 年龄 0、1、60、极大值的分子分别为 25、27、87、149；随年龄单调不减且始终低于 10,000。 |
-| T-03b 零额维修结算 | 有效月到期的 RepairCost 从含端点分布抽得 0 | 仍输出金额为零的 `RepairCostSettled` 事件和更新最近结算月的 Effect；不生成零金额 JournalEntry，实例仍完成且不得重复计算。 |
+| T-03b 零额维修结算 | 有效月到期的 RepairCost 从含端点分布抽得 0 | 仍输出 `RepairCostSettled` 事件；该事件月份成为维修间隔基准；不生成零金额 JournalEntry，实例仍完成且不得重复计算。 |
 | T-05 普通现金费用 | 本月发生现金费用 800，现金账户为资产，费用账户为费用 | 费用 800 Dr、现金 800 Cr；交易平衡，经营现金流 −800；不产生资产/负债资本化或期末结转交易。 |
 
 ## Ledger
@@ -19,7 +19,7 @@ Normal balances: assets/expenses debit; liabilities/equity/income credit. Amount
 
 | ID | Input/postings | Required result |
 |---|---|---|
-| L-01 Opening facts | Property 300,000 Dr; cash 20,000 Dr; mortgage 200,000 Cr; opening equity 120,000 Cr | Opening balances balance at 320,000; no period transaction or cash flow is created. |
+| L-01 Opening facts | Property 300,000 Dr; cash 20,000 Dr; mortgage 200,000 Cr; opening equity 120,000 Cr | One balanced JournalEntry at Month 0 establishes the starting Ledger; Month 0 is initialization, not a simulated month, and creates no period cash flow. |
 | L-02 Mortgage payment | Mortgage 1,000 Dr; interest expense 500 Dr; cash 1,500 Cr | Balanced; principal reduces liability by 1,000. |
 | L-03 Repair | Repairs expense 800 Dr; cash 800 Cr | Balanced; operating cash flow −800. |
 | L-04 Rent | Cash 2,000 Dr; rental income 2,000 Cr | Balanced; operating cash flow +2,000. |
@@ -29,7 +29,7 @@ Normal balances: assets/expenses debit; liabilities/equity/income credit. Amount
 | L-08 Negative cash position | Opening cash 10; month 1 repair 15; month 2 rent 3 | Signed closing cash −5 then −2; no implicit borrowing; cumulative operating flow/net income −12. |
 | L-09 Detail projection | Rent +100 operating, repair −30 operating, +5/−5 investing in one transaction, financing +10 | Return transaction/category signed amounts with transaction IDs and optional source; include both range endpoints, exclude opening cash, and reconcile to category totals. |
 
-An unbalanced opening set or transaction, duplicate/unknown account, mixed currency, invalid account role, negative posting amount or checked arithmetic overflow is rejected. Negative net worth is valid when opening facts balance.
+An unbalanced Opening or monthly JournalEntry, unknown account, mixed currency, invalid account role, negative posting amount or checked arithmetic overflow is rejected. Negative net worth is valid when the Opening JournalEntry balances.
 
 ## Fixed-rate amortizing mortgage
 

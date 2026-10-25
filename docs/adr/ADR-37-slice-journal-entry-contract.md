@@ -1,6 +1,6 @@
 # ADR-37: Slice journal-entry contract
 
-- **Status:** Accepted
+- **Status:** Accepted; opening-balance decision superseded in part by [ADR-55](ADR-55-ledger-journal-as-source-of-balances.md)
 - **Date:** 2026-10-23
 - **Related:** [Domain model](../domain-model.md), [Architecture](../architecture.md), [ADR-33](ADR-33-core-boundaries-and-slice-cohesion.md), [ADR-35](ADR-35-ordinal-month-periods.md), [ADR-36](ADR-36-ledger-capability-boundaries.md)
 - **Verification examples:** A balanced entry for the current Month can be constructed; a zero, negative, or unbalanced entry cannot; Ledger receives the completed entry without depending on Slice-specific data.

@@ -20,7 +20,7 @@ Each period creates new Slice instances from current inputs and prior completed 
 ## Alternatives considered
 
 - Store only Month and events: rejected because Slice results, accounting changes, and non-Ledger continuation state would be lost.
-- Store the complete Ledger in every Snapshot: rejected because balances are derived from opening facts and committed journal entries.
+- Store the complete Ledger in every Snapshot: rejected because balances are derived from the Opening JournalEntry and committed monthly journal entries.
 - Derive Slice state from Ledger: rejected when that state is not represented by accounting balances; the relevant Slice result carries its typed state change.
 
 ## Consequences

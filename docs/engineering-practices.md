@@ -4,7 +4,7 @@
 
 - Core（domain、accounting、models、Slices）只实现领域规则，接收显式值并返回结果；不依赖 IO、存储或 presentation。
 - Core 的 Slice 独立计算并返回类型化结果及 JournalEntry；Core 不提供统一跨 Slice 业务聚合器。
-- Application 负责选择、实例化和协调调用 Slice，汇总当月结果并将分录追加到候选 Ledger；完整月度成功后才接受候选账簿。它也负责 Context、停止条件、跨月流程和数据读写协调。
+- Application 负责选择、实例化和协调调用 Slice，按 Month 收集当月结果并将分录追加到候选 Ledger；完整月度成功后才接受候选账簿。它也负责模拟配置、停止条件、跨月流程和数据读写协调；Core 不提供 Context 或 Snapshot 聚合。
 - 当前不实现 Slice 并行调度；Slice 契约不得要求彼此依赖固定执行顺序。
 - Data Access 只由 Application 调用。SQLite 及存储编码局限在适配器内；Application 依赖窄接口，不依赖具体 SQLite 实现。
 - CLI/GUI 只解析用户格式、展示结果并调用 Application；不得直接调用 Data Access 或单月计算，也不得复制领域校验。
@@ -16,7 +16,7 @@
 - 可由用户修正的结构错误在计算前校验，并尽量一次报告所有可发现问题。
 - 计算溢出、内部不变量破坏和基础设施故障均明确失败；不得转成经济结果或部分成功月度结果。
 - 单月计算失败不修改调用方 Ledger。应用/存储失败停止本次模拟并报告系统错误；不实现补偿或恢复流程。
-- 日志、事件、Effects、Ledger 交易和现金流投影保持职责分离。现金流从 Ledger 推导，按注入的科目分类和分录位置保留明细。
+- 日志、事件、Ledger 分录和现金流投影保持职责分离。现金流从 Ledger 推导，按注入的科目分类和分录位置保留明细。
 
 ## 测试
 
