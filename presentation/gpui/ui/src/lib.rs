@@ -7,7 +7,7 @@
 use std::{future::Future, pin::Pin, rc::Rc};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _,
+    ActiveTheme as _, Disableable as _, TitleBar,
     button::{Button, ButtonVariants as _},
     form::{Field, Form},
     input::{Input, InputState},
@@ -54,7 +54,7 @@ pub fn run_initialization_ui(handler: InitializationHandler) {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1120.0), px(860.0)), cx)),
             window_min_size: Some(size(px(820.0), px(700.0))),
-            ..WindowOptions::default()
+            ..TitleBar::window_options()
         };
         open_window(options, cx, {
             let handler = handler.clone();
@@ -202,19 +202,14 @@ impl Render for InitializationView {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(
+            .child(TitleBar::new().child(
                 div()
                     .w_full()
                     .flex()
                     .items_center()
                     .justify_between()
                     .gap_4()
-                    .px_8()
-                    .py_4()
-                    .flex_shrink_0()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().popover)
+                    .px_4()
                     .child(
                         div()
                             .flex()
@@ -234,7 +229,7 @@ impl Render for InitializationView {
                             .text_color(cx.theme().muted_foreground)
                             .child(if self.initialized { "Month 0 ready" } else { "New simulation" }),
                     ),
-            )
+            ))
             .child(
                 div()
                     .flex()
