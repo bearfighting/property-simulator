@@ -40,5 +40,9 @@ Project specification index. Use the following current documents as the source o
 - [Derive Slice continuation from domain facts](docs/adr/ADR-64-derive-slice-continuation-from-domain-facts.md): omit generic Effect records while current continuation inputs are derivable from Month, Events, configuration, and Ledger.
 - [Persist pending repair costs](docs/adr/ADR-65-persist-pending-repair-cost-instances.md): persist generated repair cost instances and prevent retroactive edits to settings used by completed months.
 - [Application and Data Access static-dispatch boundary](docs/adr/ADR-66-application-data-access-static-dispatch.md): define storage-neutral semantic persistence traits and inject SQLite through generic static dispatch.
+- [GPUI composition root and UI boundary](docs/adr/ADR-67-gpui-composition-root-and-ui-boundary.md): keep GPUI views dependent on plain form contracts and let the desktop entrypoint coordinate Application and persistence.
+- [Unified root Cargo workspace](docs/adr/ADR-68-unified-root-cargo-workspace.md): register active crates in one workspace and make the desktop binary the default root command.
+- [GPUI page shell and reusable components](docs/adr/ADR-69-gpui-page-shell-and-reusable-components.md): organize page navigation and UI composition for initialization, monthly simulation, and summary views.
+- [Immutable simulation configuration](docs/adr/ADR-70-immutable-simulation-configuration.md): configuration is fixed for a simulation's lifetime; use a separate simulation for different assumptions.
 
 Code identifiers must not contain implementation-stage names or numbers. The architecture document records the current boundary direction and open interface questions. The roadmap tracks Application/Data Access work; Core may evolve incrementally as concrete needs arise. Historical decisions are retained only as decision history.

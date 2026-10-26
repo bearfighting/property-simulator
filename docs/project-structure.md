@@ -109,10 +109,10 @@ flowchart TD
     Initial --> First[首个计算期间 Month 1]
     Initial --> Root[Application 获取随机 root<br/>独立保存模拟状态]
     Root --> SaveInitial[保存初始数据]
-    SaveInitial --> MonthStart[读取模拟配置、月度结果与 Ledger<br/>确定当前 Month 并应用已接受的设置变更]
+    SaveInitial --> MonthStart[读取固定模拟配置、月度结果与 Ledger<br/>确定当前 Month]
     MonthStart --> StopCondition{任一停止条件满足？}
     StopCondition -- 是 --> Summary[期末总结]
-    StopCondition -- 否 --> Create[Application 按用户设置<br/>用明确输入构造所需 Slice]
+    StopCondition -- 否 --> Create[Application 按固定配置<br/>用明确输入构造所需 Slice]
     Create --> Random[根据 root 与语义身份<br/>准备显式随机输入<br/>具体注入边界待定]
     Random --> Evaluate[Slice 实例各自计算<br/>返回事件与 JournalEntry]
     Evaluate --> Settle[Ledger 校验账簿约束<br/>Application 协调 JournalEntry append]

@@ -43,6 +43,8 @@ Use the next unused number; do not reuse retired numbers. An ADR records context
 - [ADR-66](ADR-66-application-data-access-static-dispatch.md): define semantic Data Access traits separately from SQLite and inject adapters through generic static dispatch.
 - [ADR-67](ADR-67-gpui-composition-root-and-ui-boundary.md): keep GPUI views dependent on plain form contracts and let the desktop entrypoint initialize persistence and coordinate Application.
 - [ADR-68](ADR-68-unified-root-cargo-workspace.md): register all active crates in one root Cargo workspace and make the desktop binary the default `cargo run` target.
+- [ADR-69](ADR-69-gpui-page-shell-and-reusable-components.md): organize GPUI around a persistent application shell, typed page navigation, and page-neutral visual components.
+- [ADR-70](ADR-70-immutable-simulation-configuration.md): keep a simulation's configuration fixed for its lifetime; use a separate simulation for different assumptions.
 
 ## Historical decisions
 
