@@ -1,10 +1,14 @@
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _,
+    button::{Button, ButtonVariants as _},
+};
 use gpui_kit::{Context, IntoElement, ParentElement as _, Render, Styled as _, Window, div, px};
 
 use crate::{components::page_heading, pages::initialization::state::InitializationPage};
 
 use super::sections::{render_actions, render_activities, render_general_settings};
+use super::state::SubmissionState;
 
 impl Render for InitializationPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -27,11 +31,44 @@ impl Render for InitializationPage {
                     .flex()
                     .flex_col()
                     .gap_6()
-                    .child(page_heading(
-                        "Start a simulation",
-                        "Set up the opening position and the assumptions for each month.",
-                        cx.theme().muted_foreground,
-                    ))
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_6()
+                            .child(page_heading(
+                                "Start a simulation",
+                                "Set up the opening position and the assumptions for each month.",
+                                cx.theme().muted_foreground,
+                            ))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_end()
+                                    .gap_2()
+                                    .child(div().text_sm().child(
+                                        if self.submission == SubmissionState::Initialized {
+                                            "Setup is ready"
+                                        } else {
+                                            "Setup is not ready"
+                                        },
+                                    ))
+                                    .child(
+                                        Button::new("go-to-simulation")
+                                            .primary()
+                                            .label("Go to Simulation")
+                                            .disabled(
+                                                self.submission != SubmissionState::Initialized,
+                                            )
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.open_simulation(cx)
+                                            })),
+                                    ),
+                            ),
+                    )
                     .child(render_general_settings(self, cx))
                     .child(crate::components::section_heading(
                         "Simulation activities",

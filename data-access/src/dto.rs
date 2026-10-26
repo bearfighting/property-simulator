@@ -19,4 +19,4 @@ pub use slice_settings::{
     FixedExpenseSettingsDto, LoanSettingsDto, RentalSettingsDto, RepairCostSettingsDto,
     RepairOccurrenceSettingsDto,
 };
-pub use stop_conditions::StopConditionSetDto;
+pub use stop_conditions::StopConditionsDto;

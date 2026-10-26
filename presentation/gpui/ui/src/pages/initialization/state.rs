@@ -1,10 +1,25 @@
 use gpui_kit::component::input::InputState;
 use gpui_kit::{AppContext as _, Context, Entity, Window};
+use property_simulation_lifecycle::SimulationState;
+use std::rc::Rc;
 
 use crate::{InitializationFormData, InitializationHandler};
 
+pub(super) type StateChangedHandler = Rc<dyn Fn(SimulationState, &mut Context<InitializationPage>)>;
+pub(super) type ContinueHandler = Rc<dyn Fn(&mut Context<InitializationPage>)>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SubmissionState {
+    Editing,
+    Submitting,
+    Initialized,
+    Failed(String),
+}
+
 pub(crate) struct InitializationPage {
     handler: InitializationHandler,
+    on_state_changed: StateChangedHandler,
+    on_continue: ContinueHandler,
     pub(super) name: Entity<InputState>,
     pub(super) property_value: Entity<InputState>,
     pub(super) cash_balance: Entity<InputState>,
@@ -21,15 +36,14 @@ pub(crate) struct InitializationPage {
     pub(super) repairs_enabled: bool,
     pub(super) repair_maximum_amount: Entity<InputState>,
     pub(super) repair_delay_months: Entity<InputState>,
-    pub(super) status: Option<String>,
-    pub(super) status_is_error: bool,
-    pub(super) submitting: bool,
-    pub(super) initialized: bool,
+    pub(super) submission: SubmissionState,
 }
 
 impl InitializationPage {
     pub(crate) fn new(
         handler: InitializationHandler,
+        on_state_changed: StateChangedHandler,
+        on_continue: ContinueHandler,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -47,6 +61,8 @@ impl InitializationPage {
 
         Self {
             handler,
+            on_state_changed,
+            on_continue,
             name,
             property_value,
             cash_balance,
@@ -63,10 +79,7 @@ impl InitializationPage {
             repairs_enabled: false,
             repair_maximum_amount,
             repair_delay_months,
-            status: None,
-            status_is_error: false,
-            submitting: false,
-            initialized: false,
+            submission: SubmissionState::Editing,
         }
     }
 
@@ -91,37 +104,44 @@ impl InitializationPage {
         }
     }
 
+    pub(super) const fn settings_locked(&self) -> bool {
+        matches!(
+            self.submission,
+            SubmissionState::Submitting | SubmissionState::Initialized
+        )
+    }
+
+    pub(super) fn open_simulation(&self, cx: &mut Context<Self>) {
+        (self.on_continue)(cx);
+    }
+
     pub(super) fn submit(&mut self, cx: &mut Context<Self>) {
-        if self.submitting {
+        if self.settings_locked() {
             return;
         }
 
         let form = self.form_data(cx);
         let handler = self.handler.clone();
-        self.submitting = true;
-        self.status = Some("Creating simulation…".to_owned());
-        self.status_is_error = false;
+        let on_state_changed = self.on_state_changed.clone();
+        self.submission = SubmissionState::Submitting;
         cx.notify();
 
         cx.spawn(async move |view, cx| {
             let result = handler(form).await;
+            let completed_state = result.as_ref().ok().copied();
             view.update(cx, |this, cx| {
-                this.submitting = false;
-                let (message, is_error) = match result {
-                    Ok(()) => {
-                        this.initialized = true;
-                        (
-                            "Simulation initialized. Month 0 is ready.".to_owned(),
-                            false,
-                        )
-                    }
-                    Err(error) => (error, true),
+                let state = match result {
+                    Ok(_) => SubmissionState::Initialized,
+                    Err(error) => SubmissionState::Failed(error),
                 };
-                this.status = Some(message);
-                this.status_is_error = is_error;
+                this.submission = state;
                 cx.notify();
             })
             .ok();
+            if let Some(state) = completed_state {
+                view.update(cx, |_this, cx| (on_state_changed)(state, cx))
+                    .ok();
+            }
         })
         .detach();
     }

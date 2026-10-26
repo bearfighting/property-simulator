@@ -1,6 +1,6 @@
 use crate::{DataAccessError, dto::*};
 
-/// Read and write the versioned settings facts represented by the schema.
+/// Read and write each simulation's one-time settings facts.
 #[allow(async_fn_in_trait)]
 pub trait SettingsStore {
     async fn save_loan_settings(&self, settings: &LoanSettingsDto) -> Result<(), DataAccessError>;
@@ -8,7 +8,7 @@ pub trait SettingsStore {
     async fn load_loan_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<LoanSettingsDto>, DataAccessError>;
+    ) -> Result<Option<LoanSettingsDto>, DataAccessError>;
 
     async fn save_fixed_expense_settings(
         &self,
@@ -18,7 +18,7 @@ pub trait SettingsStore {
     async fn load_fixed_expense_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<FixedExpenseSettingsDto>, DataAccessError>;
+    ) -> Result<Option<FixedExpenseSettingsDto>, DataAccessError>;
 
     async fn save_rental_settings(
         &self,
@@ -28,7 +28,7 @@ pub trait SettingsStore {
     async fn load_rental_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<RentalSettingsDto>, DataAccessError>;
+    ) -> Result<Option<RentalSettingsDto>, DataAccessError>;
 
     async fn save_repair_occurrence_settings(
         &self,
@@ -38,7 +38,7 @@ pub trait SettingsStore {
     async fn load_repair_occurrence_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<RepairOccurrenceSettingsDto>, DataAccessError>;
+    ) -> Result<Option<RepairOccurrenceSettingsDto>, DataAccessError>;
 
     async fn save_repair_cost_settings(
         &self,
@@ -48,15 +48,15 @@ pub trait SettingsStore {
     async fn load_repair_cost_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<RepairCostSettingsDto>, DataAccessError>;
+    ) -> Result<Option<RepairCostSettingsDto>, DataAccessError>;
 
-    async fn save_stop_condition_set(
+    async fn save_stop_conditions(
         &self,
-        settings: &StopConditionSetDto,
+        settings: &StopConditionsDto,
     ) -> Result<(), DataAccessError>;
 
-    async fn load_stop_condition_sets(
+    async fn load_stop_conditions(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<StopConditionSetDto>, DataAccessError>;
+    ) -> Result<StopConditionsDto, DataAccessError>;
 }

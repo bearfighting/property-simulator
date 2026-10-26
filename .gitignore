@@ -1,4 +1,5 @@
 /target/
 **/target/
 property-simulation.sqlite3
+property-simulation-config.sqlite3
 .VSCodeCounter

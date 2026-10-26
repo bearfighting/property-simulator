@@ -1,10 +1,8 @@
-use property_simulation_month::Month;
 use property_simulation_stop_condition::StopCondition;
 
-/// A complete, storage-neutral version of stop conditions, including an empty set.
+/// All automatic stop conditions configured for one simulation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StopConditionSetDto {
+pub struct StopConditionsDto {
     pub simulation_id: String,
-    pub effective_from_month: Month,
     pub conditions: Vec<StopCondition>,
 }

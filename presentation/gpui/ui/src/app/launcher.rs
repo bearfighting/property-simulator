@@ -2,11 +2,12 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::{
     AppContext as _, WindowBounds, WindowOptions, application, assets, init, open_window, px, size,
 };
+use property_simulation_lifecycle::SimulationState;
 
 use crate::{InitializationHandler, app::shell::AppShell};
 
 /// Open the application window with a host-provided initialization handler.
-pub fn run_initialization_ui(handler: InitializationHandler) {
+pub fn run_initialization_ui(handler: InitializationHandler, initial_state: SimulationState) {
     application().with_assets(assets::Assets).run(move |cx| {
         init(cx);
         let options = WindowOptions {
@@ -16,7 +17,9 @@ pub fn run_initialization_ui(handler: InitializationHandler) {
         };
         open_window(options, cx, {
             let handler = handler.clone();
-            move |window, cx| cx.new(|window_cx| AppShell::new(handler, window, window_cx))
+            move |window, cx| {
+                cx.new(|window_cx| AppShell::new(handler, initial_state, window, window_cx))
+            }
         })
         .expect("failed to open the simulation window");
     });

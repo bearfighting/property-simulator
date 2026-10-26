@@ -1,4 +1,4 @@
-//! Typed simulation stop conditions and their pure boundary evaluation.
+//! Typed automatic stop conditions and their pure boundary evaluation.
 
 use property_simulation_month::Month;
 use std::num::NonZeroU32;
@@ -11,9 +11,6 @@ pub enum StopCondition {
 
     /// Stop once all configured loan balances are paid off.
     AllLoansPaidOff,
-
-    /// Stop at the next month boundary by explicit user request.
-    UserStop,
 }
 
 /// Return whether any configured stop condition is satisfied at this boundary.
@@ -30,6 +27,5 @@ pub fn should_stop(
     conditions.iter().any(|condition| match condition {
         StopCondition::AfterMonths(months) => u32::from(completed_month.number()) >= months.get(),
         StopCondition::AllLoansPaidOff => all_loans_paid_off,
-        StopCondition::UserStop => true,
     })
 }

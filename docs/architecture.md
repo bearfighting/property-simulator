@@ -2,7 +2,7 @@
 
 ## 当前方向
 
-当前 Core crate 与主要模块职责已形成实现基线，供 Application 接线使用。后续按具体用例、领域规则和验证结果增量调整，不要求在 Application 开始前再进行一轮全面重构。已确认的依赖方向和职责如下：
+当前 Core crate 与主要模块职责已形成实现基线，供 Application 接线使用。独立的 `simulation-lifecycle` crate 定义不持久化的运行状态和可执行 work unit，由组合层持有并约束调用。后续按具体用例、领域规则和验证结果增量调整，不要求在 Application 开始前再进行一轮全面重构。已确认的依赖方向和职责如下：
 
 已确认的设计方向：
 
@@ -21,6 +21,9 @@
 ```mermaid
 flowchart TD
     UI[Presentation] --> App[Application]
+    UI --> Lifecycle[Simulation lifecycle state]
+    Host[Composition root] --> Lifecycle[Simulation lifecycle]
+    Lifecycle --> App
     App --> Port[Data Access contract: traits + DTOs]
     App --> Core[Core capabilities]
     Sqlite[SQLite adapter] --> Port
@@ -43,6 +46,7 @@ flowchart TD
 | Slice | 单项领域行为及其参数、样本、计算和输出；`SliceKind` 标识受支持行为 | Application 如何选择、创建、结束和调用 Slice；具体生命周期规则仍需明确 |
 | Random engine | 从调用方持有的 root 和显式语义身份派生随机输入 | root 生成与持久化归 Application/Data Access；派生算法及随机输入 trait 由 Core 提供 |
 | Application simulation state / monthly output | 保存模拟级配置与 root，并组织已完成月份的 Slice 结果 | 应用状态和持久化 DTO 的字段边界；Core 只定义单项计算契约 |
+| Simulation lifecycle | 内存运行阶段及对应 work unit；不依赖其他应用层或存储 | 由组合层选择 work unit 并推进状态；不负责拒绝调用，不支持恢复 |
 | Application | 用户用例、跨月流程、逐 Slice 调用协调、候选 Ledger 结算和数据读写协调 | 具体用例及窄的 Core 调用接口 |
 | Data Access contract | storage-neutral DTO 与异步持久化操作 | DTO、SQLite schema 和按模拟、设置、月度事实划分的 store trait 已实现；组合 `DataAccess` trait 供需要完整能力的调用方使用。月度事实支持全量读取和按指定 Month 读取事件/分录。未来若运行时需要跨线程派发，再决定是否增加 Future 的 `Send` 约束 |
 
@@ -50,8 +54,9 @@ flowchart TD
 
 - **Application** 是 Presentation、Data Access 和计算能力之间的协调点。它处理期初初始化、跨月推进、停止条件、配置更新、随机 root 生命周期和月度结果保存与查询。
 - **Data Access** 的 DTO、统一持久化 trait 和 SQLite adapter 已实现。SQLx 和 schema 细节不进入调用方或 Core；程序运行流程仍由 Data Access 之外负责。
-- **Presentation** 负责用户输入格式、默认值和结果展示，不直接调用 Data Access 或领域计算模块。
+- **Presentation** 负责用户输入格式、默认值和结果展示，不直接调用 Data Access 或领域计算模块。它可以读取组合层传入的生命周期状态来显示阶段提示，不推进状态。
 - **Core** 由基础值类型、单项领域行为、Accounting/Ledger 和随机输入能力组成。模拟级状态与月度结果的组织属于 Application。最终 crates 数量以职责与依赖验证结果为准。
+- **Simulation lifecycle** 与 Core、Application、Presentation 平级，不持有计算或存储事实；组合层使用当前状态选择对应 Application work unit，并在阶段结束后推进状态。
 
 不引入全局服务定位器、泛化插件目录或为未知行为预建的通用框架。重大边界决定记录在 ADR；旧 ADR 可以说明历史选择，不自动约束新结构。
 

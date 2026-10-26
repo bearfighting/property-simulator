@@ -2,14 +2,13 @@ use crate::{SqliteDataAccessError, mapping, store::SqliteDataAccess};
 use property_simulation_data_access::dto::{FixedExpenseSettingsDto, RentalSettingsDto};
 use property_simulation_slice_catalogue::FixedExpenseMethod;
 
-use super::common::{bind_money, optional_payload, validate_currency, validate_effective_month};
+use super::common::{bind_money, optional_payload, validate_currency};
 
 impl SqliteDataAccess {
     pub(crate) async fn save_fixed_expense_settings(
         &self,
         settings: &FixedExpenseSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
-        validate_effective_month(settings.effective_from_month)?;
         optional_payload(
             settings.enabled,
             settings.parameters.is_some(),
@@ -34,15 +33,10 @@ impl SqliteDataAccess {
         };
         sqlx::query(
             "INSERT INTO fixed_expense_settings \
-             (simulation_id, effective_from_month, enabled, method, monthly_amount_coefficient, monthly_amount_scale, annual_property_value_rate) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(simulation_id, effective_from_month) DO UPDATE SET \
-             enabled = excluded.enabled, method = excluded.method, \
-             monthly_amount_coefficient = excluded.monthly_amount_coefficient, \
-             monthly_amount_scale = excluded.monthly_amount_scale, \
-             annual_property_value_rate = excluded.annual_property_value_rate",
+             (simulation_id, enabled, method, monthly_amount_coefficient, monthly_amount_scale, annual_property_value_rate) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&settings.simulation_id)
-        .bind(i64::from(settings.effective_from_month.number()))
         .bind(settings.enabled.map(i64::from))
         .bind(method)
         .bind(coefficient)
@@ -56,24 +50,21 @@ impl SqliteDataAccess {
     pub(crate) async fn load_fixed_expense_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<FixedExpenseSettingsDto>, SqliteDataAccessError> {
+    ) -> Result<Option<FixedExpenseSettingsDto>, SqliteDataAccessError> {
         let currency = self.simulation_currency(simulation_id).await?;
-        let rows = sqlx::query(
-            "SELECT * FROM fixed_expense_settings WHERE simulation_id = ? ORDER BY effective_from_month",
-        )
-        .bind(simulation_id)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter()
+        let row = sqlx::query("SELECT * FROM fixed_expense_settings WHERE simulation_id = ?")
+            .bind(simulation_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref()
             .map(|row| mapping::fixed_expense_settings(row, currency))
-            .collect()
+            .transpose()
     }
 
     pub(crate) async fn save_rental_settings(
         &self,
         settings: &RentalSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
-        validate_effective_month(settings.effective_from_month)?;
         optional_payload(
             settings.enabled,
             settings.parameters.is_some(),
@@ -93,13 +84,10 @@ impl SqliteDataAccess {
                 });
         sqlx::query(
             "INSERT INTO rental_settings \
-             (simulation_id, effective_from_month, enabled, monthly_rent_coefficient, monthly_rent_scale) \
-             VALUES (?, ?, ?, ?, ?) ON CONFLICT(simulation_id, effective_from_month) DO UPDATE SET \
-             enabled = excluded.enabled, monthly_rent_coefficient = excluded.monthly_rent_coefficient, \
-             monthly_rent_scale = excluded.monthly_rent_scale",
+             (simulation_id, enabled, monthly_rent_coefficient, monthly_rent_scale) \
+             VALUES (?, ?, ?, ?)",
         )
         .bind(&settings.simulation_id)
-        .bind(i64::from(settings.effective_from_month.number()))
         .bind(settings.enabled.map(i64::from))
         .bind(coefficient)
         .bind(scale)
@@ -111,16 +99,14 @@ impl SqliteDataAccess {
     pub(crate) async fn load_rental_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<RentalSettingsDto>, SqliteDataAccessError> {
+    ) -> Result<Option<RentalSettingsDto>, SqliteDataAccessError> {
         let currency = self.simulation_currency(simulation_id).await?;
-        let rows = sqlx::query(
-            "SELECT * FROM rental_settings WHERE simulation_id = ? ORDER BY effective_from_month",
-        )
-        .bind(simulation_id)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter()
+        let row = sqlx::query("SELECT * FROM rental_settings WHERE simulation_id = ?")
+            .bind(simulation_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref()
             .map(|row| mapping::rental_settings(row, currency))
-            .collect()
+            .transpose()
     }
 }

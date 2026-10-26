@@ -3,7 +3,7 @@ use std::{num::NonZeroU32, str::FromStr};
 use property_simulation_data_access::dto::{
     FixedExpenseSettingsDto, LoanSettingsDto, MoneyDto, RentalSettingsDto, RepairCostInstanceDto,
     RepairCostSettingsDto, RepairOccurrenceSettingsDto, SimulationDto, SimulationMonthDto,
-    SimulationRootKeyDto, StopConditionSetDto,
+    SimulationRootKeyDto, StopConditionsDto,
 };
 use property_simulation_money::{Currency, Money};
 use property_simulation_month::Month;
@@ -147,7 +147,6 @@ pub(crate) fn loan_settings(row: &SqliteRow) -> Result<LoanSettingsDto, SqliteDa
     };
     Ok(LoanSettingsDto {
         simulation_id: row.try_get("simulation_id")?,
-        effective_from_month: month(row.try_get("effective_from_month")?)?,
         enabled: enabled(enabled_value)?,
         parameters,
     })
@@ -186,7 +185,6 @@ pub(crate) fn fixed_expense_settings(
     };
     Ok(FixedExpenseSettingsDto {
         simulation_id: row.try_get("simulation_id")?,
-        effective_from_month: month(row.try_get("effective_from_month")?)?,
         enabled: enabled(enabled_value)?,
         parameters,
     })
@@ -209,7 +207,6 @@ pub(crate) fn rental_settings(
     };
     Ok(RentalSettingsDto {
         simulation_id: row.try_get("simulation_id")?,
-        effective_from_month: month(row.try_get("effective_from_month")?)?,
         enabled: enabled(enabled_value)?,
         parameters,
     })
@@ -221,7 +218,6 @@ pub(crate) fn repair_occurrence_settings(
     let value: Option<i64> = row.try_get("enabled")?;
     Ok(RepairOccurrenceSettingsDto {
         simulation_id: row.try_get("simulation_id")?,
-        effective_from_month: month(row.try_get("effective_from_month")?)?,
         enabled: enabled(value)?,
     })
 }
@@ -247,16 +243,14 @@ pub(crate) fn repair_cost_settings(
     };
     Ok(RepairCostSettingsDto {
         simulation_id: row.try_get("simulation_id")?,
-        effective_from_month: month(row.try_get("effective_from_month")?)?,
         parameters,
     })
 }
 
-pub(crate) fn stop_condition_set(
+pub(crate) fn stop_conditions(
     simulation_id: String,
-    effective_from_month: i64,
     rows: &[SqliteRow],
-) -> Result<StopConditionSetDto, SqliteDataAccessError> {
+) -> Result<StopConditionsDto, SqliteDataAccessError> {
     let conditions = rows
         .iter()
         .map(|row| {
@@ -268,14 +262,12 @@ pub(crate) fn stop_condition_set(
                         .ok_or(SqliteDataAccessError::InvalidData("stop condition value"))?,
                 )),
                 ("all_loans_paid_off", None) => Ok(StopCondition::AllLoansPaidOff),
-                ("user_stop", None) => Ok(StopCondition::UserStop),
                 _ => Err(SqliteDataAccessError::InvalidData("stop condition")),
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StopConditionSetDto {
+    Ok(StopConditionsDto {
         simulation_id,
-        effective_from_month: month(effective_from_month)?,
         conditions,
     })
 }

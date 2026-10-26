@@ -21,8 +21,8 @@ make a simulation one complete run with a fixed configuration.
 - Monthly advancement does not accept configuration updates. A month uses the
   simulation's fixed settings; each completed month's actual inputs and results
   remain persisted for continuation and audit.
-- `UserStop` remains an independent user action at the month boundary; it is not
-  a configuration edit.
+- A user choice to end the run is handled by the in-memory lifecycle and is not
+  represented as a configured stop condition.
 - The first implementation does not need settings versioning, future effective
   months, or a configuration-change history. Whether and how to create another
   simulation is a separate product workflow.

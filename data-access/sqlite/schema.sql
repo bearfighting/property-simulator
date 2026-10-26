@@ -23,12 +23,10 @@ CREATE TABLE IF NOT EXISTS simulation_months (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS loan_settings (
-    simulation_id TEXT NOT NULL REFERENCES simulations(id),
-    effective_from_month INTEGER NOT NULL CHECK (effective_from_month >= 1),
+    simulation_id TEXT PRIMARY KEY NOT NULL REFERENCES simulations(id),
     enabled INTEGER,
     annual_interest_rate TEXT,
     remaining_term_months_at_start INTEGER,
-    PRIMARY KEY (simulation_id, effective_from_month),
     CHECK (
         (enabled IS NULL AND annual_interest_rate IS NULL
             AND remaining_term_months_at_start IS NULL)
@@ -41,14 +39,12 @@ CREATE TABLE IF NOT EXISTS loan_settings (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS fixed_expense_settings (
-    simulation_id TEXT NOT NULL REFERENCES simulations(id),
-    effective_from_month INTEGER NOT NULL CHECK (effective_from_month >= 1),
+    simulation_id TEXT PRIMARY KEY NOT NULL REFERENCES simulations(id),
     enabled INTEGER,
     method TEXT,
     monthly_amount_coefficient TEXT,
     monthly_amount_scale INTEGER,
     annual_property_value_rate TEXT,
-    PRIMARY KEY (simulation_id, effective_from_month),
     CHECK (
         (enabled IS NULL AND method IS NULL
             AND monthly_amount_coefficient IS NULL AND monthly_amount_scale IS NULL
@@ -71,12 +67,10 @@ CREATE TABLE IF NOT EXISTS fixed_expense_settings (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS rental_settings (
-    simulation_id TEXT NOT NULL REFERENCES simulations(id),
-    effective_from_month INTEGER NOT NULL CHECK (effective_from_month >= 1),
+    simulation_id TEXT PRIMARY KEY NOT NULL REFERENCES simulations(id),
     enabled INTEGER,
     monthly_rent_coefficient TEXT,
     monthly_rent_scale INTEGER,
-    PRIMARY KEY (simulation_id, effective_from_month),
     CHECK (
         (enabled IS NULL AND monthly_rent_coefficient IS NULL AND monthly_rent_scale IS NULL)
         OR (
@@ -88,19 +82,15 @@ CREATE TABLE IF NOT EXISTS rental_settings (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS repair_occurrence_settings (
-    simulation_id TEXT NOT NULL REFERENCES simulations(id),
-    effective_from_month INTEGER NOT NULL CHECK (effective_from_month >= 1),
-    enabled INTEGER CHECK (enabled IS NULL OR enabled IN (0, 1)),
-    PRIMARY KEY (simulation_id, effective_from_month)
+    simulation_id TEXT PRIMARY KEY NOT NULL REFERENCES simulations(id),
+    enabled INTEGER CHECK (enabled IS NULL OR enabled IN (0, 1))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS repair_cost_settings (
-    simulation_id TEXT NOT NULL REFERENCES simulations(id),
-    effective_from_month INTEGER NOT NULL CHECK (effective_from_month >= 1),
+    simulation_id TEXT PRIMARY KEY NOT NULL REFERENCES simulations(id),
     maximum_amount_coefficient TEXT,
     maximum_amount_scale INTEGER,
     delay_months INTEGER,
-    PRIMARY KEY (simulation_id, effective_from_month),
     CHECK (
         (maximum_amount_coefficient IS NULL
             AND maximum_amount_scale IS NULL AND delay_months IS NULL)
@@ -112,204 +102,19 @@ CREATE TABLE IF NOT EXISTS repair_cost_settings (
     )
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS stop_condition_sets (
-    simulation_id TEXT NOT NULL REFERENCES simulations(id),
-    effective_from_month INTEGER NOT NULL CHECK (effective_from_month >= 1),
-    PRIMARY KEY (simulation_id, effective_from_month)
-) STRICT;
-
 CREATE TABLE IF NOT EXISTS stop_conditions (
     id INTEGER PRIMARY KEY,
-    simulation_id TEXT NOT NULL,
-    effective_from_month INTEGER NOT NULL,
+    simulation_id TEXT NOT NULL REFERENCES simulations(id),
     condition TEXT NOT NULL CHECK (
-        condition IN ('after_months', 'all_loans_paid_off', 'user_stop')
+        condition IN ('after_months', 'all_loans_paid_off')
     ),
     value INTEGER,
-    FOREIGN KEY (simulation_id, effective_from_month)
-        REFERENCES stop_condition_sets(simulation_id, effective_from_month),
+    UNIQUE (simulation_id, condition),
     CHECK (
         (condition = 'after_months' AND value BETWEEN 1 AND 4294967295)
-        OR (condition IN ('all_loans_paid_off', 'user_stop') AND value IS NULL)
+        OR (condition = 'all_loans_paid_off' AND value IS NULL)
     )
 ) STRICT;
-
--- Once a month is completed, settings that affected it become immutable.
--- New settings versions remain insertable for future Months.
-CREATE TRIGGER IF NOT EXISTS loan_settings_no_retroactive_insert
-BEFORE INSERT ON loan_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = NEW.simulation_id
-      AND month >= 1 AND month >= NEW.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS loan_settings_no_retroactive_update
-BEFORE UPDATE ON loan_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS loan_settings_no_retroactive_delete
-BEFORE DELETE ON loan_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-
-CREATE TRIGGER IF NOT EXISTS fixed_expense_settings_no_retroactive_insert
-BEFORE INSERT ON fixed_expense_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = NEW.simulation_id
-      AND month >= 1 AND month >= NEW.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS fixed_expense_settings_no_retroactive_update
-BEFORE UPDATE ON fixed_expense_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS fixed_expense_settings_no_retroactive_delete
-BEFORE DELETE ON fixed_expense_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-
-CREATE TRIGGER IF NOT EXISTS rental_settings_no_retroactive_insert
-BEFORE INSERT ON rental_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = NEW.simulation_id
-      AND month >= 1 AND month >= NEW.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS rental_settings_no_retroactive_update
-BEFORE UPDATE ON rental_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS rental_settings_no_retroactive_delete
-BEFORE DELETE ON rental_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-
-CREATE TRIGGER IF NOT EXISTS repair_occurrence_settings_no_retroactive_insert
-BEFORE INSERT ON repair_occurrence_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = NEW.simulation_id
-      AND month >= 1 AND month >= NEW.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS repair_occurrence_settings_no_retroactive_update
-BEFORE UPDATE ON repair_occurrence_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS repair_occurrence_settings_no_retroactive_delete
-BEFORE DELETE ON repair_occurrence_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-
-CREATE TRIGGER IF NOT EXISTS repair_cost_settings_no_retroactive_insert
-BEFORE INSERT ON repair_cost_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = NEW.simulation_id
-      AND month >= 1 AND month >= NEW.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS repair_cost_settings_no_retroactive_update
-BEFORE UPDATE ON repair_cost_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS repair_cost_settings_no_retroactive_delete
-BEFORE DELETE ON repair_cost_settings
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-
-CREATE TRIGGER IF NOT EXISTS stop_condition_sets_no_retroactive_insert
-BEFORE INSERT ON stop_condition_sets
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = NEW.simulation_id
-      AND month >= 1 AND month >= NEW.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS stop_condition_sets_no_retroactive_update
-BEFORE UPDATE ON stop_condition_sets
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS stop_condition_sets_no_retroactive_delete
-BEFORE DELETE ON stop_condition_sets
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-
-CREATE TRIGGER IF NOT EXISTS stop_conditions_no_retroactive_insert
-BEFORE INSERT ON stop_conditions
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = NEW.simulation_id
-      AND month >= 1 AND month >= NEW.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS stop_conditions_no_retroactive_update
-BEFORE UPDATE ON stop_conditions
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
-CREATE TRIGGER IF NOT EXISTS stop_conditions_no_retroactive_delete
-BEFORE DELETE ON stop_conditions
-WHEN EXISTS (
-    SELECT 1 FROM simulation_months
-    WHERE simulation_id = OLD.simulation_id
-      AND month >= 1 AND month >= OLD.effective_from_month
-)
-BEGIN SELECT RAISE(ABORT, 'cannot change settings used by a completed month'); END;
 
 CREATE TABLE IF NOT EXISTS simulation_accounts (
     simulation_id TEXT NOT NULL REFERENCES simulations(id),

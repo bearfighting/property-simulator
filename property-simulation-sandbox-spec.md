@@ -44,5 +44,6 @@ Project specification index. Use the following current documents as the source o
 - [Unified root Cargo workspace](docs/adr/ADR-68-unified-root-cargo-workspace.md): register active crates in one workspace and make the desktop binary the default root command.
 - [GPUI page shell and reusable components](docs/adr/ADR-69-gpui-page-shell-and-reusable-components.md): organize page navigation and UI composition for initialization, monthly simulation, and summary views.
 - [Immutable simulation configuration](docs/adr/ADR-70-immutable-simulation-configuration.md): configuration is fixed for a simulation's lifetime; use a separate simulation for different assumptions.
+- [In-memory simulation lifecycle coordinator](docs/adr/ADR-71-in-memory-simulation-lifecycle-coordinator.md): an independent lifecycle crate constrains which Application work unit the composition layer may call.
 
 Code identifiers must not contain implementation-stage names or numbers. The architecture document records the current boundary direction and open interface questions. The roadmap tracks Application/Data Access work; Core may evolve incrementally as concrete needs arise. Historical decisions are retained only as decision history.

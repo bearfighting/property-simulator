@@ -10,6 +10,7 @@ property-simulation-application = { path = "../../../application" }
 property-simulation-account = { path = "../../../core/accounting/account" }
 property-simulation-data-access-sqlite = { path = "../../../data-access/sqlite" }
 property-simulation-gpui-ui = { path = "../ui" }
+property-simulation-lifecycle = { path = "../../../simulation-lifecycle" }
 property-simulation-money = { path = "../../../core/foundation/money" }
 property-simulation-slice-catalogue = { path = "../../../core/simulation/slice-catalogue" }
 property-simulation-stop-condition = { path = "../../../core/simulation/stop-condition" }

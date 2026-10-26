@@ -6,12 +6,9 @@ use super::{page::AppPage, shell::AppShell};
 
 pub(super) fn render(current_page: AppPage, app: Entity<AppShell>) -> impl IntoElement {
     div()
-        .w_full()
         .flex()
         .items_center()
-        .gap_2()
-        .px_6()
-        .py_2()
+        .gap_1()
         .child(navigation_button(
             "Setup",
             AppPage::Initialization,
@@ -19,13 +16,13 @@ pub(super) fn render(current_page: AppPage, app: Entity<AppShell>) -> impl IntoE
             app.clone(),
         ))
         .child(navigation_button(
-            "Monthly simulation",
+            "Simulation",
             AppPage::MonthlySimulation,
             current_page,
             app.clone(),
         ))
         .child(navigation_button(
-            "Summary",
+            "Reporting",
             AppPage::Summary,
             current_page,
             app,

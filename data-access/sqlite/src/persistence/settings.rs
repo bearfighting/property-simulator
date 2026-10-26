@@ -12,7 +12,7 @@ impl SettingsStore for SqliteDataAccess {
     async fn load_loan_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<LoanSettingsDto>, DataAccessError> {
+    ) -> Result<Option<LoanSettingsDto>, DataAccessError> {
         SqliteDataAccess::load_loan_settings(self, simulation_id)
             .await
             .map_err(Into::into)
@@ -30,7 +30,7 @@ impl SettingsStore for SqliteDataAccess {
     async fn load_fixed_expense_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<FixedExpenseSettingsDto>, DataAccessError> {
+    ) -> Result<Option<FixedExpenseSettingsDto>, DataAccessError> {
         SqliteDataAccess::load_fixed_expense_settings(self, simulation_id)
             .await
             .map_err(Into::into)
@@ -48,7 +48,7 @@ impl SettingsStore for SqliteDataAccess {
     async fn load_rental_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<RentalSettingsDto>, DataAccessError> {
+    ) -> Result<Option<RentalSettingsDto>, DataAccessError> {
         SqliteDataAccess::load_rental_settings(self, simulation_id)
             .await
             .map_err(Into::into)
@@ -66,7 +66,7 @@ impl SettingsStore for SqliteDataAccess {
     async fn load_repair_occurrence_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<RepairOccurrenceSettingsDto>, DataAccessError> {
+    ) -> Result<Option<RepairOccurrenceSettingsDto>, DataAccessError> {
         SqliteDataAccess::load_repair_occurrence_settings(self, simulation_id)
             .await
             .map_err(Into::into)
@@ -84,26 +84,26 @@ impl SettingsStore for SqliteDataAccess {
     async fn load_repair_cost_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<RepairCostSettingsDto>, DataAccessError> {
+    ) -> Result<Option<RepairCostSettingsDto>, DataAccessError> {
         SqliteDataAccess::load_repair_cost_settings(self, simulation_id)
             .await
             .map_err(Into::into)
     }
 
-    async fn save_stop_condition_set(
+    async fn save_stop_conditions(
         &self,
-        settings: &StopConditionSetDto,
+        settings: &StopConditionsDto,
     ) -> Result<(), DataAccessError> {
-        SqliteDataAccess::save_stop_condition_set(self, settings)
+        SqliteDataAccess::save_stop_conditions(self, settings)
             .await
             .map_err(Into::into)
     }
 
-    async fn load_stop_condition_sets(
+    async fn load_stop_conditions(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<StopConditionSetDto>, DataAccessError> {
-        SqliteDataAccess::load_stop_condition_sets(self, simulation_id)
+    ) -> Result<StopConditionsDto, DataAccessError> {
+        SqliteDataAccess::load_stop_conditions(self, simulation_id)
             .await
             .map_err(Into::into)
     }

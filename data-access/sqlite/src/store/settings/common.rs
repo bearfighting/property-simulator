@@ -1,5 +1,4 @@
 use property_simulation_money::{Currency, Money};
-use property_simulation_month::Month;
 
 use crate::SqliteDataAccessError;
 
@@ -28,13 +27,5 @@ pub(super) fn validate_currency(
         Err(SqliteDataAccessError::from(
             property_simulation_money::MoneyError::CurrencyMismatch,
         ))
-    }
-}
-
-pub(super) fn validate_effective_month(month: Month) -> Result<(), SqliteDataAccessError> {
-    if month.is_initial() {
-        Err(SqliteDataAccessError::InvalidData("effective_from_month"))
-    } else {
-        Ok(())
     }
 }

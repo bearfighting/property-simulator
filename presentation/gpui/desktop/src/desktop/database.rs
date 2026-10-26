@@ -15,5 +15,5 @@ pub(super) fn connect(runtime: &Runtime) -> Result<SqliteDataAccess, Box<dyn Err
 }
 
 fn database_path() -> PathBuf {
-    PathBuf::from("property-simulation.sqlite3")
+    PathBuf::from("property-simulation-config.sqlite3")
 }

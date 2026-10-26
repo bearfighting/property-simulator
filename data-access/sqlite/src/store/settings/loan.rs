@@ -1,14 +1,13 @@
 use crate::{SqliteDataAccessError, mapping, store::SqliteDataAccess};
 use property_simulation_data_access::dto::LoanSettingsDto;
 
-use super::common::{optional_payload, validate_effective_month};
+use super::common::optional_payload;
 
 impl SqliteDataAccess {
     pub(crate) async fn save_loan_settings(
         &self,
         settings: &LoanSettingsDto,
     ) -> Result<(), SqliteDataAccessError> {
-        validate_effective_month(settings.effective_from_month)?;
         optional_payload(
             settings.enabled,
             settings.parameters.is_some(),
@@ -25,13 +24,10 @@ impl SqliteDataAccess {
             });
         sqlx::query(
             "INSERT INTO loan_settings \
-             (simulation_id, effective_from_month, enabled, annual_interest_rate, remaining_term_months_at_start) \
-             VALUES (?, ?, ?, ?, ?) ON CONFLICT(simulation_id, effective_from_month) DO UPDATE SET \
-             enabled = excluded.enabled, annual_interest_rate = excluded.annual_interest_rate, \
-             remaining_term_months_at_start = excluded.remaining_term_months_at_start",
+             (simulation_id, enabled, annual_interest_rate, remaining_term_months_at_start) \
+             VALUES (?, ?, ?, ?)",
         )
         .bind(&settings.simulation_id)
-        .bind(i64::from(settings.effective_from_month.number()))
         .bind(settings.enabled.map(i64::from))
         .bind(rate)
         .bind(term)
@@ -43,13 +39,11 @@ impl SqliteDataAccess {
     pub(crate) async fn load_loan_settings(
         &self,
         simulation_id: &str,
-    ) -> Result<Vec<LoanSettingsDto>, SqliteDataAccessError> {
-        let rows = sqlx::query(
-            "SELECT * FROM loan_settings WHERE simulation_id = ? ORDER BY effective_from_month",
-        )
-        .bind(simulation_id)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter().map(mapping::loan_settings).collect()
+    ) -> Result<Option<LoanSettingsDto>, SqliteDataAccessError> {
+        let row = sqlx::query("SELECT * FROM loan_settings WHERE simulation_id = ?")
+            .bind(simulation_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref().map(mapping::loan_settings).transpose()
     }
 }

@@ -2,6 +2,7 @@
 default-members = ["presentation/gpui/desktop"]
 members = [
     "application",
+    "simulation-lifecycle",
     "core/accounting/account",
     "core/accounting/journal-entry",
     "core/accounting/ledger",

@@ -1,5 +1,5 @@
 use gpui_kit::component::{
-    ActiveTheme as _,
+    ActiveTheme as _, Disableable as _,
     form::{Field, Form},
     input::Input,
     switch::Switch,
@@ -12,6 +12,7 @@ pub(crate) fn render(
     page: &InitializationPage,
     cx: &Context<InitializationPage>,
 ) -> impl IntoElement {
+    let settings_locked = page.settings_locked();
     div()
         .flex()
         .flex_col()
@@ -31,29 +32,33 @@ pub(crate) fn render(
                 .child(
                     Field::new()
                         .label("Simulation name")
-                        .child(Input::new(&page.name)),
+                        .child(Input::new(&page.name).disabled(settings_locked)),
                 )
                 .child(
                     Field::new()
                         .label("Property value · CAD")
-                        .child(Input::new(&page.property_value)),
+                        .child(Input::new(&page.property_value).disabled(settings_locked)),
                 )
                 .child(
                     Field::new()
                         .label("Cash at start · CAD")
-                        .child(Input::new(&page.cash_balance)),
+                        .child(Input::new(&page.cash_balance).disabled(settings_locked)),
                 )
                 .child(
                     Field::new()
                         .label("Stop after months · optional")
-                        .child(Input::new(&page.stop_after_months)),
+                        .child(Input::new(&page.stop_after_months).disabled(settings_locked)),
                 )
                 .child(
                     Field::new().label_indent(false).child(
                         Switch::new("stop-when-loans-paid-off")
                             .label("Stop when all loans are paid off")
                             .checked(page.stop_when_all_loans_paid_off)
+                            .disabled(settings_locked)
                             .on_change(cx.listener(|this, next, _, cx| {
+                                if this.settings_locked() {
+                                    return;
+                                }
                                 this.stop_when_all_loans_paid_off = *next;
                                 cx.notify();
                             })),

@@ -1,3 +1,4 @@
+use property_simulation_lifecycle::SimulationState;
 use std::{future::Future, pin::Pin, rc::Rc};
 
 /// Values collected by the simulation initialization page.
@@ -21,8 +22,8 @@ pub struct InitializationFormData {
     pub repair_delay_months: String,
 }
 
-/// Result returned by the host after it coordinates initialization.
-pub type SubmissionResult = Result<(), String>;
+/// Lifecycle state returned by the host after successful initialization.
+pub type SubmissionResult = Result<SimulationState, String>;
 
 /// Async host callback. The future is local to GPUI's foreground executor.
 pub type InitializationHandler =

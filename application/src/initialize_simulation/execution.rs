@@ -3,7 +3,7 @@ use property_simulation_data_access::{
     DataAccess,
     dto::{
         JournalEntryDto, MonthlyEventsDto, SimulationAccountDto, SimulationDto,
-        SimulationRootKeyDto, StopConditionSetDto,
+        SimulationRootKeyDto, StopConditionsDto,
     },
 };
 use property_simulation_month::Month;
@@ -71,9 +71,8 @@ pub async fn initialize_simulation<D: DataAccess>(
 
     settings::save(data_access, &simulation_id, request.slice_settings).await?;
     data_access
-        .save_stop_condition_set(&StopConditionSetDto {
+        .save_stop_conditions(&StopConditionsDto {
             simulation_id,
-            effective_from_month: Month::new(1),
             conditions: request.stop_conditions,
         })
         .await?;

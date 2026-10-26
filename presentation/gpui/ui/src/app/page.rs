@@ -9,8 +9,8 @@ impl AppPage {
     pub(super) const fn label(self) -> &'static str {
         match self {
             Self::Initialization => "Setup",
-            Self::MonthlySimulation => "Monthly simulation",
-            Self::Summary => "Summary",
+            Self::MonthlySimulation => "Simulation",
+            Self::Summary => "Reporting",
         }
     }
 }
