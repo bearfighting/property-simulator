@@ -12,5 +12,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - name: Install GPUI native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc g++ clang libfontconfig-dev libwayland-dev \
+            libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libssl-dev libzstd-dev libvulkan1
       - name: Run workspace quality checks
         run: ./scripts/check.sh
