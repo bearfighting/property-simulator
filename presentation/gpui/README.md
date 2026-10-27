@@ -26,7 +26,13 @@ sudo apt install gcc g++ clang libfontconfig-dev libwayland-dev \
 
 Other Linux distributions need their equivalent packages. See the [GPUI Kit
 installation guide](https://gpui-kit.com/docs/installation/) for platform
-requirements.
+requirements. The Linux preview archive contains the executable, but these
+system libraries still need to be installed on the target machine.
+
+GitHub preview releases provide a Windows x64 ZIP and an Ubuntu 24.04 x64
+`tar.gz` archive. Extract the archive, then run `property-simulation-desktop`
+from a terminal on Linux (you may need to grant it execute permission with
+`chmod +x property-simulation-desktop`).
 
 `ui/` depends only on GPUI Kit. The `desktop/` binary owns startup, SQLite
 construction, conversion from plain form data to the Application request, and

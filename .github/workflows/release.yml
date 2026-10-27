@@ -1,0 +1,92 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+            binary: property-simulation-desktop.exe
+            archive: zip
+          - os: ubuntu-24.04
+            platform: linux-x64
+            binary: property-simulation-desktop
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc g++ clang libfontconfig-dev libwayland-dev \
+            libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libssl-dev libzstd-dev libvulkan1
+
+      - name: Build desktop binary
+        run: cargo build --locked --release -p property-simulation-desktop
+
+      - name: Package Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          $directory = "dist/property-simulator-$env:RELEASE_TAG-$env:PLATFORM"
+          New-Item -ItemType Directory -Force -Path $directory | Out-Null
+          Copy-Item "target/release/${{ matrix.binary }}" $directory
+          Copy-Item "LICENSE" $directory
+          Copy-Item "presentation/gpui/README.md" "$directory/README.md"
+          Compress-Archive -Path "$directory/*" -DestinationPath "$directory.zip"
+
+      - name: Package Linux release
+        if: runner.os == 'Linux'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          directory="dist/property-simulator-${RELEASE_TAG}-${PLATFORM}"
+          mkdir -p "$directory"
+          cp "target/release/${{ matrix.binary }}" "$directory/"
+          cp LICENSE "$directory/"
+          cp presentation/gpui/README.md "$directory/README.md"
+          tar -czf "$directory.tar.gz" -C dist "$(basename "$directory")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*.${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* \
+            --title "Property Simulator $RELEASE_TAG (preview)" \
+            --generate-notes \
+            --prerelease
