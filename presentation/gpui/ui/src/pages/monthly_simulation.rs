@@ -15,23 +15,66 @@ use crate::{
     components::{PageTheme, page_heading},
 };
 
-pub(crate) fn monthly_simulation_page(
-    state: SimulationState,
-    is_simulating: bool,
-    is_loading_timeline: bool,
-    timeline: &[MonthlySimulationViewData],
+pub(crate) type SelectMonthAction = Rc<dyn Fn(u16, &mut App)>;
+pub(crate) type ChangeTimelinePageAction = Rc<dyn Fn(TimelinePageDirection, &mut App)>;
+
+pub(crate) struct MonthlySimulationPage<'a> {
+    pub(crate) state: SimulationState,
+    pub(crate) is_simulating: bool,
+    pub(crate) is_loading_timeline: bool,
+    pub(crate) timeline: &'a [MonthlySimulationViewData],
+    pub(crate) selected_month: Option<u16>,
+    pub(crate) timeline_page: usize,
+    pub(crate) timeline_error: Option<&'a str>,
+    pub(crate) data: Option<&'a MonthlySimulationViewData>,
+    pub(crate) error: Option<&'a str>,
+}
+
+pub(crate) struct MonthlySimulationActions {
+    pub(crate) on_simulate: PageAction,
+    pub(crate) on_reporting: PageAction,
+    pub(crate) on_select_month: SelectMonthAction,
+    pub(crate) on_reload_timeline: PageAction,
+    pub(crate) on_change_timeline_page: ChangeTimelinePageAction,
+}
+
+struct TimelinePanelData<'a> {
+    timeline: &'a [MonthlySimulationViewData],
     selected_month: Option<u16>,
     timeline_page: usize,
-    timeline_error: Option<&str>,
-    data: Option<&MonthlySimulationViewData>,
-    error: Option<&str>,
-    on_simulate: PageAction,
-    on_reporting: PageAction,
-    on_select_month: Rc<dyn Fn(u16, &mut App)>,
-    on_reload_timeline: PageAction,
-    on_change_timeline_page: Rc<dyn Fn(TimelinePageDirection, &mut App)>,
+    is_loading: bool,
+    error: Option<&'a str>,
+}
+
+struct TimelinePanelActions {
+    on_select_month: SelectMonthAction,
+    on_reload: PageAction,
+    on_change_page: ChangeTimelinePageAction,
+}
+
+pub(crate) fn monthly_simulation_page(
+    page: MonthlySimulationPage<'_>,
+    actions: MonthlySimulationActions,
     theme: PageTheme,
 ) -> impl IntoElement {
+    let MonthlySimulationPage {
+        state,
+        is_simulating,
+        is_loading_timeline,
+        timeline,
+        selected_month,
+        timeline_page,
+        timeline_error,
+        data,
+        error,
+    } = page;
+    let MonthlySimulationActions {
+        on_simulate,
+        on_reporting,
+        on_select_month,
+        on_reload_timeline,
+        on_change_timeline_page,
+    } = actions;
     let next_month = timeline
         .last()
         .map_or(1, |month| month.month_number.saturating_add(1));
@@ -119,14 +162,18 @@ pub(crate) fn monthly_simulation_page(
                         .items_start()
                         .gap_5()
                         .child(timeline_panel(
-                            timeline,
-                            selected_month,
-                            timeline_page,
-                            is_loading_timeline,
-                            timeline_error,
-                            on_select_month,
-                            on_reload_timeline,
-                            on_change_timeline_page,
+                            TimelinePanelData {
+                                timeline,
+                                selected_month,
+                                timeline_page,
+                                is_loading: is_loading_timeline,
+                                error: timeline_error,
+                            },
+                            TimelinePanelActions {
+                                on_select_month,
+                                on_reload: on_reload_timeline,
+                                on_change_page: on_change_timeline_page,
+                            },
                             theme,
                         ))
                         .child(
@@ -197,16 +244,22 @@ pub(crate) fn monthly_simulation_page(
 }
 
 fn timeline_panel(
-    timeline: &[MonthlySimulationViewData],
-    selected_month: Option<u16>,
-    timeline_page: usize,
-    is_loading: bool,
-    error: Option<&str>,
-    on_select_month: Rc<dyn Fn(u16, &mut App)>,
-    on_reload: PageAction,
-    on_change_page: Rc<dyn Fn(TimelinePageDirection, &mut App)>,
+    data: TimelinePanelData<'_>,
+    actions: TimelinePanelActions,
     theme: PageTheme,
 ) -> impl IntoElement {
+    let TimelinePanelData {
+        timeline,
+        selected_month,
+        timeline_page,
+        is_loading,
+        error,
+    } = data;
+    let TimelinePanelActions {
+        on_select_month,
+        on_reload,
+        on_change_page,
+    } = actions;
     let muted = theme.muted_foreground;
     let mut months_panel = div()
         .flex()

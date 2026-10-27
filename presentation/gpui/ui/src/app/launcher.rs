@@ -1,6 +1,7 @@
 use crate::{
     InitializationHandler, MonthlySimulationHandler, MonthlyTimelineHandler, ReportingHandler,
-    ResetSimulationHandler, StopSimulationHandler, app::shell::AppShell,
+    ResetSimulationHandler, StopSimulationHandler,
+    app::shell::{AppShell, ShellHandlers},
 };
 use gpui_kit::component::TitleBar;
 use gpui_kit::{
@@ -33,12 +34,14 @@ pub fn run_simulation_ui(
             move |window, cx| {
                 cx.new(|window_cx| {
                     AppShell::new(
-                        handler,
-                        month_handler,
-                        timeline_handler,
-                        report_handler,
-                        stop_handler,
-                        reset_handler,
+                        ShellHandlers {
+                            initialization: handler,
+                            month: month_handler,
+                            timeline: timeline_handler,
+                            report: report_handler,
+                            stop: stop_handler,
+                            reset: reset_handler,
+                        },
                         window,
                         window_cx,
                     )

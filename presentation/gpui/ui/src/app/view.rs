@@ -4,7 +4,10 @@ use property_simulation_lifecycle::SimulationState;
 use std::rc::Rc;
 
 use crate::components::PageTheme;
-use crate::pages::{InitializationPage, monthly_simulation_page, placeholder_page, reporting_page};
+use crate::pages::{
+    InitializationPage, MonthlySimulationActions, MonthlySimulationPage, monthly_simulation_page,
+    placeholder_page, reporting_page,
+};
 use crate::{MonthlySimulationViewData, PageAction, ReportingViewData, TimelinePageDirection};
 
 use super::shell::AppShell;
@@ -78,20 +81,24 @@ pub(super) fn render(
                 .find(|item| item.month_number == month)
         });
         div().child(monthly_simulation_page(
-            view.state,
-            view.monthly.is_simulating,
-            view.monthly.is_loading_timeline,
-            &view.monthly.timeline,
-            view.monthly.selected_month,
-            view.monthly.timeline_page,
-            view.monthly.timeline_error.as_deref(),
-            selected_result,
-            view.monthly.error.as_deref(),
-            on_simulate,
-            on_reporting,
-            on_select_month,
-            on_reload_timeline,
-            on_change_timeline_page,
+            MonthlySimulationPage {
+                state: view.state,
+                is_simulating: view.monthly.is_simulating,
+                is_loading_timeline: view.monthly.is_loading_timeline,
+                timeline: &view.monthly.timeline,
+                selected_month: view.monthly.selected_month,
+                timeline_page: view.monthly.timeline_page,
+                timeline_error: view.monthly.timeline_error.as_deref(),
+                data: selected_result,
+                error: view.monthly.error.as_deref(),
+            },
+            MonthlySimulationActions {
+                on_simulate,
+                on_reporting,
+                on_select_month,
+                on_reload_timeline,
+                on_change_timeline_page,
+            },
             theme,
         ))
     } else if view.page == AppPage::Summary && view.state == SimulationState::Stopped {

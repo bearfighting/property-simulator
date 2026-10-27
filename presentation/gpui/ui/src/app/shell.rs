@@ -9,6 +9,15 @@ use crate::{
     pages::InitializationPage,
 };
 
+pub(super) struct ShellHandlers {
+    pub(super) initialization: InitializationHandler,
+    pub(super) month: MonthlySimulationHandler,
+    pub(super) timeline: MonthlyTimelineHandler,
+    pub(super) report: ReportingHandler,
+    pub(super) stop: StopSimulationHandler,
+    pub(super) reset: ResetSimulationHandler,
+}
+
 pub(crate) struct AppShell {
     page: AppPage,
     initialization: Entity<InitializationPage>,
@@ -44,15 +53,18 @@ struct ReportingUiState {
 
 impl AppShell {
     pub(super) fn new(
-        handler: InitializationHandler,
-        month_handler: MonthlySimulationHandler,
-        timeline_handler: MonthlyTimelineHandler,
-        report_handler: ReportingHandler,
-        stop_handler: StopSimulationHandler,
-        reset_handler: ResetSimulationHandler,
+        handlers: ShellHandlers,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let ShellHandlers {
+            initialization: handler,
+            month: month_handler,
+            timeline: timeline_handler,
+            report: report_handler,
+            stop: stop_handler,
+            reset: reset_handler,
+        } = handlers;
         let shell = cx.entity().downgrade();
         let on_state_changed = {
             let shell = shell.clone();
