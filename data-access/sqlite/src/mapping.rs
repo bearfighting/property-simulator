@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, str::FromStr};
+use std::{num::NonZeroU16, num::NonZeroU32, str::FromStr};
 
 use property_simulation_data_access::dto::{
     FixedExpenseSettingsDto, LoanSettingsDto, MoneyDto, RentalSettingsDto, RepairCostInstanceDto,
@@ -257,10 +257,13 @@ pub(crate) fn stop_conditions(
             let kind: String = row.try_get("condition")?;
             let value: Option<i64> = row.try_get("value")?;
             match (kind.as_str(), value) {
-                ("after_months", Some(value)) => Ok(StopCondition::AfterMonths(
-                    NonZeroU32::new(u32_value(value, "stop condition value")?)
-                        .ok_or(SqliteDataAccessError::InvalidData("stop condition value"))?,
-                )),
+                ("after_months", Some(value)) => {
+                    let months = u16::try_from(value)
+                        .map_err(|_| SqliteDataAccessError::InvalidData("stop condition value"))?;
+                    Ok(StopCondition::AfterMonths(NonZeroU16::new(months).ok_or(
+                        SqliteDataAccessError::InvalidData("stop condition value"),
+                    )?))
+                }
                 ("all_loans_paid_off", None) => Ok(StopCondition::AllLoansPaidOff),
                 _ => Err(SqliteDataAccessError::InvalidData("stop condition")),
             }

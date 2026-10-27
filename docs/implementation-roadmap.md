@@ -21,7 +21,8 @@ Core 基础实现已达到当前阶段目标，作为后续 Application 接线�
 - 存储或致命计算错误停止本次推进并报告系统错误；不增加重试、恢复、回滚或补偿机制。
 - Data Access 使用窄的类型化接口；SQLite 和序列化仅由 Data Access 承担。desktop 组合入口负责连接 Presentation UI、Application 与 Data Access。
 - 当前先完成初始化模拟的 GPUI 垂直切片：`presentation/gpui/ui` 依赖 GPUI Kit 和只读生命周期状态类型，并提交普通表单数据；`presentation/gpui/desktop` 是程序组合入口，负责创建 SQLite pool、安装 schema、构造账户目录，并协调 UI 与 Application。UI 不直接依赖 Application 或 Data Access，也不推进生命周期状态。入口通过 Tokio runtime 驱动 SQLx，提交结果异步返回 UI。
-- Data Access 的 DTO、SQLite schema、storage-neutral store traits 和 SQLite adapter 已实现。接口按模拟基础事实、设置、月度事实分组，并提供组合 `DataAccess` trait；较小 work unit 可只依赖所需分组。接口覆盖 schema 中模拟、随机 root、账户、月份、设置、停止条件、事件、维修实例和 JournalEntry 的读写，不包含从 Ledger 派生的现金流或报告。Application crate 的初始化模拟用例已实现；其他用例和内存适配器尚未实现，后续按上层实际调用需要接入，不扩展到 schema 外的持久化事实。
+- Desktop 的生命周期协调器持有当前 simulation ID 和内存状态；系统操作可结束本次运行或确认后重置到新的初始化流程。重置不删除旧的 SQLite 数据，当前 UI 暂不提供旧模拟的选择或浏览。
+- Data Access 的 DTO、SQLite schema、storage-neutral store traits 和 SQLite adapter 已实现。接口按模拟基础事实、设置、月度事实分组，并提供组合 `DataAccess` trait；较小 work unit 可只依赖所需分组。接口覆盖 schema 中模拟、随机 root、账户、月份、设置、停止条件、事件、维修实例和 JournalEntry 的读写，不包含从 Ledger 派生的现金流或报告。Application crate 的初始化、单月模拟和最终报告用例已实现；报告从已保存的月份与 JournalEntry 重建 Ledger，再调用 Core Reporting 派生财务位置、期间损益和累计现金流。Month 0-only 报告只包含期初财务位置。Application 内存适配器及用例验证仍待完成，不扩展到 schema 外的持久化事实。
 - UI 用例包括设置初始值、推进一个月、停止模拟、获取统计报告和读取指定月份结果。报告从已保存的月度事实与 Ledger 派生，不触发重算。
 
 ## Application/Data Access 验收

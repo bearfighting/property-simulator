@@ -8,11 +8,14 @@ rust-version.workspace = true
 [dependencies]
 getrandom = "0.2"
 property-simulation-account = { path = "../core/accounting/account" }
+property-simulation-ledger = { path = "../core/accounting/ledger" }
+property-simulation-reporting = { path = "../core/accounting/reporting" }
 property-simulation-data-access = { path = "../data-access" }
 property-simulation-journal-entry = { path = "../core/accounting/journal-entry" }
 property-simulation-month = { path = "../core/foundation/month" }
 property-simulation-money = { path = "../core/foundation/money" }
 property-simulation-random-engine = { path = "../core/simulation/random-engine" }
+property-simulation-slice = { path = "../core/simulation/slice" }
 property-simulation-slice-catalogue = { path = "../core/simulation/slice-catalogue" }
 property-simulation-stop-condition = { path = "../core/simulation/stop-condition" }
 

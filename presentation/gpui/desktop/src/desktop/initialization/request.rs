@@ -1,6 +1,6 @@
 //! Translate presentation strings into the typed Application initialization request.
 
-use std::{num::NonZeroU32, str::FromStr};
+use std::{num::NonZeroU16, num::NonZeroU32, str::FromStr};
 
 use property_simulation_account::AccountRole;
 use property_simulation_application::{
@@ -63,7 +63,7 @@ pub(super) fn from_form(
 
     let mut stop_conditions = Vec::new();
     if !form.stop_after_months.trim().is_empty() {
-        stop_conditions.push(StopCondition::AfterMonths(parse_non_zero(
+        stop_conditions.push(StopCondition::AfterMonths(parse_non_zero_months(
             &form.stop_after_months,
             "stop after months",
         )?));
@@ -122,6 +122,14 @@ fn parse_non_zero(value: &str, label: &str) -> Result<NonZeroU32, String> {
         .parse::<u32>()
         .map_err(|error| format!("invalid {label}: {error}"))?;
     NonZeroU32::new(parsed).ok_or_else(|| format!("{label} must be greater than zero"))
+}
+
+fn parse_non_zero_months(value: &str, label: &str) -> Result<NonZeroU16, String> {
+    let parsed = value
+        .trim()
+        .parse::<u16>()
+        .map_err(|error| format!("invalid {label}: {error}"))?;
+    NonZeroU16::new(parsed).ok_or_else(|| format!("{label} must be greater than zero"))
 }
 
 fn display_error(error: impl std::fmt::Display) -> String {

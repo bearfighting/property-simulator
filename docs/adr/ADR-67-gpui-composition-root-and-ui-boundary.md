@@ -20,9 +20,10 @@ must initialize SQLite and coordinate the UI with the Application use case.
 - The desktop binary constructs the SQLite pool and adapter, installs the
   schema, obtains the Application account catalogue, maps form values into the
   Application initialization request, and invokes the use case.
-- Keep the account catalogue in Application configuration. Its current chart
-  is explicitly incomplete until Slice posting accounts and report
-  classifications are fully specified.
+- Keep the account catalogue in Application configuration. The current chart
+  includes posting roles for supported Slices and uses account classes for
+  cash-flow classification; extend it when new posting roles or report
+  categories are introduced.
 - Run SQLx work on a Tokio runtime and return completion to the GPUI view
   asynchronously.
 

@@ -8,6 +8,19 @@ impl SqliteDataAccess {
         settings: &StopConditionsDto,
     ) -> Result<(), SqliteDataAccessError> {
         let mut transaction = self.pool.begin().await?;
+        let claim = sqlx::query(
+            "UPDATE simulations SET stop_conditions_configured = 1 \
+             WHERE id = ? AND stop_conditions_configured = 0",
+        )
+        .bind(&settings.simulation_id)
+        .execute(&mut *transaction)
+        .await?;
+        if claim.rows_affected() != 1 {
+            return Err(SqliteDataAccessError::InvalidData(
+                "stop conditions are already configured or simulation does not exist",
+            ));
+        }
+
         for condition in &settings.conditions {
             let (kind, value) = match condition {
                 StopCondition::AfterMonths(months) => {

@@ -46,7 +46,7 @@ flowchart TD
 | Slice | 单项领域行为及其参数、样本、计算和输出；`SliceKind` 标识受支持行为 | Application 如何选择、创建、结束和调用 Slice；具体生命周期规则仍需明确 |
 | Random engine | 从调用方持有的 root 和显式语义身份派生随机输入 | root 生成与持久化归 Application/Data Access；派生算法及随机输入 trait 由 Core 提供 |
 | Application simulation state / monthly output | 保存模拟级配置与 root，并组织已完成月份的 Slice 结果 | 应用状态和持久化 DTO 的字段边界；Core 只定义单项计算契约 |
-| Simulation lifecycle | 内存运行阶段及对应 work unit；不依赖其他应用层或存储 | 由组合层选择 work unit 并推进状态；不负责拒绝调用，不支持恢复 |
+| Simulation lifecycle | 内存运行状态及对应 work unit；`Running` 覆盖整段运行过程，月度任务可重复执行；`Stopped` 允许生成报告 | 由组合层选择 work unit 并推进状态；手动停止、自动停止或致命月度错误使其进入 `Stopped`；不负责拒绝调用，不支持恢复 |
 | Application | 用户用例、跨月流程、逐 Slice 调用协调、候选 Ledger 结算和数据读写协调 | 具体用例及窄的 Core 调用接口 |
 | Data Access contract | storage-neutral DTO 与异步持久化操作 | DTO、SQLite schema 和按模拟、设置、月度事实划分的 store trait 已实现；组合 `DataAccess` trait 供需要完整能力的调用方使用。月度事实支持全量读取和按指定 Month 读取事件/分录。未来若运行时需要跨线程派发，再决定是否增加 Future 的 `Send` 约束 |
 

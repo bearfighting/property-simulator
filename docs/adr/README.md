@@ -30,7 +30,7 @@ Use the next unused number; do not reuse retired numbers. An ADR records context
 - [ADR-53](ADR-53-recurring-fixed-expense-slice.md): combine recurring property-related taxes and utility costs into one fixed-expense Slice configured by monthly amount or annual property-value rate.
 - [ADR-54](ADR-54-slice-specific-evaluation-interfaces.md): inject random input only into stochastic Slices and keep evaluation methods/errors concrete.
 - [ADR-55](ADR-55-ledger-journal-as-source-of-balances.md): make the ordered JournalEntry sequence the sole source for opening and ending Ledger balances; inject the account catalogue when needed.
-- [ADR-56](ADR-56-stop-conditions-and-month-boundaries.md): represent manual stop as `UserStop` and evaluate conditions before the next month.
+- [ADR-56](ADR-56-stop-conditions-and-month-boundaries.md): historical stop-condition design superseded by ADR-70 and ADR-71.
 - [ADR-57](ADR-57-per-slice-settings-persistence.md): persist typed configuration per static Slice kind, keep loan terms with Loan, and avoid a whole-settings blob.
 - [ADR-58](ADR-58-stop-condition-domain-boundary.md): define stop conditions and pure boundary evaluation without depending on Context, Ledger, or Slice.
 - [ADR-59](ADR-59-application-owned-random-root.md): keep the simulation root in Application-owned state and persist it independently of settings and monthly results.
@@ -45,6 +45,8 @@ Use the next unused number; do not reuse retired numbers. An ADR records context
 - [ADR-68](ADR-68-unified-root-cargo-workspace.md): register all active crates in one root Cargo workspace and make the desktop binary the default `cargo run` target.
 - [ADR-69](ADR-69-gpui-page-shell-and-reusable-components.md): organize GPUI around a persistent application shell, typed page navigation, and page-neutral visual components.
 - [ADR-70](ADR-70-immutable-simulation-configuration.md): keep a simulation's configuration fixed for its lifetime; use a separate simulation for different assumptions.
+- [ADR-71](ADR-71-in-memory-simulation-lifecycle-coordinator.md): keep the linear run lifecycle in a standalone crate and coordinate it in the composition layer.
+- [ADR-72](ADR-72-month-bounded-duration-settings.md): bound stop thresholds, loan terms, repair delays, and stored months by the Month representation.
 
 ## Historical decisions
 

@@ -14,10 +14,10 @@ pub const INTEREST_EXPENSE_ROLE: &str = "interest_expense";
 
 /// Build the fixed account catalogue used for a newly initialized simulation.
 ///
-/// This initial chart is intentionally incomplete: expense/report categories
-/// and the posting roles required by every Slice have not been fully decided.
-/// Callers must not treat it as a complete accounting profile. Complete it when
-/// the initial Slice posting accounts and report classifications are specified.
+/// The chart includes the posting roles used by the currently supported Slices
+/// and supplies the account classes used for cash-flow classification. It is
+/// limited to the initial property-simulation scope and must be extended when
+/// new posting roles or reporting categories are introduced.
 pub fn initialization_account_catalogue() -> Result<AccountCatalogue, AccountError> {
     let definitions = [
         (1000, "Property", AccountClass::Asset, PROPERTY_ROLE),

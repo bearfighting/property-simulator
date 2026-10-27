@@ -3,7 +3,9 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS simulations (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL CHECK (length(trim(name)) > 0),
-    currency TEXT NOT NULL CHECK (currency GLOB '[A-Z][A-Z][A-Z]')
+    currency TEXT NOT NULL CHECK (currency GLOB '[A-Z][A-Z][A-Z]'),
+    stop_conditions_configured INTEGER NOT NULL DEFAULT 0
+        CHECK (stop_conditions_configured IN (0, 1))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS simulation_root_keys (
@@ -18,7 +20,7 @@ BEGIN SELECT RAISE(ABORT, 'simulation root key is immutable'); END;
 
 CREATE TABLE IF NOT EXISTS simulation_months (
     simulation_id TEXT NOT NULL REFERENCES simulations(id),
-    month INTEGER NOT NULL CHECK (month >= 0),
+    month INTEGER NOT NULL CHECK (month BETWEEN 0 AND 65535),
     PRIMARY KEY (simulation_id, month)
 ) STRICT;
 
@@ -33,7 +35,7 @@ CREATE TABLE IF NOT EXISTS loan_settings (
         OR (
             enabled IN (0, 1)
             AND annual_interest_rate IS NOT NULL
-            AND remaining_term_months_at_start BETWEEN 1 AND 4294967295
+            AND remaining_term_months_at_start BETWEEN 1 AND 65535
         )
     )
 ) STRICT;
@@ -97,7 +99,7 @@ CREATE TABLE IF NOT EXISTS repair_cost_settings (
         OR (
             maximum_amount_coefficient IS NOT NULL
             AND maximum_amount_scale BETWEEN 0 AND 28
-            AND delay_months BETWEEN 1 AND 4294967295
+            AND delay_months BETWEEN 1 AND 65535
         )
     )
 ) STRICT;
@@ -111,7 +113,7 @@ CREATE TABLE IF NOT EXISTS stop_conditions (
     value INTEGER,
     UNIQUE (simulation_id, condition),
     CHECK (
-        (condition = 'after_months' AND value BETWEEN 1 AND 4294967295)
+        (condition = 'after_months' AND value BETWEEN 1 AND 65535)
         OR (condition = 'all_loans_paid_off' AND value IS NULL)
     )
 ) STRICT;
@@ -138,13 +140,13 @@ CREATE TABLE IF NOT EXISTS month_events (
     PRIMARY KEY (simulation_id, month, event_ordinal),
     FOREIGN KEY (simulation_id, month)
         REFERENCES simulation_months(simulation_id, month),
-    CHECK (month >= 1)
+    CHECK (month BETWEEN 1 AND 65535)
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS repair_cost_instances (
     simulation_id TEXT NOT NULL,
-    occurrence_month INTEGER NOT NULL CHECK (occurrence_month >= 1),
-    due_month INTEGER NOT NULL,
+    occurrence_month INTEGER NOT NULL CHECK (occurrence_month BETWEEN 1 AND 65535),
+    due_month INTEGER NOT NULL CHECK (due_month BETWEEN 1 AND 65535),
     maximum_amount_coefficient TEXT NOT NULL,
     maximum_amount_scale INTEGER NOT NULL CHECK (maximum_amount_scale BETWEEN 0 AND 28),
     settled_month INTEGER,
@@ -160,7 +162,7 @@ CREATE TABLE IF NOT EXISTS repair_cost_instances (
 CREATE TABLE IF NOT EXISTS journal_entries (
     id INTEGER PRIMARY KEY,
     simulation_id TEXT NOT NULL,
-    month INTEGER NOT NULL CHECK (month >= 0),
+    month INTEGER NOT NULL CHECK (month BETWEEN 0 AND 65535),
     sequence INTEGER NOT NULL CHECK (sequence >= 0),
     UNIQUE (simulation_id, sequence),
     UNIQUE (id, simulation_id),

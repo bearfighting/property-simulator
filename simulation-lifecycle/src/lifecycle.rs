@@ -1,12 +1,12 @@
-/// The current phase of a run.
+/// The current state of a simulation run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationState {
     /// Initial settings may be submitted.
     Initial,
     /// Monthly simulation may be performed.
     Running,
-    /// Reports may be generated.
-    Reporting,
+    /// The run has ended; reports may be generated.
+    Stopped,
 }
 
 /// A work unit associated with a lifecycle state.
@@ -26,7 +26,7 @@ impl SimulationState {
         match self {
             Self::Initial => WorkUnit::InitialSettings,
             Self::Running => WorkUnit::MonthSimulation,
-            Self::Reporting => WorkUnit::Reporting,
+            Self::Stopped => WorkUnit::Reporting,
         }
     }
 
@@ -34,8 +34,8 @@ impl SimulationState {
     pub const fn transition(self) -> Option<Self> {
         match self {
             Self::Initial => Some(Self::Running),
-            Self::Running => Some(Self::Reporting),
-            Self::Reporting => None,
+            Self::Running => Some(Self::Stopped),
+            Self::Stopped => None,
         }
     }
 }

@@ -20,19 +20,19 @@ pub(super) const fn for_route(page: AppPage, state: SimulationState) -> PageCont
             "Monthly simulation",
             "Monthly results and controls will appear here.",
         ),
-        (AppPage::MonthlySimulation, SimulationState::Reporting) => (
+        (AppPage::MonthlySimulation, SimulationState::Stopped) => (
             "Monthly simulation",
             "This run has ended. Open Reporting to view its results.",
         ),
         (AppPage::Summary, SimulationState::Initial) => (
             "Reporting",
-            "Complete initial settings and simulate at least one month before viewing reports.",
+            "Complete initial settings and end the simulation before viewing its report.",
         ),
         (AppPage::Summary, SimulationState::Running) => (
             "Reporting",
-            "Complete monthly simulation and end the run before viewing its final report.",
+            "End the run to view its report. If no month was completed, it will show the Month 0 opening position.",
         ),
-        (AppPage::Summary, SimulationState::Reporting) => (
+        (AppPage::Summary, SimulationState::Stopped) => (
             "Reporting",
             "Simulation-wide results and reports will appear here.",
         ),

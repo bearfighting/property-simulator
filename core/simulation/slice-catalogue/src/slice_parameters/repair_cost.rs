@@ -17,6 +17,9 @@ impl RepairCostParameters {
         if maximum_amount.is_negative() {
             return Err(RepairCostParametersError::NegativeMaximumAmount);
         }
+        if u16::try_from(delay_months.get()).is_err() {
+            return Err(RepairCostParametersError::DelayOutOfRange);
+        }
 
         Ok(Self {
             maximum_amount,
@@ -37,12 +40,16 @@ impl RepairCostParameters {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairCostParametersError {
     NegativeMaximumAmount,
+    DelayOutOfRange,
 }
 
 impl fmt::Display for RepairCostParametersError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NegativeMaximumAmount => f.write_str("maximum repair cost cannot be negative"),
+            Self::DelayOutOfRange => {
+                f.write_str("repair cost delay exceeds the supported month range")
+            }
         }
     }
 }

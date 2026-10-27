@@ -15,7 +15,7 @@ Context needs to retain both user-provided simulation settings and a system-prov
 - Structure `UserSettings` with `InitialValues`, `Vec<StopCondition>`, and `SliceSettings`.
 - `InitialValues` contains the simulation currency, property value, and opening loan balance. Initial cash is zero and has no input field. Opening equity is derived as property value minus loan balance. Fixed loan terms belong to the Loan `SliceSetting`, not to opening facts; see ADR-57.
 - Initial values are immutable after simulation initialization. A latest settings update may change stop conditions and Slice settings but must preserve initial values.
-- Stop conditions are typed enum values. Any satisfied condition prevents the next month from starting. Check them at the month boundary using the latest completed state; Month 0 is the initialization boundary, so `AfterMonths(1)` permits Month 1 and prevents Month 2. Manual stop is represented by the `UserStop` condition, applied before the next month starts. This amends the earlier command distinction; see ADR-56.
+- Stop conditions are typed enum values. Any satisfied automatic condition prevents the next month from starting. Check them at the month boundary using the latest completed state; Month 0 is the initialization boundary, so `AfterMonths(1)` permits Month 1 and prevents Month 2. The earlier `UserStop` representation recorded in ADR-56 is superseded: manual stop is an in-memory lifecycle operation under ADR-70/71.
 - Slice settings include per-kind parameters and user-controlled enablement where applicable. `RepairCost` has settings but no independent enable flag; generated instances follow their own lifecycle.
 
 ## Alternatives considered

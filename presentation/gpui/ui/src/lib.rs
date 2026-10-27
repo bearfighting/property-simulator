@@ -8,5 +8,12 @@ mod components;
 mod contract;
 mod pages;
 
-pub use app::run_initialization_ui;
-pub use contract::{InitializationFormData, InitializationHandler, SubmissionResult};
+pub use app::run_simulation_ui;
+pub(crate) use contract::PageAction;
+pub use contract::{
+    CashFlowChartSlice, CashFlowViewCategory, InitializationFormData, InitializationHandler,
+    MonthlySimulationHandler, MonthlySimulationResponse, MonthlySimulationViewData,
+    ReportAmountView, ReportCashFlowAccountView, ReportCashFlowCategoryView, ReportPeriodView,
+    ReportingHandler, ReportingViewData, ResetSimulationHandler, StopSimulationHandler,
+    SubmissionResult,
+};

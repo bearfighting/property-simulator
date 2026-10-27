@@ -4897,9 +4897,12 @@ dependencies = [
  "property-simulation-account",
  "property-simulation-data-access",
  "property-simulation-journal-entry",
+ "property-simulation-ledger",
  "property-simulation-money",
  "property-simulation-month",
  "property-simulation-random-engine",
+ "property-simulation-reporting",
+ "property-simulation-slice",
  "property-simulation-slice-catalogue",
  "property-simulation-stop-condition",
 ]

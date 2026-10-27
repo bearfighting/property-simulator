@@ -4,7 +4,7 @@ Property Simulation Sandbox 是面向个人/家庭房产持有者的可配置、
 
 ## 当前范围
 
-- 以一个房产、零笔或多笔独立贷款为首版主体；按月计算，不设固定模拟期限。
+- 以一个房产和零笔或一笔独立贷款为首版主体；按月计算，不设低于 Month 可表示范围的固定模拟期限。
 - 从用户提供的充分期初状态开始，不补造模拟开始前的购买、付款或其他交易。
 - 保留事件、状态变化、Ledger 经济事实及其来源；现金流从 Ledger 推导。
 - Application 与 Data Access 负责用户 context、逐月调用、停止条件和 SQLite 持久化；当前未完成工作见[路线图](implementation-roadmap.md)。

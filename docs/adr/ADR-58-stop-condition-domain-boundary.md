@@ -2,8 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-24
-- **Related:** [ADR-56](ADR-56-stop-conditions-and-month-boundaries.md), [Domain model](../domain-model.md)
-- **Verification examples:** `AfterMonths(1)` allows Month 1 and stops before Month 2; `UserStop` is satisfied immediately at a checked boundary; an empty list does not stop.
+- **Related:** [ADR-56](ADR-56-stop-conditions-and-month-boundaries.md), [ADR-70](ADR-70-immutable-simulation-configuration.md), [ADR-71](ADR-71-in-memory-simulation-lifecycle-coordinator.md), [ADR-72](ADR-72-month-bounded-duration-settings.md), [Domain model](../domain-model.md)
+- **Verification examples:** `AfterMonths(1)` allows Month 1 and stops before Month 2; an empty list does not stop.
 
 ## Context
 
@@ -21,7 +21,9 @@ but stop-condition evaluation need not inspect a Ledger or a Loan Slice.
   `all_loans_paid_off` fact supplied by the caller. Stop when any condition is
   satisfied; an empty condition list does not stop.
 - `AfterMonths(n)` is satisfied when the completed Month is at least `n`.
-  `UserStop` is satisfied as soon as it is present at a checked boundary.
+- Manual stopping is not a stop condition. The composition layer changes the
+  lifecycle state in response to a user command; only configured automatic
+  conditions are evaluated here.
 - Keep lifecycle coordination outside the crate. Application decides when to
   check conditions and whether to start the next month; the crate does not own
   settings, Context, Ledger, Slice, or persistence.
@@ -37,5 +39,5 @@ but stop-condition evaluation need not inspect a Ledger or a Loan Slice.
 
 - Application derives the loan payoff fact and passes it with the completed
   Month when checking the configured conditions.
-- Context may temporarily depend on this crate while it still carries stop
-  condition values; removing Context later will not change this contract.
+- The condition value is immutable after simulation initialization; manual
+  stop remains outside this crate and the persistence model.

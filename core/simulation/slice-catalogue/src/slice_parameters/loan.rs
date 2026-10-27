@@ -20,6 +20,9 @@ impl LoanParameters {
         if annual_interest_rate < Decimal::ZERO {
             return Err(LoanParametersError::NegativeAnnualInterestRate);
         }
+        if u16::try_from(remaining_term_months_at_start.get()).is_err() {
+            return Err(LoanParametersError::TermOutOfRange);
+        }
 
         Ok(Self {
             annual_interest_rate,
@@ -42,6 +45,7 @@ impl LoanParameters {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoanParametersError {
     NegativeAnnualInterestRate,
+    TermOutOfRange,
 }
 
 impl fmt::Display for LoanParametersError {
@@ -50,6 +54,7 @@ impl fmt::Display for LoanParametersError {
             Self::NegativeAnnualInterestRate => {
                 f.write_str("annual interest rate cannot be negative")
             }
+            Self::TermOutOfRange => f.write_str("loan term exceeds the supported month range"),
         }
     }
 }

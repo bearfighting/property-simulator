@@ -47,6 +47,6 @@ pub(crate) fn render(
                     page.submission,
                     SubmissionState::Submitting | SubmissionState::Initialized
                 ))
-                .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
+                .on_click(cx.listener(|this, _, window, cx| this.confirm_submit(window, cx))),
         )
 }

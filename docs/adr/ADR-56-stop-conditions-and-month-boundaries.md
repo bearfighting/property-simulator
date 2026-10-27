@@ -1,9 +1,13 @@
 # ADR-56: Stop conditions and month boundaries
 
-- **Status:** Accepted direction
+- **Status:** Superseded by [ADR-70](ADR-70-immutable-simulation-configuration.md) and [ADR-71](ADR-71-in-memory-simulation-lifecycle-coordinator.md)
 - **Date:** 2026-10-24
 - **Related:** [ADR-42](ADR-42-user-settings-and-opening-values.md), [Domain model](../domain-model.md)
-- **Verification:** `AfterMonths(1)` completes Month 1 and prevents Month 2 from starting; `UserStop` accepted at a month boundary prevents the next month from starting.
+- **Historical verification:** `AfterMonths(1)` completes Month 1 and prevents Month 2 from starting.
+
+> This ADR records an earlier design. Manual stop is now an in-memory lifecycle
+> operation, not a `StopCondition`; configured stop conditions are immutable
+> automatic conditions as described by ADR-70 and ADR-71.
 
 ## Context
 

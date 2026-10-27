@@ -12,8 +12,8 @@ The simulation calculates sequential monthly periods and does not model calendar
 ## Decision
 
 - Represent time within a simulation as a zero-based ordinal `Month`. Month 0 is the initialization boundary and Month 1 is the first calculated period. Preserve this numbering in stored and displayed domain values without an implicit offset.
-- Store the ordinal as `u16`. This gives a technical ceiling of 65,535 months (over 5,400 years), far beyond the intended simulation horizon, while allowing compact DTOs. This is a representation bound, not a configured simulation duration.
-- Support ordering, hashing, checked increment/offset operations, and elapsed-month calculation. Do not impose a product-level maximum duration.
+- Store the ordinal as `u16`. This gives a technical ceiling of 65,535 calculated months (over 5,400 years), far beyond the intended simulation horizon, while allowing compact DTOs. Duration settings must fit this representation; there is no smaller business duration limit.
+- Support ordering, hashing, checked increment/offset operations, and elapsed-month calculation. Do not impose a duration limit below the Month representation bound.
 - Use Month as the period key for a monthly Snapshot. Month 0 cannot have a completed-month Snapshot; it is unique only within one simulation and is not a globally unique ID.
 - Keep serialization formats outside the domain type and map Month to a DTO in Data Access.
 - Do not add a generic ID crate now. Add a business identity only when a concrete reference requirement establishes its meaning.

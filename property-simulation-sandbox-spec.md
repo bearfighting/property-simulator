@@ -32,7 +32,7 @@ Project specification index. Use the following current documents as the source o
 - [Slice-specific evaluation interfaces](docs/adr/ADR-54-slice-specific-evaluation-interfaces.md): inject random input only into stochastic Slices and keep evaluation methods/errors concrete.
 - [Ledger journal as the source of balances](docs/adr/ADR-55-ledger-journal-as-source-of-balances.md): represent opening facts in a Month 0 JournalEntry, inject the account catalogue, and derive balances from journal entries.
 - [ADR guidance](docs/adr/README.md): how to record future consequential decisions.
-- [Stop conditions and month boundaries](docs/adr/ADR-56-stop-conditions-and-month-boundaries.md): represent manual stop as a typed condition and apply conditions at the next month boundary.
+- [Stop conditions and month boundaries](docs/adr/ADR-56-stop-conditions-and-month-boundaries.md): historical stop-condition design superseded by ADR-70 and ADR-71.
 - [Per-Slice settings persistence](docs/adr/ADR-57-per-slice-settings-persistence.md): persist typed configuration per static Slice kind and keep initialization facts in Month 0 Ledger entries.
 - [Stop condition domain boundary](docs/adr/ADR-58-stop-condition-domain-boundary.md): keep stop condition values and pure evaluation independent of Context, Ledger, and Slice.
 - [Application-owned random root](docs/adr/ADR-59-application-owned-random-root.md): keep the simulation root in Application-owned state and persist it separately from settings and monthly results.
@@ -45,5 +45,6 @@ Project specification index. Use the following current documents as the source o
 - [GPUI page shell and reusable components](docs/adr/ADR-69-gpui-page-shell-and-reusable-components.md): organize page navigation and UI composition for initialization, monthly simulation, and summary views.
 - [Immutable simulation configuration](docs/adr/ADR-70-immutable-simulation-configuration.md): configuration is fixed for a simulation's lifetime; use a separate simulation for different assumptions.
 - [In-memory simulation lifecycle coordinator](docs/adr/ADR-71-in-memory-simulation-lifecycle-coordinator.md): an independent lifecycle crate constrains which Application work unit the composition layer may call.
+- [Month-bounded duration settings](docs/adr/ADR-72-month-bounded-duration-settings.md): bound duration settings and stored periods by the Month representation.
 
 Code identifiers must not contain implementation-stage names or numbers. The architecture document records the current boundary direction and open interface questions. The roadmap tracks Application/Data Access work; Core may evolve incrementally as concrete needs arise. Historical decisions are retained only as decision history.

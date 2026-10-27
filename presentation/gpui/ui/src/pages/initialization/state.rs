@@ -1,4 +1,5 @@
 use gpui_kit::component::input::InputState;
+use gpui_kit::component::{WindowExt as _, dialog::AlertDialog};
 use gpui_kit::{AppContext as _, Context, Entity, Window};
 use property_simulation_lifecycle::SimulationState;
 use std::rc::Rc;
@@ -111,11 +112,59 @@ impl InitializationPage {
         )
     }
 
+    pub(crate) fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for input in [
+            &self.name,
+            &self.property_value,
+            &self.cash_balance,
+            &self.stop_after_months,
+            &self.loan_balance,
+            &self.annual_interest_rate,
+            &self.loan_term,
+            &self.monthly_rent,
+            &self.monthly_expenses,
+            &self.repair_maximum_amount,
+            &self.repair_delay_months,
+        ] {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+
+        self.stop_when_all_loans_paid_off = true;
+        self.loan_enabled = true;
+        self.rental_enabled = true;
+        self.fixed_expense_enabled = true;
+        self.repairs_enabled = false;
+        self.submission = SubmissionState::Editing;
+        cx.notify();
+    }
+
     pub(super) fn open_simulation(&self, cx: &mut Context<Self>) {
         (self.on_continue)(cx);
     }
 
-    pub(super) fn submit(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn confirm_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_locked() {
+            return;
+        }
+
+        let page = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert: AlertDialog, _, _| {
+            let page = page.clone();
+            alert
+                .title("Create this simulation?")
+                .description(
+                    "After creation, the initial settings and assumptions cannot be changed for this simulation.",
+                )
+                .confirm()
+                .ok_text("Create simulation")
+                .cancel_text("Review settings")
+                .on_ok(move |_, _, cx| {
+                    page.update(cx, |page, cx| page.submit(cx)).is_ok()
+                })
+        });
+    }
+
+    fn submit(&mut self, cx: &mut Context<Self>) {
         if self.settings_locked() {
             return;
         }

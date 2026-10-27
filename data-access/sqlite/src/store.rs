@@ -7,7 +7,7 @@ mod settings;
 mod simulation;
 
 use property_simulation_money::Currency;
-use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::SqliteDataAccessError;
 
@@ -27,6 +27,42 @@ impl SqliteDataAccess {
         sqlx::raw_sql(include_str!("../schema.sql"))
             .execute(&self.pool)
             .await?;
+
+        self.ensure_stop_conditions_configuration_marker().await?;
+        Ok(())
+    }
+
+    async fn ensure_stop_conditions_configuration_marker(
+        &self,
+    ) -> Result<(), SqliteDataAccessError> {
+        let columns = sqlx::query("PRAGMA table_info(simulations)")
+            .fetch_all(&self.pool)
+            .await?;
+        let marker_exists = columns.iter().try_fold(false, |found, column| {
+            let name: String = column.try_get("name")?;
+            Ok::<_, sqlx::Error>(found || name == "stop_conditions_configured")
+        })?;
+
+        if !marker_exists {
+            sqlx::query(
+                "ALTER TABLE simulations ADD COLUMN stop_conditions_configured \
+                 INTEGER NOT NULL DEFAULT 0 CHECK (stop_conditions_configured IN (0, 1))",
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+
+        // Keep existing non-empty configurations immutable after adding the
+        // marker to a database created before this field was introduced.
+        sqlx::query(
+            "UPDATE simulations SET stop_conditions_configured = 1 \
+             WHERE stop_conditions_configured = 0 AND EXISTS ( \
+                 SELECT 1 FROM stop_conditions \
+                 WHERE stop_conditions.simulation_id = simulations.id \
+             )",
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
