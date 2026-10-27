@@ -6,9 +6,14 @@ Run the initialization flow from the repository root:
 cargo run
 ```
 
-The desktop binary creates `property-simulation.sqlite3` in the process
-working directory, installs the current SQLite schema, and then opens the GPUI
-initialization window. The current screen uses CAD and creates Month 0 from the
+The desktop binary stores `property-simulation-config.sqlite3` in the current
+user's application data directory, installs the current SQLite schema, and
+then opens the GPUI initialization window. On Windows, the database is stored
+under `%LOCALAPPDATA%\PropertySimulator`; on Linux it uses `$XDG_DATA_HOME` or
+`~/.local/share/property-simulator`; on macOS it uses
+`~/Library/Application Support/Property Simulator`. If the database exists in
+the process working directory and the new location is empty, startup copies it
+to the new location. The current screen uses CAD and creates Month 0 from the
 opening balances and initial monthly assumptions.
 
 On Ubuntu 24.04, GPUI Kit requires native development packages before linking:
