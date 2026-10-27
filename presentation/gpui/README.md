@@ -26,13 +26,18 @@ sudo apt install gcc g++ clang libfontconfig-dev libwayland-dev \
 
 Other Linux distributions need their equivalent packages. See the [GPUI Kit
 installation guide](https://gpui-kit.com/docs/installation/) for platform
-requirements. The Linux preview archive contains the executable, but these
-system libraries still need to be installed on the target machine.
+requirements. The preview archive includes a per-user installer and desktop
+icon, but these system libraries still need to be installed on the target
+machine.
 
 GitHub preview releases provide a Windows x64 ZIP and an Ubuntu 24.04 x64
-`tar.gz` archive. Extract the archive, then run `property-simulation-desktop`
-from a terminal on Linux (you may need to grant it execute permission with
-`chmod +x property-simulation-desktop`).
+`tar.gz` archive. On Linux, extract the archive and run `./install.sh` to
+install the binary, application icon, and menu entry for your user. The app
+then appears in the desktop applications menu and can be pinned to the taskbar.
+Run `./uninstall.sh` from the extracted archive to remove those files; it leaves
+the SQLite simulation data in place. To associate the icon with a local
+development run started with `cargo run`, run
+`sh scripts/install-dev-launcher.sh` once from the repository root.
 
 `ui/` depends only on GPUI Kit. The `desktop/` binary owns startup, SQLite
 construction, conversion from plain form data to the Application request, and

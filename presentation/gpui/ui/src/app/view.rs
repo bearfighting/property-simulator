@@ -1,5 +1,5 @@
 use gpui_kit::component::{ActiveTheme as _, TitleBar};
-use gpui_kit::{App, Context, Entity, IntoElement, ParentElement as _, Styled as _, div};
+use gpui_kit::{App, Context, Entity, IntoElement, ParentElement as _, Styled as _, div, img, px};
 use property_simulation_lifecycle::SimulationState;
 use std::rc::Rc;
 
@@ -137,6 +137,8 @@ pub(super) fn render(
                             .flex_1()
                             .flex()
                             .items_center()
+                            .gap_2()
+                            .child(img(crate::brand::mark()).size(px(26.0)).mt(px(1.0)))
                             .child(div().text_lg().child("Property Simulation")),
                     )
                     .child(

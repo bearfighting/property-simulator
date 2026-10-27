@@ -4,6 +4,7 @@
 //! and persistence dependencies stay in the desktop composition root.
 
 mod app;
+mod brand;
 mod components;
 mod contract;
 mod pages;

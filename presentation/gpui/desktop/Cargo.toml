@@ -19,5 +19,8 @@ sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-toki
 tokio = { version = "1", features = ["rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
 
+[build-dependencies]
+embed-resource = "=3.0.12"
+
 [lints]
 workspace = true

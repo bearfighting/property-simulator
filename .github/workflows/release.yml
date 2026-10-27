@@ -62,8 +62,11 @@ jobs:
           directory="dist/property-simulator-${RELEASE_TAG}-${PLATFORM}"
           mkdir -p "$directory"
           cp "target/release/${{ matrix.binary }}" "$directory/"
+          cp assets/app-icons/prop-orbit-512.png "$directory/property-simulator.png"
+          cp packaging/linux/install.sh packaging/linux/uninstall.sh "$directory/"
           cp LICENSE "$directory/"
           cp presentation/gpui/README.md "$directory/README.md"
+          chmod +x "$directory/install.sh" "$directory/uninstall.sh"
           tar -czf "$directory.tar.gz" -C dist "$(basename "$directory")"
 
       - uses: actions/upload-artifact@v4

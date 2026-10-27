@@ -7,6 +7,7 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::{
     AppContext as _, WindowBounds, WindowOptions, application, assets, init, open_window, px, size,
 };
+use std::sync::Arc;
 
 /// Open the application window with host-provided simulation work handlers.
 pub fn run_simulation_ui(
@@ -17,11 +18,20 @@ pub fn run_simulation_ui(
     stop_handler: StopSimulationHandler,
     reset_handler: ResetSimulationHandler,
 ) {
+    let icon = Arc::new(
+        image::load_from_memory(include_bytes!(
+            "../../../../../assets/app-icons/prop-orbit-512.png"
+        ))
+        .expect("embedded application icon must be a valid PNG")
+        .to_rgba8(),
+    );
     application().with_assets(assets::Assets).run(move |cx| {
         init(cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1120.0), px(860.0)), cx)),
             window_min_size: Some(size(px(820.0), px(700.0))),
+            app_id: Some("com.proporbit.PropertySimulator".to_owned()),
+            icon: Some(Arc::clone(&icon)),
             ..TitleBar::window_options()
         };
         open_window(options, cx, {

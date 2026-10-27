@@ -4938,6 +4938,7 @@ dependencies = [
 name = "property-simulation-desktop"
 version = "0.1.0"
 dependencies = [
+ "embed-resource",
  "property-simulation-account",
  "property-simulation-application",
  "property-simulation-data-access-sqlite",
@@ -4965,6 +4966,7 @@ name = "property-simulation-gpui-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "image",
  "property-simulation-lifecycle",
 ]
 
