@@ -5,7 +5,7 @@ use property_simulation_money::Money;
 use property_simulation_month::Month;
 use property_simulation_reporting::{
     CashFlowAccountClassification, CashFlowCategory as CoreCashFlowCategory, CashFlowMovement,
-    CashFlowReport, ReportingInput, cash_flow,
+    CashFlowReport, ReportingInput, cash_flow, cash_flow_by_month,
 };
 
 use crate::{CASH_ROLE, CashFlowCategory};
@@ -41,6 +41,21 @@ pub(crate) fn report(
         })?;
     let classifications = classifications(accounts);
     cash_flow(input, &[cash_account], &classifications, start, end).map_err(Into::into)
+}
+
+pub(crate) fn reports_by_month(
+    accounts: &AccountCatalogue,
+    input: ReportingInput<'_>,
+    start: Month,
+    end: Month,
+) -> Result<Vec<CashFlowReport>, GenerateReportError> {
+    let cash_account = accounts
+        .code_for_role(&AccountRole::new(CASH_ROLE).expect("static account roles are valid"))
+        .ok_or_else(|| {
+            GenerateReportError::InvalidData(format!("account role {CASH_ROLE} is not configured"))
+        })?;
+    let classifications = classifications(accounts);
+    cash_flow_by_month(input, &[cash_account], &classifications, start, end).map_err(Into::into)
 }
 
 pub(crate) fn summarize(

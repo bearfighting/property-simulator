@@ -1,11 +1,16 @@
+mod monthly;
+
 use super::validation::{validate_all, validate_period, zero};
 use crate::{
-    CashFlowAccountClassification, CashFlowCategoryTotal, CashFlowMovement, CashFlowReport,
-    CashFlowSubcategoryTotal, ReportingError, ReportingInput,
+    CashFlowAccountClassification, CashFlowCategory, CashFlowCategoryTotal, CashFlowMovement,
+    CashFlowReport, CashFlowSubcategoryTotal, ReportingError, ReportingInput,
 };
 use property_simulation_account::{AccountCode, DebitCredit};
+use property_simulation_money::Money;
 use property_simulation_month::Month;
 use std::collections::{HashMap, HashSet};
+
+pub use monthly::cash_flow_by_month;
 
 /// Derive categorized cash-flow movements for an inclusive period.
 ///
@@ -22,29 +27,8 @@ pub fn cash_flow(
     validate_period(start, end)?;
     validate_all(input)?;
 
-    let mut selected = HashSet::with_capacity(cash_accounts.len());
-    for account in cash_accounts {
-        if input.accounts().get(*account).is_none() {
-            return Err(ReportingError::UnknownAccount(*account));
-        }
-        selected.insert(*account);
-    }
-
-    let mut classification_by_account = HashMap::with_capacity(classifications.len());
-    for classification in classifications {
-        if input.accounts().get(classification.account()).is_none() {
-            return Err(ReportingError::UnknownAccount(classification.account()));
-        }
-        if classification_by_account
-            .insert(classification.account(), classification.clone())
-            .is_some()
-        {
-            return Err(ReportingError::DuplicateCashFlowClassification(
-                classification.account(),
-            ));
-        }
-    }
-
+    let (selected, classification_by_account) =
+        prepare_classifications(input, cash_accounts, classifications)?;
     let zero = zero(input)?;
     let mut movements = Vec::new();
     let mut total = zero;
@@ -120,20 +104,7 @@ pub fn cash_flow(
         }
     }
 
-    let mut category_totals: Vec<CashFlowCategoryTotal> = category_totals
-        .into_iter()
-        .map(|(category, amount)| CashFlowCategoryTotal::new(category, amount))
-        .collect();
-    category_totals.sort_by_key(CashFlowCategoryTotal::category);
-    let mut subcategory_totals: Vec<CashFlowSubcategoryTotal> = subcategory_totals
-        .into_iter()
-        .map(|((category, subcategory), amount)| {
-            CashFlowSubcategoryTotal::new(category, subcategory, amount)
-        })
-        .collect();
-    subcategory_totals.sort_by_key(|total| (total.category(), total.subcategory().to_owned()));
-
-    Ok(CashFlowReport::new(
+    Ok(build_report(
         start,
         end,
         movements,
@@ -141,4 +112,72 @@ pub fn cash_flow(
         subcategory_totals,
         total,
     ))
+}
+
+pub(super) fn prepare_classifications(
+    input: ReportingInput<'_>,
+    cash_accounts: &[AccountCode],
+    classifications: &[CashFlowAccountClassification],
+) -> Result<
+    (
+        HashSet<AccountCode>,
+        HashMap<AccountCode, CashFlowAccountClassification>,
+    ),
+    ReportingError,
+> {
+    let mut selected = HashSet::with_capacity(cash_accounts.len());
+    for account in cash_accounts {
+        if input.accounts().get(*account).is_none() {
+            return Err(ReportingError::UnknownAccount(*account));
+        }
+        selected.insert(*account);
+    }
+
+    let mut classification_by_account = HashMap::with_capacity(classifications.len());
+    for classification in classifications {
+        if input.accounts().get(classification.account()).is_none() {
+            return Err(ReportingError::UnknownAccount(classification.account()));
+        }
+        if classification_by_account
+            .insert(classification.account(), classification.clone())
+            .is_some()
+        {
+            return Err(ReportingError::DuplicateCashFlowClassification(
+                classification.account(),
+            ));
+        }
+    }
+
+    Ok((selected, classification_by_account))
+}
+
+pub(super) fn build_report(
+    start: Month,
+    end: Month,
+    movements: Vec<CashFlowMovement>,
+    category_totals: HashMap<CashFlowCategory, Money>,
+    subcategory_totals: HashMap<(CashFlowCategory, String), Money>,
+    total: Money,
+) -> CashFlowReport {
+    let mut category_totals: Vec<_> = category_totals
+        .into_iter()
+        .map(|(category, amount)| CashFlowCategoryTotal::new(category, amount))
+        .collect();
+    category_totals.sort_by_key(CashFlowCategoryTotal::category);
+    let mut subcategory_totals: Vec<_> = subcategory_totals
+        .into_iter()
+        .map(|((category, subcategory), amount)| {
+            CashFlowSubcategoryTotal::new(category, subcategory, amount)
+        })
+        .collect();
+    subcategory_totals.sort_by_key(|total| (total.category(), total.subcategory().to_owned()));
+
+    CashFlowReport::new(
+        start,
+        end,
+        movements,
+        category_totals,
+        subcategory_totals,
+        total,
+    )
 }

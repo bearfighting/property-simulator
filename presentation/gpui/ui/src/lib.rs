@@ -9,11 +9,11 @@ mod contract;
 mod pages;
 
 pub use app::run_simulation_ui;
-pub(crate) use contract::PageAction;
 pub use contract::{
     CashFlowChartSlice, CashFlowViewCategory, InitializationFormData, InitializationHandler,
     MonthlySimulationHandler, MonthlySimulationResponse, MonthlySimulationViewData,
-    ReportAmountView, ReportCashFlowAccountView, ReportCashFlowCategoryView, ReportPeriodView,
-    ReportingHandler, ReportingViewData, ResetSimulationHandler, StopSimulationHandler,
-    SubmissionResult,
+    MonthlyTimelineHandler, ReportAmountView, ReportCashFlowAccountView,
+    ReportCashFlowCategoryView, ReportPeriodView, ReportingHandler, ReportingViewData,
+    ResetSimulationHandler, StopSimulationHandler, SubmissionResult, TimelinePageDirection,
 };
+pub(crate) use contract::{MONTHS_PER_TIMELINE_PAGE, PageAction};

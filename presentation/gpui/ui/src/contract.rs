@@ -2,6 +2,8 @@ use gpui_kit::App;
 use property_simulation_lifecycle::SimulationState;
 use std::{future::Future, pin::Pin, rc::Rc};
 
+pub(crate) const MONTHS_PER_TIMELINE_PAGE: usize = 12;
+
 /// UI action passed from the application shell into a page.
 pub(crate) type PageAction = Rc<dyn Fn(&mut App)>;
 
@@ -71,6 +73,20 @@ pub struct MonthlySimulationResponse {
 /// Async host callback for simulating and persisting one complete month.
 pub type MonthlySimulationHandler =
     Rc<dyn Fn() -> Pin<Box<dyn Future<Output = MonthlySimulationResponse> + 'static>>>;
+
+/// Async host callback for reading persisted monthly results for the active simulation.
+pub type MonthlyTimelineHandler = Rc<
+    dyn Fn() -> Pin<
+        Box<dyn Future<Output = Result<Vec<MonthlySimulationViewData>, String>> + 'static>,
+    >,
+>;
+
+/// Direction for moving through groups of monthly timeline entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimelinePageDirection {
+    Newer,
+    Older,
+}
 
 /// Display-ready amount for one account or summary metric.
 #[derive(Debug, Clone, PartialEq, Eq)]

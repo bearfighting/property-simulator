@@ -5,7 +5,7 @@ use property_simulation_journal_entry::{JournalEntry, JournalLine};
 use property_simulation_money::{Currency, Money};
 use property_simulation_month::Month;
 use property_simulation_reporting::{
-    CashFlowAccountClassification, CashFlowCategory, ReportingInput, cash_flow,
+    CashFlowAccountClassification, CashFlowCategory, ReportingInput, cash_flow, cash_flow_by_month,
 };
 
 fn code(value: u32) -> AccountCode {
@@ -64,8 +64,9 @@ fn cash_flow_reconciles_classified_activity_and_excludes_opening_cash() {
         CashFlowAccountClassification::new(code(500), CashFlowCategory::Operating, "Repairs"),
     ];
 
+    let input = ReportingInput::new(&accounts, currency, &journal);
     let report = cash_flow(
-        ReportingInput::new(&accounts, currency, &journal),
+        input,
         &[code(100)],
         &classifications,
         Month::new(1),
@@ -83,4 +84,62 @@ fn cash_flow_reconciles_classified_activity_and_excludes_opening_cash() {
         CashFlowCategory::Operating
     );
     assert_eq!(report.category_totals()[0].amount(), money("30"));
+}
+
+#[test]
+fn monthly_cash_flow_matches_individual_reports_and_keeps_empty_months() {
+    let currency = Currency::from_code("CAD").unwrap();
+    let accounts = AccountCatalogue::new(vec![
+        account(100, "Cash", AccountClass::Asset, "cash"),
+        account(300, "Opening Equity", AccountClass::Equity, "equity"),
+        account(400, "Rental Income", AccountClass::Income, "rental-income"),
+        account(500, "Repairs", AccountClass::Expense, "repair-expense"),
+    ])
+    .unwrap();
+    let journal = vec![
+        JournalEntry::initial(vec![
+            JournalLine::new(code(100), DebitCredit::Debit, money("100")).unwrap(),
+            JournalLine::new(code(300), DebitCredit::Credit, money("100")).unwrap(),
+        ])
+        .unwrap(),
+        JournalEntry::new(
+            Month::new(1),
+            vec![
+                JournalLine::new(code(500), DebitCredit::Debit, money("20")).unwrap(),
+                JournalLine::new(code(100), DebitCredit::Credit, money("20")).unwrap(),
+            ],
+        )
+        .unwrap(),
+        JournalEntry::new(
+            Month::new(2),
+            vec![
+                JournalLine::new(code(100), DebitCredit::Debit, money("50")).unwrap(),
+                JournalLine::new(code(400), DebitCredit::Credit, money("50")).unwrap(),
+            ],
+        )
+        .unwrap(),
+    ];
+    let classifications = [
+        CashFlowAccountClassification::new(code(400), CashFlowCategory::Operating, "Rental income"),
+        CashFlowAccountClassification::new(code(500), CashFlowCategory::Operating, "Repairs"),
+    ];
+    let input = ReportingInput::new(&accounts, currency, &journal);
+
+    let monthly_reports = cash_flow_by_month(
+        input,
+        &[code(100)],
+        &classifications,
+        Month::new(1),
+        Month::new(3),
+    )
+    .unwrap();
+
+    assert_eq!(monthly_reports.len(), 3);
+    for (index, report) in monthly_reports.iter().enumerate() {
+        let month = Month::new((index + 1) as u16);
+        let expected = cash_flow(input, &[code(100)], &classifications, month, month).unwrap();
+        assert_eq!(report, &expected);
+    }
+    assert!(monthly_reports[2].movements().is_empty());
+    assert_eq!(monthly_reports[2].total(), money("0"));
 }

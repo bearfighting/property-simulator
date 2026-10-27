@@ -42,12 +42,23 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         account_catalogue.clone(),
         session.clone(),
     );
-    let month_handler =
-        monthly_simulation::handler(runtime, data_access, account_catalogue, session.clone());
+    let month_handler = monthly_simulation::handler(
+        runtime.clone(),
+        data_access.clone(),
+        account_catalogue.clone(),
+        session.clone(),
+    );
+    let timeline_handler = monthly_simulation::timeline_handler(
+        runtime,
+        data_access,
+        account_catalogue,
+        session.clone(),
+    );
 
     run_simulation_ui(
         handler,
         month_handler,
+        timeline_handler,
         report_handler,
         stop_handler,
         reset_handler,

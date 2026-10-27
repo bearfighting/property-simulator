@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::components::PageTheme;
 use crate::pages::{InitializationPage, monthly_simulation_page, placeholder_page, reporting_page};
-use crate::{MonthlySimulationViewData, PageAction, ReportingViewData};
+use crate::{MonthlySimulationViewData, PageAction, ReportingViewData, TimelinePageDirection};
 
 use super::shell::AppShell;
 use super::{navigation, page::AppPage, page_content, system_actions};
@@ -19,7 +19,11 @@ pub(super) struct ViewState {
 
 pub(super) struct MonthlyViewState {
     pub(super) is_simulating: bool,
-    pub(super) result: Option<MonthlySimulationViewData>,
+    pub(super) is_loading_timeline: bool,
+    pub(super) timeline: Vec<MonthlySimulationViewData>,
+    pub(super) selected_month: Option<u16>,
+    pub(super) timeline_page: usize,
+    pub(super) timeline_error: Option<String>,
     pub(super) error: Option<String>,
 }
 
@@ -50,12 +54,44 @@ pub(super) fn render(
         let on_simulate: PageAction = Rc::new(move |cx: &mut App| {
             let _ = shell.update(cx, |shell, cx| shell.simulate_month(cx));
         });
+        let shell = cx.entity().downgrade();
+        let on_reporting: PageAction = Rc::new(move |cx: &mut App| {
+            let _ = shell.update(cx, |shell, cx| shell.navigate_to_reporting(cx));
+        });
+        let shell = cx.entity().downgrade();
+        let on_select_month = Rc::new(move |month: u16, cx: &mut App| {
+            let _ = shell.update(cx, |shell, cx| shell.select_month(month, cx));
+        });
+        let shell = cx.entity().downgrade();
+        let on_reload_timeline: PageAction = Rc::new(move |cx: &mut App| {
+            let _ = shell.update(cx, |shell, cx| shell.load_timeline(cx));
+        });
+        let shell = cx.entity().downgrade();
+        let on_change_timeline_page =
+            Rc::new(move |direction: TimelinePageDirection, cx: &mut App| {
+                let _ = shell.update(cx, |shell, cx| shell.change_timeline_page(direction, cx));
+            });
+        let selected_result = view.monthly.selected_month.and_then(|month| {
+            view.monthly
+                .timeline
+                .iter()
+                .find(|item| item.month_number == month)
+        });
         div().child(monthly_simulation_page(
             view.state,
             view.monthly.is_simulating,
-            view.monthly.result.as_ref(),
+            view.monthly.is_loading_timeline,
+            &view.monthly.timeline,
+            view.monthly.selected_month,
+            view.monthly.timeline_page,
+            view.monthly.timeline_error.as_deref(),
+            selected_result,
             view.monthly.error.as_deref(),
             on_simulate,
+            on_reporting,
+            on_select_month,
+            on_reload_timeline,
+            on_change_timeline_page,
             theme,
         ))
     } else if view.page == AppPage::Summary && view.state == SimulationState::Stopped {
@@ -115,6 +151,7 @@ pub(super) fn render(
                             .justify_end()
                             .child(navigation::render(
                                 view.page,
+                                view.state,
                                 view.monthly.is_simulating,
                                 cx.entity(),
                             )),

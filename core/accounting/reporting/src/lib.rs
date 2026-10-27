@@ -5,7 +5,9 @@ mod error;
 mod input;
 mod reports;
 
-pub use calculations::{audit, balance_sheet, cash_flow, income_statement, trial_balance};
+pub use calculations::{
+    audit, balance_sheet, cash_flow, cash_flow_by_month, income_statement, trial_balance,
+};
 pub use error::ReportingError;
 pub use input::ReportingInput;
 pub(crate) use reports::BalanceSheetTotals;

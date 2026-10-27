@@ -3,11 +3,14 @@
 use std::{rc::Rc, sync::Arc};
 
 use property_simulation_account::AccountCatalogue;
-use property_simulation_application::{CashFlowCategory, MonthSimulationOutput, simulate_month};
+use property_simulation_application::{
+    CashFlowAccountChanges, CashFlowCategory, MonthSimulationOutput, MonthTimelineItem,
+    load_month_timeline, simulate_month,
+};
 use property_simulation_data_access_sqlite::SqliteDataAccess;
 use property_simulation_gpui_ui::{
     CashFlowChartSlice, CashFlowViewCategory, MonthlySimulationHandler, MonthlySimulationResponse,
-    MonthlySimulationViewData,
+    MonthlySimulationViewData, MonthlyTimelineHandler,
 };
 use property_simulation_lifecycle::WorkUnit;
 use property_simulation_money::Money;
@@ -62,6 +65,73 @@ pub(super) fn handler(
             MonthlySimulationResponse { state, result }
         })
     })
+}
+
+pub(super) fn timeline_handler(
+    runtime: Arc<Runtime>,
+    data_access: SqliteDataAccess,
+    account_catalogue: AccountCatalogue,
+    session: SimulationSession,
+) -> MonthlyTimelineHandler {
+    Rc::new(move || {
+        let runtime = runtime.clone();
+        let data_access = data_access.clone();
+        let account_catalogue = account_catalogue.clone();
+        let simulation_id = session.simulation_id();
+
+        Box::pin(async move {
+            let Some(simulation_id) = simulation_id else {
+                return Err("simulation identity is missing".to_owned());
+            };
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            runtime.spawn(async move {
+                let result = load_month_timeline(&data_access, &account_catalogue, &simulation_id)
+                    .await
+                    .map(|items| {
+                        items
+                            .into_iter()
+                            .map(|item| to_timeline_view_data(item, &account_catalogue))
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|error| error.to_string());
+                let _ = sender.send(result);
+            });
+            receiver
+                .await
+                .map_err(|error| format!("monthly timeline task stopped: {error}"))?
+        })
+    })
+}
+
+fn to_timeline_view_data(
+    item: MonthTimelineItem,
+    accounts: &AccountCatalogue,
+) -> MonthlySimulationViewData {
+    let account_changes = item
+        .cash_flow
+        .accounts
+        .into_iter()
+        .filter_map(|account| {
+            let name = accounts.get(account.account_code)?.name().to_owned();
+            Some(CashFlowAccountChanges {
+                account_name: name,
+                category: account.category,
+                positive: account.inflows,
+                negative: account.outflows,
+            })
+        })
+        .collect::<Vec<_>>();
+    let inflows = account_slices(&account_changes, true);
+    let outflows = account_slices(&account_changes, false);
+
+    MonthlySimulationViewData {
+        month_number: item.month.number(),
+        inflow_total: item.cash_flow.total_inflows.to_string(),
+        outflow_total: item.cash_flow.total_outflows.to_string(),
+        inflows,
+        outflows,
+        stop_reason: None,
+    }
 }
 
 fn to_view_data(output: MonthSimulationOutput) -> MonthlySimulationViewData {

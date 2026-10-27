@@ -16,7 +16,8 @@ pub use initialize_simulation::{
 };
 pub use reporting::{
     AccountAmount, CashFlowAccountSummary, CashFlowCategorySummary, CashFlowSummary,
-    FinancialPositionReport, GenerateReportError, PeriodReport, SimulationReport, generate_report,
+    FinancialPositionReport, GenerateReportError, MonthTimelineItem, PeriodReport,
+    SimulationReport, generate_report, load_month_timeline,
 };
 pub use simulate_month::{
     CashFlowAccountChanges, CashFlowCategory, CashFlowCategoryChanges, CashFlowChanges,
